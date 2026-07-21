@@ -74,8 +74,14 @@ function assertClose(name: string, actual: number, expected: number, eps = 0.000
 interface FakeState {
   userIds: number[];
   configs: Record<number, MorningRiskCheckupConfig>;
-  portfolioHeaders: Record<number, { id: number; total_value: number } | null>;
+  portfolioHeaders: Record<
+    number,
+    | { id: number; name?: string; total_value: number }
+    | Array<{ id: number; name?: string; total_value: number }>
+    | null
+  >;
   positionsByUser: Record<number, CheckupPositionSnapshot[]>;
+  positionsByPortfolio?: Record<number, CheckupPositionSnapshot[]>;
   snapshotsByPortfolio: Record<number, CheckupSnapshotRow[]>;
   alertCountByUser: Record<number, number>;
   /** Captured upsert calls (used for assertions). */
@@ -118,23 +124,36 @@ function makeFakeSource(state: FakeState): MorningRiskCheckupDataSource {
       state.configs[user_id] = { ...config };
       return { ...config };
     },
-    async loadPortfolioHeader(user_id) {
-      if (state.portfolioHeaders[user_id] === undefined) return { id: 1000 + user_id, total_value: 0 };
-      return state.portfolioHeaders[user_id];
+    async loadPortfolioHeaders(user_id) {
+      const header = state.portfolioHeaders[user_id];
+      if (header === null) return [];
+      const resolved = header ?? { id: 1000 + user_id, total_value: 0 };
+      const rows = Array.isArray(resolved) ? resolved : [resolved];
+      return rows.map(row => ({ ...row, name: row.name || `测试盘${row.id}` }));
     },
-    async loadOpenPositions(user_id) {
+    async loadOpenPositions(portfolio_id) {
+      const userEntry = Object.entries(state.portfolioHeaders).find(([, header]) =>
+        Array.isArray(header)
+          ? header.some(item => item.id === portfolio_id)
+          : header?.id === portfolio_id
+      );
+      const user_id = userEntry ? Number(userEntry[0]) : portfolio_id - 1000;
       if (state.loadPositionsShouldThrowForUser === user_id) {
         throw new Error(`fake DB outage user=${user_id}`);
       }
-      return (state.positionsByUser[user_id] || []).map(p => ({ ...p }));
+      return (
+        state.positionsByPortfolio?.[portfolio_id] ||
+        state.positionsByUser[user_id] ||
+        []
+      ).map(p => ({ ...p }));
     },
     async loadRecentSnapshots(portfolio_id, _asOfDate, _lookbackDays) {
       return (state.snapshotsByPortfolio[portfolio_id] || []).map(s => ({ ...s }));
     },
-    async countUnresolvedAlerts(user_id) {
+    async countUnresolvedAlerts(user_id, _portfolio_id) {
       return state.alertCountByUser[user_id] ?? 0;
     },
-    async loadSystemHealthSnapshot(_user_id) {
+    async loadSystemHealthSnapshot(_user_id, _portfolio_id) {
       // 测试默认不注入 system health；如需测试可在某 case 内 monkey-patch
       return state.systemHealthByUser?.[_user_id] ?? null;
     },
@@ -219,11 +238,9 @@ async function testConstants() {
 }
 
 async function testNormalize() {
-  assertEqual(
-    'normalize empty → defaults',
-    normalizeMorningRiskCheckupConfig({}),
-    { ...DEFAULT_MORNING_RISK_CHECKUP_CONFIG }
-  );
+  assertEqual('normalize empty → defaults', normalizeMorningRiskCheckupConfig({}), {
+    ...DEFAULT_MORNING_RISK_CHECKUP_CONFIG,
+  });
   assertEqual('normalize null → defaults', normalizeMorningRiskCheckupConfig(null), {
     ...DEFAULT_MORNING_RISK_CHECKUP_CONFIG,
   });
@@ -484,19 +501,10 @@ async function testBuildCheckupMessage() {
       root_cause_coverage_pct: 0,
     },
   });
-  assert(
-    'sizing 0 → equal_pct 默认提示',
-    baselineHealth.includes('仍是 equal_pct 默认')
-  );
-  assert(
-    'kill_switch 全正常 → 显示无禁用',
-    baselineHealth.includes('全部正常')
-  );
+  assert('sizing 0 → equal_pct 默认提示', baselineHealth.includes('仍是 equal_pct 默认'));
+  assert('kill_switch 全正常 → 显示无禁用', baselineHealth.includes('全部正常'));
   // 0 闭环时不显示 root_cause 行（避免 0% 看起来像 bug）
-  assert(
-    '0 closed 时不显示 root_cause 行',
-    !baselineHealth.includes('根因覆盖')
-  );
+  assert('0 closed 时不显示 root_cause 行', !baselineHealth.includes('根因覆盖'));
 
   // include_breakdown=false 时 system_health 即使传也不显示（push 短模式）
   const shortHealth = buildCheckupMessage({
@@ -536,7 +544,11 @@ async function testBuildTopPositions() {
     makePosition({ symbol: 'D', market_value: 4000 }),
   ];
   const top3 = buildTopPositions(positions, 3);
-  assertEqual('top 3 ordered desc', top3.map(p => p.symbol), ['D', 'C', 'B']);
+  assertEqual(
+    'top 3 ordered desc',
+    top3.map(p => p.symbol),
+    ['D', 'C', 'B']
+  );
   assertClose('top D pct=4000/10000=0.4', top3[0].pct, 0.4);
 }
 
@@ -547,7 +559,11 @@ async function testBuildTopIndustries() {
     makePosition({ symbol: 'C', industry: '科技', market_value: 2000 }),
   ];
   const top = buildTopIndustries(positions, 2);
-  assertEqual('top 2 industries', top.map(t => t.industry), ['白酒', '银行']);
+  assertEqual(
+    'top 2 industries',
+    top.map(t => t.industry),
+    ['白酒', '银行']
+  );
   assertClose('top industry 白酒 0.5', top[0].pct, 0.5);
 }
 
@@ -617,10 +633,7 @@ async function testEvaluateHappyPath() {
   assertEqual('persisted=true', u.persisted, true);
   assertEqual('upsert called once', state.upserts.length, 1);
   assertEqual('upsert.date=2026-06-08', state.upserts[0].date, '2026-06-08');
-  assert(
-    'upsert.message contains industry',
-    state.upserts[0].message.includes('行业最大占比')
-  );
+  assert('upsert.message contains industry', state.upserts[0].message.includes('行业最大占比'));
 }
 
 async function testNotificationOutboxClosedLoop() {
@@ -646,12 +659,20 @@ async function testNotificationOutboxClosedLoop() {
   assertEqual(
     'morning checkup exact-date idempotency',
     queued[0].idempotency_key,
-    'morning-risk-checkup:42:2026-06-08'
+    'morning-risk-checkup:42:1042:2026-06-08'
   );
   assertEqual('morning checkup routes to user audience', queued[0].audience, 'user');
   assertEqual('morning checkup carries recipient user', queued[0].recipient_user_id, 42);
-  assertEqual('morning checkup result exposes outbox status', result.per_user[0].notification_status, 'sent');
-  assertEqual('morning checkup result exposes outbox id', result.per_user[0].notification_outbox_id, 88);
+  assertEqual(
+    'morning checkup result exposes outbox status',
+    result.per_user[0].notification_status,
+    'sent'
+  );
+  assertEqual(
+    'morning checkup result exposes outbox id',
+    result.per_user[0].notification_outbox_id,
+    88
+  );
 
   await svc.runMorningCheckup({
     asOfDate: new Date('2026-06-09T00:30:00.000Z'),
@@ -754,8 +775,7 @@ async function testEvaluateNoPortfolio() {
   });
   const svc = new MorningRiskCheckupService(makeFakeSource(state));
   const result = await svc.runMorningCheckup();
-  const u = result.per_user[0];
-  assertEqual('no portfolio → portfolio_id=null', u.portfolio_id, null);
+  assertEqual('no portfolio → no result rows', result.per_user.length, 0);
   assertEqual('no portfolio → no upsert', state.upserts.length, 0);
 }
 
@@ -809,6 +829,49 @@ async function testEvaluateMultiUserIsolation() {
   const u3 = result.per_user.find(u => u.user_id === 3)!;
   assertEqual('user 3 persisted=true', u3.persisted, true);
   assertEqual('2 upserts (user 1 + 3)', state.upserts.length, 2);
+}
+
+async function testEvaluateOneUserMultiplePortfolios() {
+  const state = emptyState({
+    userIds: [42],
+    portfolioHeaders: {
+      42: [
+        { id: 1042, name: '主盘', total_value: 100000 },
+        { id: 2042, name: '空盘', total_value: 200000 },
+      ],
+    },
+    positionsByUser: {},
+    positionsByPortfolio: {
+      1042: [makePosition({ portfolio_id: 1042, symbol: 'A', market_value: 50000 })],
+      2042: [],
+    },
+    snapshotsByPortfolio: {
+      1042: [{ date: '2026-06-01', total_value: 95000 }],
+      2042: [{ date: '2026-06-01', total_value: 200000 }],
+    },
+  });
+  const queued: any[] = [];
+  const svc = new MorningRiskCheckupService(makeFakeSource(state), {
+    async enqueueAndDeliver(input: any) {
+      queued.push(input);
+      return { status: 'sent', outbox_id: queued.length };
+    },
+  } as any);
+  const result = await svc.runMorningCheckup({
+    asOfDate: new Date('2026-06-08T00:30:00.000Z'),
+  });
+  assertEqual('multi-account creates two independent rows', result.per_user.length, 2);
+  assertEqual('multi-account creates two upserts', state.upserts.length, 2);
+  assertEqual(
+    'multi-account values never aggregate',
+    result.per_user.map(row => row.current_total_value),
+    [100000, 200000]
+  );
+  assertEqual(
+    'multi-account notification keys contain portfolio id',
+    queued.map(row => row.idempotency_key),
+    ['morning-risk-checkup:42:1042:2026-06-08', 'morning-risk-checkup:42:2042:2026-06-08']
+  );
 }
 
 async function testEvaluateSingleUserScope() {
@@ -879,11 +942,7 @@ async function testGetConfigUpdateConfigRoundTrip() {
   });
   assertEqual('garbage enabled→default true', sanitized.enabled, true);
   assertEqual('garbage weekly_lookback_days→default 7', sanitized.weekly_lookback_days, 7);
-  assertEqual(
-    'garbage drawdown_lookback_days→default 365',
-    sanitized.drawdown_lookback_days,
-    365
-  );
+  assertEqual('garbage drawdown_lookback_days→default 365', sanitized.drawdown_lookback_days, 365);
   assertEqual(
     'garbage include_breakdown_in_message→default true',
     sanitized.include_breakdown_in_message,
@@ -946,6 +1005,7 @@ async function main() {
   await testEvaluateNoPortfolio();
   await testEvaluateUpsertFailureFailOpen();
   await testEvaluateMultiUserIsolation();
+  await testEvaluateOneUserMultiplePortfolios();
   await testEvaluateSingleUserScope();
   await testNoSnapshotsDrawdownStillComputed();
   await testZeroPortfolioPeak();

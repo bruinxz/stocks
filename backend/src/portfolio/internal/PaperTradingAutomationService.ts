@@ -70,6 +70,7 @@ import {
   deriveTargetPctFromConfidence,
 } from '../sizing/SignalDrivenSizing';
 import { researchTrustPolicyService } from '../../services/research/ResearchTrustPolicyService';
+import { recommendationSnapshotSignalProjectionService } from '../../services/RecommendationSnapshotSignalProjectionService';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -1647,6 +1648,10 @@ class PaperTradingAutomationService {
       if (options.signal_date_start) where.signal_date[Op.gte] = options.signal_date_start;
       if (options.signal_date_end) where.signal_date[Op.lte] = options.signal_date_end;
     }
+    if (source_type === AISignalSourceType.RECOMMENDATION_SNAPSHOT) {
+      // 规范快照信号只在所属交易日有效，禁止把昨天早报当成今天的买入指令。
+      where.signal_date = getChinaToday();
+    }
     if (signalIds.length > 0) {
       where.id = { [Op.in]: signalIds };
     }
@@ -1670,6 +1675,18 @@ class PaperTradingAutomationService {
     const allowWatchSamplingFlag = toBoolean(options.allow_watch_signals_for_sampling, false);
     const preFiltered = signals.filter(sig => {
       const meta = asPlainObject(sig.metadata);
+      if (source_type === AISignalSourceType.RECOMMENDATION_SNAPSHOT) {
+        const expiresAt = new Date(String(meta.expires_at || ''));
+        if (
+          meta.canonical_source !== true ||
+          meta.risk_gate_status !== 'GREEN' ||
+          meta.size_hint_tier === 'SKIP' ||
+          Number.isNaN(expiresAt.getTime()) ||
+          expiresAt.getTime() <= Date.now()
+        ) {
+          return false;
+        }
+      }
       const action = String(meta.action || '').toLowerCase();
       if (action === 'avoid') return false;
       // 允许 buy 始终通过; 允许 watch 仅在 sampling 模式 OR require_action_buy=false 时通过
@@ -1678,9 +1695,10 @@ class PaperTradingAutomationService {
       // 其它 action (如 '等待确认', 'hold' 等): require_action_buy=true 时 skip
       return !requireActionBuyFlag;
     });
-    const candidateSignals = strategyFilterKeys.length
-      ? preFiltered.filter(signal => signalMatchesStrategyKeys(signal, strategyFilterKeys))
-      : preFiltered;
+    const candidateSignals =
+      source_type !== AISignalSourceType.RECOMMENDATION_SNAPSHOT && strategyFilterKeys.length
+        ? preFiltered.filter(signal => signalMatchesStrategyKeys(signal, strategyFilterKeys))
+        : preFiltered;
 
     // Sprint 29: PortfolioConstruction shadow/hard mode 接入 (短板 #1).
     // 收集所有 candidate signal 一次性 build 组合权重, 然后 loop 内 per-signal
@@ -3698,43 +3716,14 @@ class PaperTradingAutomationService {
     let generated: any = null;
     let archive: any = null;
 
-    if (refreshRecommendations) {
-      const universe = options.universe === 'market' ? 'market' : 'favorites';
-      const style = ['balanced', 'momentum', 'value', 'low_risk'].includes(options.style || '')
-        ? options.style!
-        : 'balanced';
-      const candidateLimit = toPositiveInt(
-        options.candidate_limit || options.limit,
-        Math.max(toPositiveInt(options.limit, 5, 20), 10),
-        50
-      );
-
-      // 批5/批9 定性: 旧全市场荐股链路 (QuantRecommendationService) 已永久下线, 唯一
-      // 产出 source_type=quant_recommendation 信号的服务已删除, 故 refreshRecommendations
-      // 分支恒产出空候选 —— 保留分支仅为兼容 UI/autonomous HTTP 入口 (删除会抛错), 非活能力.
-      // Core 70% 已由 ETFRotationService 落 action=TARGET_WEIGHT 信号 (出口 A: V3 展示 + 用户拍板);
-      // 其 paper 自动执行属计划出口 B (后期), 需独立 TARGET_WEIGHT 再平衡执行路径, 不复用本 buy 跟单链.
-      // 批9: 已退役空跑的 '推荐信号模拟盘跟单' cron seed (见 migrations/2026-07-03-retire-quant-rec-paper-sync.sql).
-      void universe;
-      void style;
-      void candidateLimit;
-      generated = { recommendations: [], as_of: new Date().toISOString() };
-
-      archive = await aiInvestmentSignalService.archiveQuantRecommendations({
-        candidates: generated.recommendations || [],
-        universe,
-        style,
-        as_of: generated.as_of,
-        // PR-H — 透传时机标签 (来自 cron parameters.timing_tag, 默认 overnight).
-        timing_tag: (options as any).timing_tag,
-      });
-
-      if (toBoolean(options.verify_signals, false)) {
-        archive.verification = await aiInvestmentSignalService.verifySignals({
-          source_type: AISignalSourceType.QUANT_RECOMMENDATION,
-          limit: Math.max(archive.total || 0, 20),
-        });
-      }
+    if (
+      refreshRecommendations &&
+      options.source_type === AISignalSourceType.RECOMMENDATION_SNAPSHOT
+    ) {
+      // 唯一的 A 股早报生产路径：当日规范快照 -> canonical signal。
+      // 旧 quant_recommendation 空跑分支已移除，不再制造“刷新成功但 0 候选”的假象。
+      generated = await recommendationSnapshotSignalProjectionService.projectTradingDay();
+      archive = generated;
     }
 
     const result = await this.autoBuyFromSignals({
@@ -3758,6 +3747,10 @@ class PaperTradingAutomationService {
       strategy_keys: (() => {
         const callerKeys = normalizeStringArray((options as any).strategy_keys);
         if (callerKeys.length > 0) return callerKeys;
+        if (options.source_type === AISignalSourceType.RECOMMENDATION_SNAPSHOT) {
+          // canonical source 有自己的 GREEN/expiry/size gate，不伪装成旧量化 strategy_key。
+          return undefined;
+        }
         const portfolioKeys = Array.isArray(portfolio.strategy_keys)
           ? portfolio.strategy_keys.filter((k: any) => typeof k === 'string' && k.length > 0)
           : [];

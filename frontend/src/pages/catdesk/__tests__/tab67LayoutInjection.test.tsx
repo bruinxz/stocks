@@ -31,6 +31,18 @@ jest.mock('../tabs/HighMultipotential', () => ({ __esModule: true, default: () =
 jest.mock('../tabs/PortfolioOverview', () => ({ __esModule: true, default: () => null }));
 jest.mock('../tabs/AIAnalysisDesk', () => ({ __esModule: true, default: () => null }));
 jest.mock('../tabs/BacktestEvidence', () => ({ __esModule: true, default: () => null }));
+jest.mock('../../../components/layout/GlobalPortfolioSelector', () => ({
+  __esModule: true,
+  default: () => <div data-testid="portfolio-selector" />,
+}));
+jest.mock('../../../components/layout/AlertsBell', () => ({
+  __esModule: true,
+  default: () => <div data-testid="alerts-bell" />,
+}));
+jest.mock('../../../components/layout/CriticalAlertModal', () => ({
+  __esModule: true,
+  default: () => null,
+}));
 
 import CatDeskLayout from '../CatDeskLayout';
 

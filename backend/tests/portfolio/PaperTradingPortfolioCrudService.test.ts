@@ -53,9 +53,15 @@ function assertThrows(name: string, fn: () => any, codePart = ''): void {
     failed++;
     console.error(`FAIL ${name} — 没抛错, 期望 throw`);
   } catch (err: any) {
-    if (codePart && !(err?.code || '').includes(codePart) && !(err?.message || '').includes(codePart)) {
+    if (
+      codePart &&
+      !(err?.code || '').includes(codePart) &&
+      !(err?.message || '').includes(codePart)
+    ) {
       failed++;
-      console.error(`FAIL ${name} — 抛错但 code/message 不含 "${codePart}": ${err?.code} / ${err?.message}`);
+      console.error(
+        `FAIL ${name} — 抛错但 code/message 不含 "${codePart}": ${err?.code} / ${err?.message}`
+      );
       return;
     }
     passed++;
@@ -83,7 +89,11 @@ function test_normalizeDescription(): void {
   assert('[2] 空 string → null', normalizeDescription('') === null);
   assert('[2] 仅空格 → null', normalizeDescription('   ') === null);
   assert('[2] 正常字符串 trim', normalizeDescription('  测试盘  ') === '测试盘');
-  assertThrows('[2] 超长 1001 字符抛错', () => normalizeDescription('a'.repeat(1001)), 'INVALID_DESCRIPTION');
+  assertThrows(
+    '[2] 超长 1001 字符抛错',
+    () => normalizeDescription('a'.repeat(1001)),
+    'INVALID_DESCRIPTION'
+  );
   assert('[2] 1000 字符 OK (边界)', normalizeDescription('a'.repeat(1000)) === 'a'.repeat(1000));
 }
 
@@ -95,9 +105,17 @@ function test_normalizeInitialCapital(): void {
   assert('[3] 浮点保留 2 位', normalizeInitialCapital(50000.567) === 50000.57);
   assert('[3] string 数字 OK', normalizeInitialCapital('50000') === 50000);
   assertThrows('[3] 9999 抛错', () => normalizeInitialCapital(9999), 'INVALID_INITIAL_CAPITAL');
-  assertThrows('[3] 100000001 抛错', () => normalizeInitialCapital(100000001), 'INVALID_INITIAL_CAPITAL');
+  assertThrows(
+    '[3] 100000001 抛错',
+    () => normalizeInitialCapital(100000001),
+    'INVALID_INITIAL_CAPITAL'
+  );
   assertThrows('[3] NaN 抛错', () => normalizeInitialCapital(NaN), 'INVALID_INITIAL_CAPITAL');
-  assertThrows('[3] string 非数字抛错', () => normalizeInitialCapital('abc'), 'INVALID_INITIAL_CAPITAL');
+  assertThrows(
+    '[3] string 非数字抛错',
+    () => normalizeInitialCapital('abc'),
+    'INVALID_INITIAL_CAPITAL'
+  );
   assertThrows('[3] 负数抛错', () => normalizeInitialCapital(-1000), 'INVALID_INITIAL_CAPITAL');
 }
 
@@ -108,7 +126,10 @@ function test_normalizeStrategyKeys(): void {
   assert('[4] [] → []', JSON.stringify(normalizeStrategyKeys([])) === '[]');
   // 真实的策略 key (从 StrategyRegistry 拉)
   const valid = normalizeStrategyKeys(['etf_factor_rotation']);
-  assert('[4] Signal-First 主线 key 有效', valid.length === 1 && valid[0] === 'etf_factor_rotation');
+  assert(
+    '[4] Signal-First 主线 key 有效',
+    valid.length === 1 && valid[0] === 'etf_factor_rotation'
+  );
   // 去重
   const dedup = normalizeStrategyKeys(['etf_factor_rotation', 'etf_factor_rotation']);
   assert('[4] 同 key 去重', dedup.length === 1);
@@ -122,7 +143,11 @@ function test_normalizeStrategyKeys(): void {
     'INVALID_STRATEGY_KEYS'
   );
   // 非数组抛错
-  assertThrows('[4] string 抛错', () => normalizeStrategyKeys('etf_factor_rotation'), 'INVALID_STRATEGY_KEYS');
+  assertThrows(
+    '[4] string 抛错',
+    () => normalizeStrategyKeys('etf_factor_rotation'),
+    'INVALID_STRATEGY_KEYS'
+  );
   assertThrows('[4] object 抛错', () => normalizeStrategyKeys({}), 'INVALID_STRATEGY_KEYS');
 }
 
@@ -142,7 +167,11 @@ function test_normalizeEnabledFactors(): void {
     () => normalizeEnabledFactors(['nonexistent_factor_xyz']),
     'INVALID_ENABLED_FACTORS'
   );
-  assertThrows('[5] string 抛错', () => normalizeEnabledFactors('value'), 'INVALID_ENABLED_FACTORS');
+  assertThrows(
+    '[5] string 抛错',
+    () => normalizeEnabledFactors('value'),
+    'INVALID_ENABLED_FACTORS'
+  );
 }
 
 // ---------- [6] normalizeRiskOverrides ----------
@@ -160,12 +189,21 @@ function test_expandDisplay(): void {
   const sd = expandStrategyDisplay(['multi_factor_alpha']);
   assert('[7] strategy_display 单元素', sd.length === 1);
   assert('[7] strategy chip has key', sd[0].key === 'multi_factor_alpha');
-  assert('[7] strategy chip has name (中文)', typeof sd[0].name === 'string' && sd[0].name.length > 0);
+  assert(
+    '[7] strategy chip has name (中文)',
+    typeof sd[0].name === 'string' && sd[0].name.length > 0
+  );
   const sd2 = expandStrategyDisplay(['unknown_xyz']);
-  assert('[7] 未知 strategy fallback key=name=unknown_xyz', sd2[0].key === 'unknown_xyz' && sd2[0].name === 'unknown_xyz');
+  assert(
+    '[7] 未知 strategy fallback key=name=unknown_xyz',
+    sd2[0].key === 'unknown_xyz' && sd2[0].name === 'unknown_xyz'
+  );
   const fd = expandFactorDisplay(['value']);
   assert('[7] factor chip has key', fd[0].key === 'value');
-  assert('[7] factor chip has category', typeof fd[0].category === 'string' && fd[0].category.length > 0);
+  assert(
+    '[7] factor chip has category',
+    typeof fd[0].category === 'string' && fd[0].category.length > 0
+  );
   const fd2 = expandFactorDisplay(['unknown_xyz']);
   assert('[7] 未知 factor fallback', fd2[0].key === 'unknown_xyz' && fd2[0].category === 'unknown');
 }
@@ -211,7 +249,10 @@ function test_listAvailable(): void {
   assert('[10] factors 至少 15 个', factors.length >= 15);
   assert('[10] factor 含 key', factors[0].key.length > 0);
   assert('[10] factor 含 name', factors[0].name.length > 0);
-  assert('[10] factor 含 category', typeof factors[0].category === 'string' && factors[0].category.length > 0);
+  assert(
+    '[10] factor 含 category',
+    typeof factors[0].category === 'string' && factors[0].category.length > 0
+  );
 }
 
 // ---------- [11] Meta-guard: controller wire-in ----------
@@ -262,11 +303,11 @@ function test_meta_controller_routes(): void {
 function test_meta_model(): void {
   const model = fs.readFileSync(path.join(ROOT, 'src/models/PaperTradingPortfolio.ts'), 'utf8');
   const REQUIRED_FIELDS = [
-    "declare description: string | null",
-    "declare strategy_keys: string[]",
-    "declare enabled_factors: string[]",
-    "declare risk_profile_overrides: Record<string, unknown>",
-    "declare auto_trade_enabled: boolean",
+    'declare description: string | null',
+    'declare strategy_keys: string[]',
+    'declare enabled_factors: string[]',
+    'declare risk_profile_overrides: Record<string, unknown>',
+    'declare auto_trade_enabled: boolean',
   ];
   for (const f of REQUIRED_FIELDS) {
     assert(`[12] model has ${f}`, model.includes(f));
@@ -295,17 +336,31 @@ function test_meta_migration(): void {
   assert('[13] down migration exists', fs.existsSync(downPath));
   const up = fs.readFileSync(upPath, 'utf8');
   assert('[13] up adds description col', /ADD COLUMN IF NOT EXISTS description/i.test(up));
-  assert('[13] up adds strategy_keys col', /ADD COLUMN IF NOT EXISTS strategy_keys JSONB/i.test(up));
-  assert('[13] up adds enabled_factors col', /ADD COLUMN IF NOT EXISTS enabled_factors JSONB/i.test(up));
-  assert('[13] up adds risk_profile_overrides col', /ADD COLUMN IF NOT EXISTS risk_profile_overrides JSONB/i.test(up));
+  assert(
+    '[13] up adds strategy_keys col',
+    /ADD COLUMN IF NOT EXISTS strategy_keys JSONB/i.test(up)
+  );
+  assert(
+    '[13] up adds enabled_factors col',
+    /ADD COLUMN IF NOT EXISTS enabled_factors JSONB/i.test(up)
+  );
+  assert(
+    '[13] up adds risk_profile_overrides col',
+    /ADD COLUMN IF NOT EXISTS risk_profile_overrides JSONB/i.test(up)
+  );
   assert(
     '[13] up adds auto_trade_enabled col (default false)',
-    /ADD COLUMN IF NOT EXISTS auto_trade_enabled BOOLEAN[\s\S]*NOT NULL[\s\S]*DEFAULT false/i.test(up)
+    /ADD COLUMN IF NOT EXISTS auto_trade_enabled BOOLEAN[\s\S]*NOT NULL[\s\S]*DEFAULT false/i.test(
+      up
+    )
   );
   assert('[13] up wraps in BEGIN/COMMIT', /BEGIN;[\s\S]+COMMIT;/.test(up));
   assert('[13] up creates auto_trade index', /idx_paper_trading_portfolios_auto_trade/.test(up));
   const down = fs.readFileSync(downPath, 'utf8');
-  assert('[13] down drops all 5 cols', /DROP COLUMN IF EXISTS auto_trade_enabled[\s\S]*description/i.test(down));
+  assert(
+    '[13] down drops all 5 cols',
+    /DROP COLUMN IF EXISTS auto_trade_enabled[\s\S]*description/i.test(down)
+  );
   // Admin keep-on SQL
   const adminPath = path.join(ROOT, 'scripts/migrations/2026-06-22-admin-keep-auto-trade.sql');
   assert('[13] admin keep-on SQL exists', fs.existsSync(adminPath));
@@ -335,10 +390,7 @@ function test_meta_automation_gate(): void {
       '[14] runAutoSync 含 dry_run / bypass_auto_trade_gate 例外',
       /bypass_auto_trade_gate/.test(body) && /dry_run/.test(body)
     );
-    assert(
-      '[14] runAutoSync gate hit 时 return 跳过',
-      /AUTO_TRADE_GATE/.test(body)
-    );
+    assert('[14] runAutoSync gate hit 时 return 跳过', /AUTO_TRADE_GATE/.test(body));
     // AT-2-FIX (2026-06-22): runAutoSync 必须把 portfolio.strategy_keys 透传给
     // autoBuyFromSignals, 否则 UI 上选的策略 filter 永远不生效.
     assert(
@@ -356,46 +408,68 @@ function test_meta_fe_be_contract(): void {
     'utf8'
   );
   // ListItem 必须用 FE 字段名 (单数, 不是 positions_count)
-  assert('[15] toListItem returns position_count (not positions_count)',
-    /position_count,?\s*$/m.test(svc) && /position_count: number/.test(svc));
-  assert('[15] svc has recent_7d_return_pct field',
-    /recent_7d_return_pct/.test(svc));
-  assert('[15] svc no longer outputs return_7d_pct identifier',
-    !/return_7d_pct:/.test(svc));
+  assert(
+    '[15] toListItem returns position_count (not positions_count)',
+    /position_count,?\s*$/m.test(svc) && /position_count: number/.test(svc)
+  );
+  assert('[15] svc has recent_7d_return_pct field', /recent_7d_return_pct/.test(svc));
+  assert('[15] svc no longer outputs return_7d_pct identifier', !/return_7d_pct:/.test(svc));
   // Available strategy 必须有 key + brief
-  assert('[15] AvailableStrategy has key field',
-    /AvailableStrategy[\s\S]*?key:\s*string/.test(svc));
-  assert('[15] AvailableStrategy has brief field',
-    /AvailableStrategy[\s\S]*?brief:\s*string/.test(svc));
+  assert(
+    '[15] AvailableStrategy has key field',
+    /AvailableStrategy[\s\S]*?key:\s*string/.test(svc)
+  );
+  assert(
+    '[15] AvailableStrategy has brief field',
+    /AvailableStrategy[\s\S]*?brief:\s*string/.test(svc)
+  );
   // Available factor 必须有 key
-  assert('[15] AvailableFactor has key field',
-    /AvailableFactor[\s\S]*?key:\s*string/.test(svc));
+  assert('[15] AvailableFactor has key field', /AvailableFactor[\s\S]*?key:\s*string/.test(svc));
   // Trade detail 必须 execute_price + realized_pnl + 无 trade_date
-  assert('[15] PortfolioDetailTrade has execute_price',
-    /PortfolioDetailTrade[\s\S]*?execute_price:\s*number/.test(svc));
-  assert('[15] PortfolioDetailTrade has realized_pnl',
-    /PortfolioDetailTrade[\s\S]*?realized_pnl:\s*number/.test(svc));
+  assert(
+    '[15] PortfolioDetailTrade has execute_price',
+    /PortfolioDetailTrade[\s\S]*?execute_price:\s*number/.test(svc)
+  );
+  assert(
+    '[15] PortfolioDetailTrade has realized_pnl',
+    /PortfolioDetailTrade[\s\S]*?realized_pnl:\s*number/.test(svc)
+  );
   // Detail 必须包含 recent_snapshots 字段 (FE Drawer Recharts 用)
-  assert('[15] PortfolioDetail has recent_snapshots',
-    /recent_snapshots:\s*PortfolioDetailSnapshot\[\]/.test(svc));
+  assert(
+    '[15] PortfolioDetail has recent_snapshots',
+    /recent_snapshots:\s*PortfolioDetailSnapshot\[\]/.test(svc)
+  );
 
   // FE service contract 必须匹配
   const feSvc = fs.readFileSync(
     path.join(ROOT, '../frontend/src/services/portfolioCrudService.ts'),
     'utf8'
   );
-  assert('[15] FE service reads position_count',
-    /position_count:\s*number/.test(feSvc));
-  assert('[15] FE service reads recent_7d_return_pct',
-    /recent_7d_return_pct/.test(feSvc));
-  assert('[15] FE service AvailableStrategy.key',
-    /AvailableStrategy[\s\S]{0,200}?key:\s*string/.test(feSvc));
-  assert('[15] FE service AvailableFactor.key',
-    /AvailableFactor[\s\S]{0,200}?key:\s*string/.test(feSvc));
-  assert('[15] FE service PortfolioDetailTrade.execute_price',
-    /PortfolioDetailTrade[\s\S]{0,400}?execute_price:\s*number/.test(feSvc));
-  assert('[15] FE service PortfolioDetailSnapshot present',
-    /PortfolioDetailSnapshot/.test(feSvc));
+  // PortfolioManagementPanel 已删除；前端 CRUD service 只保留简易版实际使用的创建入口。
+  assert(
+    '[15] FE minimal service keeps CreatePortfolioInput',
+    /export interface CreatePortfolioInput/.test(feSvc)
+  );
+  assert(
+    '[15] FE minimal service keeps strategy_keys',
+    /strategy_keys\?:\s*string\[\]/.test(feSvc)
+  );
+  assert(
+    '[15] FE minimal service keeps enabled_factors',
+    /enabled_factors\?:\s*string\[\]/.test(feSvc)
+  );
+  assert(
+    '[15] FE minimal service posts portfolio create endpoint',
+    /api\.post\(['"]\/paper-trading\/portfolios['"]/.test(feSvc)
+  );
+  assert(
+    '[15] FE minimal service exports createPortfolio',
+    /export async function createPortfolio/.test(feSvc)
+  );
+  assert(
+    '[15] FE minimal service removed unused destructive CRUD',
+    !/export async function (deletePortfolio|resetPortfolio|updatePortfolio)/.test(feSvc)
+  );
 }
 
 // ============================================================

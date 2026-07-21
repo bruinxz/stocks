@@ -13,7 +13,7 @@
  *
  * 使用范本:
  *   const { selectedPortfolioId } = usePortfolio();
- *   const data = await getPortfolio(selectedPortfolioId);
+ *   const data = await getPortfolioLedger(selectedPortfolioId);
  */
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import {

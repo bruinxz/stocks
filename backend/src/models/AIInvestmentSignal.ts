@@ -32,6 +32,8 @@ export enum AISignalSourceType {
    * action = 'TARGET_WEIGHT', 带 rebalance_id, metadata.core_satellite_bucket='cash'.
    */
   CASH_MANAGEMENT = 'cash_management',
+  /** 当日 A 股早报规范快照投影；source_id 固定为 ai_recommendation_item.item_id。 */
+  RECOMMENDATION_SNAPSHOT = 'recommendation_snapshot',
 }
 
 export enum AISignalDecision {

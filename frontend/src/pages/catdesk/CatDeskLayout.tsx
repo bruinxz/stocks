@@ -9,6 +9,9 @@ import { LoadingState } from './shared/LoadingState';
 import { CowMascot, type CowMood } from './shared/CowMascot';
 import { createTab67HttpApi, type Tab67Api } from './tabs/daily-report/tab67Api';
 import { PageFreshnessStamp } from './shared/PageFreshnessStamp';
+import GlobalPortfolioSelector from '../../components/layout/GlobalPortfolioSelector';
+import AlertsBell from '../../components/layout/AlertsBell';
+import CriticalAlertModal from '../../components/layout/CriticalAlertModal';
 
 const AShareMorningBrief = React.lazy(() => import('./tabs/AShareMorningBrief'));
 const AShareMarket = React.lazy(() => import('./tabs/a-share-market/AShareMarket'));
@@ -157,6 +160,11 @@ export default function CatDeskLayout({
               <p>{tabMeta.description}</p>
             </div>
             <div className="catdesk-topbar-meta">
+              <div className="catdesk-topbar-tools" aria-label="账户与告警工具">
+                <GlobalPortfolioSelector />
+                <AlertsBell />
+                <CriticalAlertModal />
+              </div>
               <span className="catdesk-live-pill">
                 <i /> 数据观测中
               </span>

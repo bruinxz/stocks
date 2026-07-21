@@ -305,6 +305,7 @@ export function computeWeeklyReturnPct(
  */
 export function buildCheckupMessage(input: {
   date: string;
+  portfolio_name?: string;
   positions_count: number;
   max_single_pct: number | null;
   max_single_symbol: string | null;
@@ -332,7 +333,7 @@ export function buildCheckupMessage(input: {
   const industryLabel = (n: string | null) =>
     n === UNKNOWN_INDUSTRY_SENTINEL ? '未分类' : n || '—';
   const lines: string[] = [
-    `📋 持仓体检（${input.date}）`,
+    `📋 持仓体检 · ${input.portfolio_name || '模拟盘'}（${input.date}）`,
     `当前总市值：${fmtMoney(input.current_total_value)}`,
     `持仓数：${input.positions_count} 只`,
     `单股最大占比：${fmtPct(input.max_single_pct)}` +
@@ -412,10 +413,12 @@ export interface MorningRiskCheckupDataSource {
   loadConfig(user_id: number): Promise<MorningRiskCheckupConfig>;
   /** Persist this user's config (UPSERT semantics). */
   saveConfig(user_id: number, config: MorningRiskCheckupConfig): Promise<MorningRiskCheckupConfig>;
-  /** Load the user's primary portfolio header (or null). */
-  loadPortfolioHeader(user_id: number): Promise<{ id: number; total_value: number } | null>;
-  /** Load open positions (quantity > 0) for the user, with industry joined. */
-  loadOpenPositions(user_id: number): Promise<CheckupPositionSnapshot[]>;
+  /** Load every active portfolio independently; values must never be aggregated across ids. */
+  loadPortfolioHeaders(
+    user_id: number
+  ): Promise<Array<{ id: number; name: string; total_value: number }>>;
+  /** Load open positions (quantity > 0) for exactly one portfolio. */
+  loadOpenPositions(portfolio_id: number): Promise<CheckupPositionSnapshot[]>;
   /**
    * Load the user's recent portfolio snapshots within `[asOfDate - lookback, asOfDate]`.
    * Used for peak-value and weekly_baseline lookup. Should return sorted asc by date.
@@ -426,14 +429,17 @@ export interface MorningRiskCheckupDataSource {
     lookbackDays: number
   ): Promise<CheckupSnapshotRow[]>;
   /** Count unread RiskAlert rows for this user (all levels). */
-  countUnresolvedAlerts(user_id: number): Promise<number>;
+  countUnresolvedAlerts(user_id: number, portfolio_id: number): Promise<number>;
   /**
    * Phase 2+/4+/5+ 系统健康快照 (sizing audit + kill switch + outcome coverage)。
    * 失败时返回 null (fail-OPEN，不阻塞主 checkup)。
    */
-  loadSystemHealthSnapshot(user_id: number): Promise<SystemHealthSnapshot | null>;
+  loadSystemHealthSnapshot(
+    user_id: number,
+    portfolio_id: number
+  ): Promise<SystemHealthSnapshot | null>;
   /**
-   * Persist one MorningRiskCheckup row (UPSERT on (user_id, date)).
+   * Persist one MorningRiskCheckup row (UPSERT on (user_id, portfolio_id, date)).
    * 通知交付状态不写本表，由 feishu_notification_outbox 单独维护。
    */
   upsertCheckup(input: {
@@ -455,9 +461,13 @@ export interface MorningRiskCheckupDataSource {
     error: string | null;
   }): Promise<void>;
   /** Fetch the latest checkup for a user (UI uses this for `today` endpoint). */
-  loadLatestCheckup(user_id: number): Promise<MorningRiskCheckup | null>;
+  loadLatestCheckup(user_id: number, portfolio_id?: number): Promise<MorningRiskCheckup | null>;
   /** Fetch a specific date's checkup for a user (returns null if not yet computed). */
-  loadCheckupForDate(user_id: number, date: string): Promise<MorningRiskCheckup | null>;
+  loadCheckupForDate(
+    user_id: number,
+    date: string,
+    portfolio_id?: number
+  ): Promise<MorningRiskCheckup | null>;
 }
 
 /**
@@ -469,6 +479,7 @@ export interface MorningRiskCheckupDataSource {
 export class DefaultMorningRiskCheckupDataSource implements MorningRiskCheckupDataSource {
   async loadAllUserIdsWithPortfolios(): Promise<number[]> {
     const rows = await PaperTradingPortfolio.findAll({
+      where: { is_active: true },
       attributes: ['user_id'],
       group: ['user_id'],
     });
@@ -500,27 +511,25 @@ export class DefaultMorningRiskCheckupDataSource implements MorningRiskCheckupDa
     return { ...config };
   }
 
-  async loadPortfolioHeader(user_id: number): Promise<{ id: number; total_value: number } | null> {
-    // 修复 (2026-06-16, HIGH H2): 聚合所有 active portfolio 的 total_value 给 morning checkup
+  async loadPortfolioHeaders(
+    user_id: number
+  ): Promise<Array<{ id: number; name: string; total_value: number }>> {
     const portfolios = await PaperTradingPortfolio.findAll({
       where: { user_id, is_active: true },
-      attributes: ['id', 'total_value'],
+      attributes: ['id', 'name', 'total_value'],
+      order: [['id', 'ASC']],
     });
-    if (portfolios.length === 0) return null;
-    const totalValue = portfolios.reduce((s, p) => s + Number(p.total_value || 0), 0);
-    return { id: portfolios[0].id, total_value: totalValue };
+    return portfolios.map(portfolio => ({
+      id: portfolio.id,
+      name: portfolio.name,
+      total_value: Number(portfolio.total_value || 0),
+    }));
   }
 
-  async loadOpenPositions(user_id: number): Promise<CheckupPositionSnapshot[]> {
-    // 修复 (HIGH H2): 跨所有 active portfolio
-    const portfolios = await PaperTradingPortfolio.findAll({
-      where: { user_id, is_active: true },
-      attributes: ['id'],
-    });
-    if (portfolios.length === 0) return [];
+  async loadOpenPositions(portfolio_id: number): Promise<CheckupPositionSnapshot[]> {
     const rows = await PaperTradingPosition.findAll({
       where: {
-        portfolio_id: { [Op.in]: portfolios.map(p => p.id) },
+        portfolio_id,
         quantity: { [Op.gt]: 0 },
       },
     });
@@ -568,8 +577,14 @@ export class DefaultMorningRiskCheckupDataSource implements MorningRiskCheckupDa
     }));
   }
 
-  async countUnresolvedAlerts(user_id: number): Promise<number> {
-    return await RiskAlert.count({ where: { user_id, is_read: false } });
+  async countUnresolvedAlerts(user_id: number, portfolio_id: number): Promise<number> {
+    return await RiskAlert.count({
+      where: {
+        user_id,
+        is_read: false,
+        metadata: { [Op.contains]: { portfolio_id } },
+      },
+    });
   }
 
   /**
@@ -578,7 +593,10 @@ export class DefaultMorningRiskCheckupDataSource implements MorningRiskCheckupDa
    * 失败时返回 null (fail-OPEN) 不阻塞主 checkup —— 即使新 phase 还没数据，
    * morning checkup 主流程仍照常出报告。
    */
-  async loadSystemHealthSnapshot(user_id: number): Promise<SystemHealthSnapshot | null> {
+  async loadSystemHealthSnapshot(
+    user_id: number,
+    portfolio_id: number
+  ): Promise<SystemHealthSnapshot | null> {
     try {
       // 三个查询并行
       const [sizingRow, killRow, outcomeRow] = await Promise.all([
@@ -614,8 +632,8 @@ export class DefaultMorningRiskCheckupDataSource implements MorningRiskCheckupDa
               COUNT(*) FILTER (WHERE trade_status = 'closed' AND root_cause IS NOT NULL)::int AS with_rc,
               COUNT(*) FILTER (WHERE trade_status = 'closed' AND metadata->'postmortem' IS NOT NULL)::int AS with_pm
             FROM recommendation_trade_outcomes
-            WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id = :uid)`,
-            { replacements: { uid: user_id } }
+            WHERE portfolio_id = :portfolio_id`,
+            { replacements: { portfolio_id } }
           )
           .then(r => (r[0] as any[])[0] as any)
           .catch(() => ({})),
@@ -661,7 +679,11 @@ export class DefaultMorningRiskCheckupDataSource implements MorningRiskCheckupDa
     error: string | null;
   }): Promise<void> {
     const existing = await MorningRiskCheckup.findOne({
-      where: { user_id: input.user_id, date: input.date },
+      where: {
+        user_id: input.user_id,
+        portfolio_id: input.portfolio_id,
+        date: input.date,
+      },
     });
     if (existing) {
       existing.portfolio_id = input.portfolio_id;
@@ -701,15 +723,25 @@ export class DefaultMorningRiskCheckupDataSource implements MorningRiskCheckupDa
     } as any);
   }
 
-  async loadLatestCheckup(user_id: number): Promise<MorningRiskCheckup | null> {
+  async loadLatestCheckup(
+    user_id: number,
+    portfolio_id?: number
+  ): Promise<MorningRiskCheckup | null> {
     return await MorningRiskCheckup.findOne({
-      where: { user_id },
+      where: { user_id, ...(portfolio_id ? { portfolio_id } : {}) },
       order: [['date', 'DESC']],
     });
   }
 
-  async loadCheckupForDate(user_id: number, date: string): Promise<MorningRiskCheckup | null> {
-    return await MorningRiskCheckup.findOne({ where: { user_id, date } });
+  async loadCheckupForDate(
+    user_id: number,
+    date: string,
+    portfolio_id?: number
+  ): Promise<MorningRiskCheckup | null> {
+    return await MorningRiskCheckup.findOne({
+      where: { user_id, date, ...(portfolio_id ? { portfolio_id } : {}) },
+      order: [['portfolio_id', 'ASC']],
+    });
   }
 }
 
@@ -772,72 +804,82 @@ export class MorningRiskCheckupService {
       dry_run: dryRun,
     };
 
+    const checkedUserIds = new Set<number>();
     for (const user_id of userIds) {
       try {
-        const userResult = await this.checkupOneUser(user_id, asOfDate, dryRun);
-        result.per_user.push(userResult);
-        if (userResult.persisted || (dryRun && userResult.enabled)) {
-          result.checked_users += 1;
+        const config = await this.source.loadConfig(user_id);
+        const headers = await this.source.loadPortfolioHeaders(user_id);
+        for (const header of headers) {
+          try {
+            const portfolioResult = await this.checkupOnePortfolio(
+              user_id,
+              header,
+              config,
+              asOfDate,
+              dryRun
+            );
+            result.per_user.push(portfolioResult);
+            if (portfolioResult.persisted || (dryRun && portfolioResult.enabled)) {
+              checkedUserIds.add(user_id);
+            }
+          } catch (err) {
+            logger.warn(
+              `MorningRiskCheckupService.runMorningCheckup user=${user_id} ` +
+                `portfolio=${header.id} failed: ${(err as Error).message}`
+            );
+            result.per_user.push(
+              this.failedResult(user_id, header.id, asOfDate, (err as Error).message)
+            );
+          }
         }
       } catch (err) {
         logger.warn(
           `MorningRiskCheckupService.runMorningCheckup user=${user_id} failed: ` +
             `${(err as Error).message}`
         );
-        result.per_user.push({
-          user_id,
-          portfolio_id: null,
-          date: asOfDate.toISOString().slice(0, 10),
-          enabled: false,
-          positions_count: 0,
-          max_single_pct: null,
-          max_single_symbol: null,
-          max_industry_pct: null,
-          max_industry_name: null,
-          current_total_value: null,
-          peak_value: null,
-          drawdown_pct: null,
-          weekly_return_pct: null,
-          unresolved_alerts_count: 0,
-          message: '',
-          persisted: false,
-          error: (err as Error).message,
-        });
+        result.per_user.push(this.failedResult(user_id, null, asOfDate, (err as Error).message));
       }
     }
-
+    result.checked_users = checkedUserIds.size;
     return result;
   }
 
-  /** Single-user checkup extracted for clarity. */
-  private async checkupOneUser(
+  private failedResult(
     user_id: number,
+    portfolio_id: number | null,
+    asOfDate: Date,
+    error: string
+  ): MorningRiskCheckupResult {
+    return {
+      user_id,
+      portfolio_id,
+      date: asOfDate.toISOString().slice(0, 10),
+      enabled: false,
+      positions_count: 0,
+      max_single_pct: null,
+      max_single_symbol: null,
+      max_industry_pct: null,
+      max_industry_name: null,
+      current_total_value: null,
+      peak_value: null,
+      drawdown_pct: null,
+      weekly_return_pct: null,
+      unresolved_alerts_count: 0,
+      message: '',
+      persisted: false,
+      error,
+    };
+  }
+
+  /** Single-portfolio checkup. Every query below is scoped to header.id. */
+  private async checkupOnePortfolio(
+    user_id: number,
+    header: { id: number; name: string; total_value: number },
+    config: MorningRiskCheckupConfig,
     asOfDate: Date,
     dryRun: boolean
   ): Promise<MorningRiskCheckupResult> {
     const date = asOfDate.toISOString().slice(0, 10);
-    const config = await this.source.loadConfig(user_id);
-    const header = await this.source.loadPortfolioHeader(user_id);
-    if (!header) {
-      return {
-        user_id,
-        portfolio_id: null,
-        date,
-        enabled: config.enabled,
-        positions_count: 0,
-        max_single_pct: null,
-        max_single_symbol: null,
-        max_industry_pct: null,
-        max_industry_name: null,
-        current_total_value: null,
-        peak_value: null,
-        drawdown_pct: null,
-        weekly_return_pct: null,
-        unresolved_alerts_count: 0,
-        message: '',
-        persisted: false,
-      };
-    }
     if (!config.enabled) {
       return {
         user_id,
@@ -859,13 +901,13 @@ export class MorningRiskCheckupService {
       };
     }
 
-    // Pull the per-user inputs in parallel — each independent of the others.
+    // Pull inputs for exactly this portfolio — never mix headers/positions/snapshots.
     const [positions, snapshots, unresolved_alerts_count, system_health] = await Promise.all([
-      this.source.loadOpenPositions(user_id),
+      this.source.loadOpenPositions(header.id),
       this.source.loadRecentSnapshots(header.id, asOfDate, config.drawdown_lookback_days),
-      this.source.countUnresolvedAlerts(user_id),
+      this.source.countUnresolvedAlerts(user_id, header.id),
       // Phase 2+/4+/5+ 系统健康并行拉，失败返回 null 不阻塞主流程
-      this.source.loadSystemHealthSnapshot(user_id).catch(() => null),
+      this.source.loadSystemHealthSnapshot(user_id, header.id).catch(() => null),
     ]);
 
     const positions_count = positions.filter(p => p.quantity > 0).length;
@@ -889,6 +931,7 @@ export class MorningRiskCheckupService {
 
     const message = buildCheckupMessage({
       date,
+      portfolio_name: header.name,
       positions_count,
       max_single_pct: singleStock?.pct ?? null,
       max_single_symbol: singleStock?.symbol ?? null,
@@ -955,19 +998,19 @@ export class MorningRiskCheckupService {
         if (this.notifications) {
           try {
             const delivery = await this.notifications.enqueueAndDeliver({
-              idempotency_key: `morning-risk-checkup:${user_id}:${date}`,
-              topic_key: `morning-risk-checkup:${user_id}`,
+              idempotency_key: `morning-risk-checkup:${user_id}:${header.id}:${date}`,
+              topic_key: `morning-risk-checkup:${user_id}:${header.id}`,
               audience: 'user',
               recipient_user_id: user_id,
               kind: 'morning_risk_checkup',
               severity: 'INFO',
-              title: `🌅 ${date} 开盘前风险体检`,
+              title: `🌅 ${date} ${header.name} · 开盘前风险体检`,
               payload: {
                 msg_type: 'text',
                 content: { text: message },
               },
-              correlation_id: `morning_risk_checkup:${user_id}:${date}`,
-              metadata: { user_id, portfolio_id: header.id, date },
+              correlation_id: `morning_risk_checkup:${user_id}:${header.id}:${date}`,
+              metadata: { user_id, portfolio_id: header.id, portfolio_name: header.name, date },
             });
             checkup.notification_status = delivery.status;
             checkup.notification_outbox_id = delivery.outbox_id;

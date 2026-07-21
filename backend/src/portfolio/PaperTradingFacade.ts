@@ -929,16 +929,11 @@ export class PaperTradingFacade {
       }
     }
     if (!portfolio) {
-      // 只在 caller 完全没传 portfolio_id 时才 first-time create
-      const fallbackName = username || 'User';
-      portfolio = await PaperTradingPortfolio.create({
-        user_id,
-        name: `${fallbackName}的模拟盘`,
-        initial_capital: DEFAULT_PAPER_TRADING_INITIAL_CAPITAL,
-        current_cash: DEFAULT_PAPER_TRADING_INITIAL_CAPITAL,
-        total_value: DEFAULT_PAPER_TRADING_INITIAL_CAPITAL,
-        is_active: true,
-      });
+      // GET 必须只读。新建模拟盘只能走显式 POST /portfolios。
+      const error: any = new Error('当前用户没有可用模拟盘');
+      error.statusCode = 404;
+      error.code = 'PORTFOLIO_NOT_FOUND';
+      throw error;
     }
 
     const positions = await PaperTradingPosition.findAll({
@@ -971,10 +966,11 @@ export class PaperTradingFacade {
             const market_value = roundMoney(current_price * quantity);
             const unrealized_pnl = roundMoney(market_value - avg_cost * quantity);
 
+            // GET 必须只读：仅修改本次响应实例，持久化行情/估值由显式
+            // POST /refresh-snapshot 和定时任务负责。
             pos.current_price = current_price;
             pos.market_value = market_value;
             pos.unrealized_pnl = unrealized_pnl;
-            await pos.save();
 
             atr_pct = computeAtrPctFromBars(bars as Array<{ high: any; low: any; close: any }>, 14);
           }
@@ -995,7 +991,6 @@ export class PaperTradingFacade {
     );
 
     portfolio.total_value = roundMoney(toNumber(portfolio.current_cash) + totalMarketValue);
-    await portfolio.save();
 
     return { portfolio, positions: updatedPositions };
   }

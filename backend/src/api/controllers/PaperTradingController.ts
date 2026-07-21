@@ -11,6 +11,8 @@ import { PaperTradingOrderIntent } from '../../models/PaperTradingOrderIntent';
 // AT-1 (2026-06-22) — 模拟盘 CRUD
 import { paperTradingPortfolioCrudService } from '../../portfolio/internal/PaperTradingPortfolioCrudService';
 import { logger } from '../../utils/logger';
+import { portfolioLedgerService } from '../../portfolio/internal/PortfolioLedgerService';
+import { AISignalSourceType } from '../../models/AIInvestmentSignal';
 
 // AUTONOMOUS_PORTFOLIO_NAME / DEFAULT_AUTONOMOUS_INITIAL_CAPITAL / QUANT_ONLY_PORTFOLIO_NAME
 // are re-exported from the facade for legacy reasons (some routes/tests may still
@@ -121,6 +123,24 @@ export class PaperTradingController {
       res.json({ success: true, data });
     } catch (error: any) {
       sendError(res, error, '获取 portfolio 详情失败');
+    }
+  };
+
+  /**
+   * 只读持仓对账簿。与 legacy GET /paper-trading 不同，本接口绝不刷新行情、
+   * 不改 position/portfolio/snapshot，只把现存事实按同一 portfolio_id 对齐返回。
+   */
+  getPortfolioLedger = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const portfolio_id = Number(req.params.id);
+      if (!Number.isInteger(portfolio_id) || portfolio_id <= 0) {
+        return res.status(400).json({ success: false, message: 'id 无效' });
+      }
+      const data = await portfolioLedgerService.getForUser(user.id, portfolio_id);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      sendError(res, error, '获取持仓对账簿失败');
     }
   };
 
@@ -371,7 +391,11 @@ export class PaperTradingController {
         action: 'auto_sync',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: this.sanitizeAutomationBody(req.body, (req as any).user),
+        body: {
+          ...this.sanitizeAutomationBody(req.body, (req as any).user),
+          source_type: AISignalSourceType.RECOMMENDATION_SNAPSHOT,
+          refresh_recommendations: true,
+        },
       });
       res.json({
         success: true,

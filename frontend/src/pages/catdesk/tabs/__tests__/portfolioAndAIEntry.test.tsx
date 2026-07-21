@@ -3,19 +3,21 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 
-const mockGetPortfolio = jest.fn<Promise<any>, [number | undefined]>();
+const mockGetPortfolio = jest.fn<Promise<any>, [number]>();
 const mockSearchStocks = jest.fn<Promise<any>, [string, number]>();
 
 jest.mock('../../../../contexts/PortfolioContext', () => ({
   usePortfolio: () => ({
     selectedPortfolioId: 65,
-    portfolios: [{ id: 65, name: '综合策略主盘' }],
+    setSelectedPortfolioId: () => undefined,
+    loading: false,
+    portfolios: [{ id: 65, name: '综合策略主盘', position_count: 1 }],
   }),
 }));
 
 jest.mock('../../../../services/portfolioWorkspaceService', () => ({
   portfolioWorkspaceService: {
-    getPortfolio: (id?: number) => mockGetPortfolio(id),
+    getPortfolioLedger: (id: number) => mockGetPortfolio(id),
   },
 }));
 
@@ -82,25 +84,79 @@ describe('CatDesk portfolio and AI entries', () => {
       portfolio: {
         id: 65,
         name: '综合策略主盘',
-        initial_capital: 200000,
-        current_cash: 100000,
-        total_value: 205000,
         is_active: true,
+        auto_trade_enabled: true,
+        strategy_keys: [],
+        description: null,
       },
+      valuation: {
+        initial_capital: 200000,
+        current_cash: 192680,
+        position_value: 12320,
+        total_value: 205000,
+        total_pnl: 5000,
+        total_pnl_pct: 2.5,
+        valued_at: '2026-07-21T03:00:00.000Z',
+        quote_source: 'realtime_quotes',
+        has_stale_quotes: false,
+      },
+      latest_morning_brief: {
+        snapshot_id: 'snap',
+        trading_day: '2026-07-21',
+        as_of: '2026-07-21T00:00:00Z',
+      },
+      latest_multibagger: null,
+      unread_alerts_count: 0,
       positions: [
         {
-          id: 901,
-          symbol: 'sh.600483',
-          name: '福能股份',
-          quantity: 1100,
-          avg_cost: 10.42,
-          current_price: 11.2,
-          market_value: 12320,
-          unrealized_pnl: 858,
-          stop_loss_price: 9.899,
-          take_profit_price: 11.462,
-          created_at: '2026-07-07T05:20:00.000Z',
-          updated_at: '2026-07-21T03:00:00.000Z',
+          position: {
+            id: 901,
+            symbol: 'sh.600483',
+            name: '福能股份',
+            quantity: 1100,
+            avg_cost: 10.42,
+            stop_loss_price: 9.899,
+            take_profit_price: 11.462,
+            highest_price: 11.3,
+            trailing_stop_price: 10.17,
+            created_at: '2026-07-07T05:20:00.000Z',
+          },
+          quote: {
+            price: 11.2,
+            source: 'tencent',
+            quote_time: '2026-07-21T03:00:00.000Z',
+            trade_date: '2026-07-21',
+            freshness: 'fresh',
+            age_minutes: 1,
+          },
+          valuation: { market_value: 12320, unrealized_pnl: 858, unrealized_pnl_pct: 7.49 },
+          source_status: 'linked',
+          source_message: null,
+          entry_trades: [],
+          investment_signal: {
+            id: 959,
+            source_type: 'recommendation_snapshot',
+            source_id: 'item',
+            signal_date: '2026-07-21',
+            decision: '推荐',
+            normalized_decision: 'buy',
+            confidence_score: 88,
+            rationale: '验证',
+            metadata: {},
+          },
+          outcome: null,
+          morning_brief: {
+            matched: true,
+            snapshot_id: 'snap',
+            trading_day: '2026-07-21',
+            rank: 0,
+            rating: 'A',
+          },
+          multibagger: { matched: false, as_of: null },
+          alerts: [],
+          notifications: [],
+          corrections: [],
+          timeline: [],
         },
       ],
     });
