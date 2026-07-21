@@ -6985,6 +6985,7 @@ class PaperTradingAutomationService {
     const buyGateResult = await checkAllPreTradeGates({
       side: 'BUY',
       user_id: portfolio.user_id,
+      portfolio_id: portfolio.id,
       symbol,
       proposed_value: amount, // = execute_price × quantity, ex-commission
       caller_label: 'automation.createBuyTrade',

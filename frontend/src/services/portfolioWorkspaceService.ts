@@ -47,16 +47,24 @@ export interface PortfolioLedgerPosition {
     source: string;
     quote_time: string | null;
     trade_date: string | null;
-    freshness: 'fresh' | 'delayed' | 'stale' | 'missing';
+    freshness: 'live' | 'close' | 'delayed' | 'stale' | 'missing';
     age_minutes: number | null;
+    expected_trade_date: string;
+    market_phase: string;
   };
   valuation: {
     market_value: number;
     unrealized_pnl: number;
     unrealized_pnl_pct: number | null;
   };
-  source_status: 'linked' | 'missing';
+  source_status: 'signal_linked' | 'trade_origin_linked' | 'unresolved';
   source_message: string | null;
+  trade_origin: {
+    trade_id: number;
+    source: string;
+    strategy_key: string | null;
+    summary: string | null;
+  } | null;
   entry_trades: Array<{
     id: number;
     execute_price: number;
@@ -94,6 +102,11 @@ export interface PortfolioLedgerPosition {
     snapshot_id?: string | null;
     item_id?: string;
     trading_day: string | null;
+    expected_trading_day: string;
+    as_of: string | null;
+    freshness: 'fresh' | 'delayed' | 'missing';
+    lag_days: number | null;
+    reason: string | null;
     rank?: number;
     rating?: string;
     conviction?: number | null;
@@ -103,24 +116,35 @@ export interface PortfolioLedgerPosition {
     matched: boolean;
     snapshot_id?: string;
     as_of: string | null;
+    available_at: string | null;
+    freshness: 'fresh' | 'delayed' | 'missing';
+    lag_days: number | null;
+    reason: string | null;
+    strategy_version: string | null;
     stage?: string;
     conclusion?: string;
     rating?: string | null;
   };
   alerts: Array<{
     id: number;
+    symbol: string;
     level: string;
     rule_id: string | null;
     message: string;
     is_read: boolean;
+    metadata: Record<string, unknown>;
     created_at: string | null;
   }>;
   notifications: Array<{
     id: number;
     title: string;
     kind: string;
+    severity: string;
     status: string;
     corrected: boolean;
+    invalidated: boolean;
+    correction_id: number | null;
+    metadata: Record<string, unknown>;
     created_at: string | null;
     sent_at: string | null;
   }>;
@@ -128,6 +152,8 @@ export interface PortfolioLedgerPosition {
     id: number;
     correction_key: string;
     correction_type: string;
+    entity_type: string;
+    entity_id: string;
     reason: string;
     created_at: string | null;
   }>;
@@ -151,16 +177,38 @@ export interface PortfolioLedger {
     total_pnl: number;
     total_pnl_pct: number | null;
     valued_at: string | null;
+    oldest_quote_at: string | null;
+    newest_quote_at: string | null;
     quote_source: string;
+    quote_counts: Record<'live' | 'close' | 'delayed' | 'stale' | 'missing', number>;
     has_stale_quotes: boolean;
   };
   latest_morning_brief: {
-    snapshot_id: string;
-    trading_day: string;
+    snapshot_id: string | null;
+    trading_day: string | null;
+    expected_trading_day: string;
     as_of: string | null;
+    freshness: 'fresh' | 'delayed' | 'missing';
+    lag_days: number | null;
+    reason: string | null;
+  };
+  latest_multibagger: {
+    as_of: string | null;
+    available_at: string | null;
+    market_scope: string;
+    strategy_version: string;
+    freshness: 'fresh' | 'delayed' | 'missing';
+    lag_days: number | null;
+    reason: string | null;
   } | null;
-  latest_multibagger: { as_of: string | null; market_scope: string } | null;
   unread_alerts_count: number;
+  portfolio_alerts: PortfolioLedgerPosition['alerts'];
+  account_alerts: PortfolioLedgerPosition['alerts'];
+  portfolio_notifications: PortfolioLedgerPosition['notifications'];
+  account_notifications: PortfolioLedgerPosition['notifications'];
+  portfolio_corrections: PortfolioLedgerPosition['corrections'];
+  latest_morning_notification: PortfolioLedgerPosition['notifications'][number] | null;
+  latest_correction_notification: PortfolioLedgerPosition['notifications'][number] | null;
   positions: PortfolioLedgerPosition[];
 }
 

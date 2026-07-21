@@ -18,7 +18,7 @@ function assert(name: string, condition: boolean, detail = '') {
 function fixture(): RecommendationProjectionSnapshot {
   return {
     snapshot_id: '11111111-1111-4111-8111-111111111111',
-    trading_day: '2026-07-21',
+    trading_day: '2026-07-20',
     profile: 'us_preferred',
     market_scope: 'cn_a',
     as_of: new Date('2026-07-21T00:30:00.000Z'),
@@ -63,7 +63,8 @@ async function main() {
   const payload = buildRecommendationSignalPayload(
     snapshot,
     snapshot.items[0],
-    '2026-07-21T07:30:00.000Z'
+    '2026-07-21T07:30:00.000Z',
+    '2026-07-21'
   );
   assert('canonical source type', payload.source_type === 'recommendation_snapshot');
   assert('source id is item id', payload.source_id === snapshot.items[0].item_id);
@@ -74,7 +75,7 @@ async function main() {
 
   const writes: Record<string, any>[] = [];
   const service = new RecommendationSnapshotSignalProjectionService({
-    async loadSnapshot() {
+    async loadLatestEligibleSnapshot() {
       return snapshot;
     },
     async upsertSignal(input) {
@@ -88,6 +89,11 @@ async function main() {
   });
   assert('only GREEN non-SKIP item projected', result.projected === 1 && result.skipped === 1);
   assert('one canonical signal written', writes.length === 1);
+  assert('execution day becomes signal date', writes[0].signal_date === '2026-07-21');
+  assert(
+    'research day remains traceable in metadata',
+    writes[0].metadata.research_trading_day === '2026-07-20'
+  );
 
   const expired = await service.projectTradingDay({
     trading_day: '2026-07-21',
@@ -97,6 +103,20 @@ async function main() {
     'expired snapshot does not project',
     expired.projected === 0 && expired.reason === 'snapshot_expired'
   );
+
+  const staleService = new RecommendationSnapshotSignalProjectionService({
+    async loadLatestEligibleSnapshot() {
+      return { ...snapshot, trading_day: '2026-07-17' };
+    },
+    async upsertSignal() {
+      throw new Error('stale snapshot must not write');
+    },
+  });
+  const stale = await staleService.projectTradingDay({
+    trading_day: '2026-07-21',
+    now: new Date('2026-07-21T01:40:00.000Z'),
+  });
+  assert('stale research snapshot is rejected', stale.reason === 'snapshot_stale');
 
   console.log(`${passed} ok, ${failed} failed`);
   if (failed) process.exitCode = 1;

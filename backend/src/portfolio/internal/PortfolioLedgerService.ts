@@ -4,17 +4,23 @@ import { AIInvestmentSignal } from '../../models/AIInvestmentSignal';
 import { AiRecommendationItem } from '../../models/AiRecommendationItem';
 import { AiRecommendationSnapshot } from '../../models/AiRecommendationSnapshot';
 import { FeishuNotificationOutbox } from '../../models/FeishuNotificationOutbox';
-import { MultibaggerCandidateSnapshot } from '../../models/MultibaggerCandidateSnapshot';
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../../models/PaperTradingPosition';
 import { PaperTradingTrade } from '../../models/PaperTradingTrade';
 import { RealtimeQuote } from '../../models/RealtimeQuote';
 import { RecommendationTradeOutcome } from '../../models/RecommendationTradeOutcome';
 import { RiskAlert } from '../../models/RiskAlert';
-import { getEast8DateString } from '../../utils/timezone';
+import { expectedCompletedTradeDate } from '../../services/PageFreshnessService';
+import {
+  countTradingDaysBetween,
+  getShanghaiDate,
+  isAShareTradeDay,
+  latestTradeDateOnOrBefore,
+} from '../../utils/tradingCalendar';
 import { normalizeSymbol } from '../../utils/stockSymbol';
 
-export type QuoteFreshness = 'fresh' | 'delayed' | 'stale' | 'missing';
+export type QuoteFreshness = 'live' | 'close' | 'delayed' | 'stale' | 'missing';
+export type ResearchFreshness = 'fresh' | 'delayed' | 'missing';
 
 export interface PortfolioLedgerTimelineItem {
   id: string;
@@ -24,6 +30,17 @@ export interface PortfolioLedgerTimelineItem {
   occurred_at: string;
   status: string | null;
   corrected: boolean;
+}
+
+interface MultibaggerLedgerRow {
+  snapshot_id: string;
+  ticker: string;
+  as_of_utc: Date | string;
+  available_at_utc: Date | string;
+  stage: string;
+  conclusion: string;
+  rating: string | null;
+  strategy_version: string;
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -44,35 +61,164 @@ function objectValue(value: unknown): Record<string, any> {
     : {};
 }
 
+function shanghaiMinutes(now: Date): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+  const hour = Number(parts.find(part => part.type === 'hour')?.value || 0);
+  const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+  return hour * 60 + minute;
+}
+
+function previousTradeDate(today: string): string {
+  const previous = new Date(new Date(`${today}T00:00:00+08:00`).getTime() - 86_400_000);
+  return latestTradeDateOnOrBefore(previous);
+}
+
+export function expectedQuoteTradeDate(now = new Date()): {
+  trade_date: string;
+  market_phase: 'pre_open' | 'trading' | 'lunch' | 'after_close' | 'non_trading';
+} {
+  const today = getShanghaiDate(now);
+  if (!isAShareTradeDay(today)) {
+    return { trade_date: latestTradeDateOnOrBefore(today), market_phase: 'non_trading' };
+  }
+  const minute = shanghaiMinutes(now);
+  if (minute < 570) return { trade_date: previousTradeDate(today), market_phase: 'pre_open' };
+  if (minute < 690) return { trade_date: today, market_phase: 'trading' };
+  if (minute < 780) return { trade_date: today, market_phase: 'lunch' };
+  if (minute < 900) return { trade_date: today, market_phase: 'trading' };
+  return { trade_date: today, market_phase: 'after_close' };
+}
+
 export function classifyQuoteFreshness(
   quote_time: Date | string | null,
   trade_date: string | null,
   now = new Date()
-): { freshness: QuoteFreshness; age_minutes: number | null } {
-  if (!quote_time || !trade_date) return { freshness: 'missing', age_minutes: null };
+): {
+  freshness: QuoteFreshness;
+  age_minutes: number | null;
+  expected_trade_date: string;
+  market_phase: string;
+} {
+  const expected = expectedQuoteTradeDate(now);
+  if (!quote_time || !trade_date) {
+    return {
+      freshness: 'missing',
+      age_minutes: null,
+      expected_trade_date: expected.trade_date,
+      market_phase: expected.market_phase,
+    };
+  }
   const parsed = quote_time instanceof Date ? quote_time : new Date(quote_time);
-  if (Number.isNaN(parsed.getTime())) return { freshness: 'missing', age_minutes: null };
-  const age = Math.max(0, Math.round((now.getTime() - parsed.getTime()) / 60000));
-  if (trade_date !== getEast8DateString(now)) return { freshness: 'stale', age_minutes: age };
-  if (age <= 15) return { freshness: 'fresh', age_minutes: age };
-  if (age <= 120) return { freshness: 'delayed', age_minutes: age };
-  return { freshness: 'stale', age_minutes: age };
+  if (Number.isNaN(parsed.getTime())) {
+    return {
+      freshness: 'missing',
+      age_minutes: null,
+      expected_trade_date: expected.trade_date,
+      market_phase: expected.market_phase,
+    };
+  }
+  const age = Math.max(0, Math.round((now.getTime() - parsed.getTime()) / 60_000));
+  if (trade_date !== expected.trade_date) {
+    return {
+      expected_trade_date: expected.trade_date,
+      market_phase: expected.market_phase,
+      freshness: 'stale',
+      age_minutes: age,
+    };
+  }
+  if (expected.market_phase !== 'trading') {
+    const quoteObservedDay = getShanghaiDate(parsed);
+    const quoteMinute = shanghaiMinutes(parsed);
+    const closeThreshold = expected.market_phase === 'lunch' ? 675 : 885;
+    const reachedSessionClose =
+      quoteObservedDay > trade_date ||
+      (quoteObservedDay === trade_date && quoteMinute >= closeThreshold);
+    if (!reachedSessionClose) {
+      return {
+        expected_trade_date: expected.trade_date,
+        market_phase: expected.market_phase,
+        freshness: age <= 120 ? 'delayed' : 'stale',
+        age_minutes: age,
+      };
+    }
+    return {
+      expected_trade_date: expected.trade_date,
+      market_phase: expected.market_phase,
+      freshness: 'close',
+      age_minutes: age,
+    };
+  }
+  if (age <= 15) {
+    return {
+      expected_trade_date: expected.trade_date,
+      market_phase: expected.market_phase,
+      freshness: 'live',
+      age_minutes: age,
+    };
+  }
+  if (age <= 120) {
+    return {
+      expected_trade_date: expected.trade_date,
+      market_phase: expected.market_phase,
+      freshness: 'delayed',
+      age_minutes: age,
+    };
+  }
+  return {
+    expected_trade_date: expected.trade_date,
+    market_phase: expected.market_phase,
+    freshness: 'stale',
+    age_minutes: age,
+  };
 }
 
-function correctionTouchesPosition(
+export function classifyResearchFreshness(
+  research_day: string | null,
+  expected_day: string
+): { freshness: ResearchFreshness; lag_days: number | null; reason: string | null } {
+  if (!research_day) return { freshness: 'missing', lag_days: null, reason: 'snapshot_missing' };
+  if (research_day > expected_day) {
+    return { freshness: 'delayed', lag_days: null, reason: 'snapshot_from_future' };
+  }
+  const lag = countTradingDaysBetween(research_day, expected_day);
+  return lag === 0
+    ? { freshness: 'fresh', lag_days: 0, reason: null }
+    : { freshness: 'delayed', lag_days: lag, reason: 'snapshot_stale' };
+}
+
+function recordTouchesPortfolio(value: unknown, portfolio_id: number): boolean {
+  if (Array.isArray(value)) return value.some(item => recordTouchesPortfolio(item, portfolio_id));
+  const row = objectValue(value);
+  if (!Object.keys(row).length) return false;
+  if (Number(row.portfolio_id) === portfolio_id) return true;
+  if (Number(objectValue(row.portfolio).id) === portfolio_id) return true;
+  return Object.values(row).some(item => recordTouchesPortfolio(item, portfolio_id));
+}
+
+function recordTouchesSymbol(value: unknown, symbol: string): boolean {
+  if (Array.isArray(value)) return value.some(item => recordTouchesSymbol(item, symbol));
+  const row = objectValue(value);
+  if (!Object.keys(row).length) return false;
+  if (typeof row.symbol === 'string' && normalizeSymbol(row.symbol) === symbol) return true;
+  return Object.values(row).some(item => recordTouchesSymbol(item, symbol));
+}
+
+export function correctionTouchesPosition(
   row: Record<string, any>,
   portfolio_id: number,
   symbol: string
 ): boolean {
-  const haystack = JSON.stringify({
+  const state = {
     entity_id: row.entity_id,
     before_state: row.before_state,
     after_state: row.after_state,
-  });
-  return (
-    haystack.includes(`\"portfolio_id\":${portfolio_id}`) &&
-    haystack.includes(normalizeSymbol(symbol))
-  );
+  };
+  return recordTouchesPortfolio(state, portfolio_id) && recordTouchesSymbol(state, symbol);
 }
 
 export function sortLedgerTimeline(
@@ -81,6 +227,69 @@ export function sortLedgerTimeline(
   return [...items].sort(
     (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime()
   );
+}
+
+function normalizedPortfolioId(metadata: unknown): number | null {
+  const row = objectValue(metadata);
+  const direct = numberOrNull(row.portfolio_id);
+  if (direct && direct > 0) return direct;
+  const nested = numberOrNull(objectValue(row.draft).portfolio_id);
+  return nested && nested > 0 ? nested : null;
+}
+
+function tradeOrigin(trade: PaperTradingTrade | undefined) {
+  if (!trade) return null;
+  const reason = objectValue(trade.trade_reason);
+  const source = String(reason.source || '').trim();
+  if (!source || source === 'unknown') return null;
+  return {
+    trade_id: trade.id,
+    source,
+    strategy_key: reason.strategy_key || null,
+    summary: trade.trade_reason_summary || null,
+  };
+}
+
+function mapAlert(row: RiskAlert) {
+  return {
+    id: row.id,
+    symbol: row.symbol,
+    level: row.level,
+    rule_id: row.rule_id,
+    message: row.message,
+    is_read: row.is_read,
+    metadata: row.metadata || {},
+    created_at: iso(row.created_at),
+  };
+}
+
+function mapNotification(row: FeishuNotificationOutbox) {
+  const metadata = objectValue(row.metadata);
+  return {
+    id: Number(row.id),
+    title: row.title,
+    kind: row.kind,
+    severity: row.severity,
+    status: row.status,
+    corrected: Boolean(metadata.corrected),
+    invalidated: Boolean(metadata.invalidated),
+    correction_id: numberOrNull(metadata.correction_id),
+    metadata,
+    created_at: iso(row.created_at),
+    sent_at: iso(row.sent_at),
+  };
+}
+
+function mapCorrection(row: Record<string, any>) {
+  return {
+    id: Number(row.id),
+    correction_key: row.correction_key,
+    correction_type: row.correction_type,
+    entity_type: row.entity_type,
+    entity_id: row.entity_id,
+    reason: row.reason,
+    created_at: iso(row.created_at),
+  };
 }
 
 export class PortfolioLedgerService {
@@ -93,59 +302,78 @@ export class PortfolioLedgerService {
       throw error;
     }
 
-    const positions = await PaperTradingPosition.findAll({
-      where: { portfolio_id, quantity: { [Op.gt]: 0 } },
-      order: [['id', 'ASC']],
-    });
-    const symbols = [...new Set(positions.map(row => normalizeSymbol(row.symbol)).filter(Boolean))];
-
-    const [trades, outcomes, riskAlerts, notifications, morningSnapshot, multibaggerHead] =
-      await Promise.all([
-        symbols.length
-          ? PaperTradingTrade.findAll({
-              where: { portfolio_id, symbol: { [Op.in]: symbols } },
-              order: [['created_at', 'ASC']],
-            })
-          : [],
-        symbols.length
-          ? RecommendationTradeOutcome.findAll({
-              where: { portfolio_id, symbol: { [Op.in]: symbols } },
-              order: [
-                ['updated_at', 'DESC'],
-                ['id', 'DESC'],
-              ],
-            })
-          : [],
-        symbols.length
-          ? RiskAlert.findAll({
-              where: {
-                user_id,
-                symbol: { [Op.in]: symbols },
-                metadata: { [Op.contains]: { portfolio_id } },
+    const expectedResearchDay = expectedCompletedTradeDate(now);
+    const [
+      positions,
+      activePortfolios,
+      riskAlertRows,
+      notificationRows,
+      morningSnapshot,
+      corrections,
+      multibaggerRows,
+    ] = await Promise.all([
+      PaperTradingPosition.findAll({
+        where: { portfolio_id, quantity: { [Op.gt]: 0 } },
+        order: [['id', 'ASC']],
+      }),
+      PaperTradingPortfolio.findAll({
+        where: { user_id, is_active: true },
+        attributes: ['id'],
+        order: [['id', 'ASC']],
+      }),
+      RiskAlert.findAll({
+        where: { user_id },
+        order: [['created_at', 'DESC']],
+        limit: 500,
+      }),
+      FeishuNotificationOutbox.findAll({
+        where: {
+          [Op.or]: [
+            { metadata: { [Op.contains]: { portfolio_id } } },
+            {
+              topic_key: {
+                [Op.in]: [`paper-trade:${portfolio_id}`, `paper-portfolio:${portfolio_id}`],
               },
-              order: [['created_at', 'DESC']],
-              limit: 200,
-            })
-          : [],
-        FeishuNotificationOutbox.findAll({
-          where: { metadata: { [Op.contains]: { portfolio_id } } },
-          order: [['created_at', 'DESC']],
-          limit: 200,
-        }).catch(() => []),
-        AiRecommendationSnapshot.findOne({
-          where: { profile: 'us_preferred', marketScope: 'cn_a' },
-          order: [
-            ['tradingDay', 'DESC'],
-            ['asOfUtc', 'DESC'],
+            },
+            { recipient_user_id: user_id },
           ],
-        }).catch(() => null),
-        MultibaggerCandidateSnapshot.findOne({
-          where: { marketScope: 'cn_a' },
-          order: [['asOfUtc', 'DESC']],
-        }).catch(() => null),
-      ]);
+        },
+        order: [['created_at', 'DESC']],
+        limit: 300,
+      }).catch(() => []),
+      AiRecommendationSnapshot.findOne({
+        where: {
+          profile: 'us_preferred',
+          marketScope: 'cn_a',
+          asOfUtc: { [Op.lte]: now },
+        },
+        order: [
+          ['tradingDay', 'DESC'],
+          ['asOfUtc', 'DESC'],
+        ],
+      }).catch(() => null),
+      this.loadCorrections(),
+      this.loadLatestMultibaggerRows(now),
+    ]);
 
-    const [quotes, morningItems, multibaggerItems, corrections] = await Promise.all([
+    const symbols = [...new Set(positions.map(row => normalizeSymbol(row.symbol)).filter(Boolean))];
+    const activePortfolioIds = activePortfolios.map(row => row.id);
+    const [trades, allOutcomes, quotes, morningItems, allUserPositions] = await Promise.all([
+      symbols.length
+        ? PaperTradingTrade.findAll({
+            where: { portfolio_id, symbol: { [Op.in]: symbols } },
+            order: [['created_at', 'ASC']],
+          })
+        : [],
+      activePortfolioIds.length
+        ? RecommendationTradeOutcome.findAll({
+            where: { portfolio_id: { [Op.in]: activePortfolioIds } },
+            order: [
+              ['updated_at', 'DESC'],
+              ['id', 'DESC'],
+            ],
+          })
+        : [],
       Promise.all(
         symbols.map(symbol =>
           RealtimeQuote.findOne({ where: { symbol }, order: [['quote_time', 'DESC']] })
@@ -157,14 +385,76 @@ export class PortfolioLedgerService {
             order: [['sortRank', 'ASC']],
           })
         : [],
-      multibaggerHead
-        ? MultibaggerCandidateSnapshot.findAll({
-            where: { marketScope: 'cn_a', asOfUtc: multibaggerHead.asOfUtc },
-            order: [['ticker', 'ASC']],
+      activePortfolioIds.length
+        ? PaperTradingPosition.findAll({
+            where: { portfolio_id: { [Op.in]: activePortfolioIds }, quantity: { [Op.gt]: 0 } },
+            attributes: ['portfolio_id', 'symbol'],
           })
         : [],
-      this.loadCorrections(),
     ]);
+
+    const outcomes = allOutcomes.filter(
+      row => row.portfolio_id === portfolio_id && symbols.includes(normalizeSymbol(row.symbol))
+    );
+    const outcomeById = new Map<number, RecommendationTradeOutcome>(
+      allOutcomes.map(row => [row.id, row] as const)
+    );
+    const portfoliosBySymbol = new Map<string, Set<number>>();
+    for (const row of allUserPositions) {
+      const symbol = normalizeSymbol(row.symbol);
+      const ids = portfoliosBySymbol.get(symbol) || new Set<number>();
+      ids.add(row.portfolio_id);
+      portfoliosBySymbol.set(symbol, ids);
+    }
+
+    const resolveAlertPortfolio = (alert: RiskAlert): number | null => {
+      const metadata = objectValue(alert.metadata);
+      const explicit = normalizedPortfolioId(metadata);
+      if (explicit) return explicit;
+      const outcomeId = numberOrNull(metadata.outcome_id);
+      const linkedOutcome = outcomeId ? outcomeById.get(outcomeId) : null;
+      if (linkedOutcome) return linkedOutcome.portfolio_id;
+      const alertSymbol = normalizeSymbol(alert.symbol);
+      const symbolPortfolios = portfoliosBySymbol.get(alertSymbol);
+      if (symbolPortfolios?.size === 1) return [...symbolPortfolios][0];
+      if (activePortfolioIds.length === 1) return activePortfolioIds[0];
+      return null;
+    };
+    const portfolioAlerts = riskAlertRows.filter(
+      row => resolveAlertPortfolio(row) === portfolio_id
+    );
+
+    const notificationBelongsToPortfolio = (row: FeishuNotificationOutbox): boolean => {
+      const explicit = normalizedPortfolioId(row.metadata);
+      if (explicit) return explicit === portfolio_id;
+      if (
+        [`paper-trade:${portfolio_id}`, `paper-portfolio:${portfolio_id}`].includes(row.topic_key)
+      ) {
+        return true;
+      }
+      return row.recipient_user_id === user_id && activePortfolioIds.length === 1;
+    };
+    const portfolioNotifications = notificationRows.filter(notificationBelongsToPortfolio);
+    const accountNotifications = notificationRows.filter(row => {
+      if (portfolioNotifications.includes(row)) return false;
+      return row.recipient_user_id === user_id && normalizedPortfolioId(row.metadata) === null;
+    });
+    const visibleAccountNotifications = [
+      ...new Map(
+        [
+          ...accountNotifications,
+          ...portfolioNotifications.filter(
+            row => !normalizeSymbol(String(objectValue(row.metadata).symbol || ''))
+          ),
+        ].map(row => [Number(row.id), row])
+      ).values(),
+    ].sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+    const portfolioCorrections = corrections.filter(row =>
+      recordTouchesPortfolio(
+        { entity_id: row.entity_id, before_state: row.before_state, after_state: row.after_state },
+        portfolio_id
+      )
+    );
 
     const outcomeBySymbol = new Map<string, RecommendationTradeOutcome>();
     for (const outcome of outcomes) {
@@ -174,13 +464,25 @@ export class PortfolioLedgerService {
         outcomeBySymbol.set(symbol, outcome);
       }
     }
-    const signalIds = [...new Set([...outcomeBySymbol.values()].map(row => row.signal_id))];
+    const tradesBySymbol = new Map<string, PaperTradingTrade[]>();
     for (const trade of trades) {
-      const signalId = Number(objectValue(trade.trade_reason).signal_id);
-      if (Number.isFinite(signalId) && signalId > 0) signalIds.push(signalId);
+      const symbol = normalizeSymbol(trade.symbol);
+      tradesBySymbol.set(symbol, [...(tradesBySymbol.get(symbol) || []), trade]);
     }
-    const signalRows = signalIds.length
-      ? await AIInvestmentSignal.findAll({ where: { id: { [Op.in]: [...new Set(signalIds)] } } })
+
+    const signalIds = new Set<number>();
+    for (const [symbol, symbolTrades] of tradesBySymbol) {
+      const outcome = outcomeBySymbol.get(symbol);
+      const exactEntry = outcome?.entry_trade_id
+        ? symbolTrades.find(row => row.id === outcome.entry_trade_id)
+        : undefined;
+      if (exactEntry && outcome) signalIds.add(outcome.signal_id);
+      const latestBuy = [...symbolTrades].reverse().find(row => row.direction === 'BUY');
+      const tradeSignalId = numberOrNull(objectValue(latestBuy?.trade_reason).signal_id);
+      if (tradeSignalId && tradeSignalId > 0) signalIds.add(tradeSignalId);
+    }
+    const signalRows = signalIds.size
+      ? await AIInvestmentSignal.findAll({ where: { id: { [Op.in]: [...signalIds] } } })
       : [];
     const signalById = new Map(signalRows.map(row => [row.id, row]));
 
@@ -188,64 +490,68 @@ export class PortfolioLedgerService {
     for (const quote of quotes) {
       if (quote) quoteBySymbol.set(normalizeSymbol(quote.symbol), quote);
     }
-    const tradesBySymbol = new Map<string, PaperTradingTrade[]>();
-    for (const trade of trades) {
-      const symbol = normalizeSymbol(trade.symbol);
-      tradesBySymbol.set(symbol, [...(tradesBySymbol.get(symbol) || []), trade]);
-    }
-    const alertsBySymbol = new Map<string, RiskAlert[]>();
-    for (const alert of riskAlerts) {
-      const symbol = normalizeSymbol(alert.symbol);
-      alertsBySymbol.set(symbol, [...(alertsBySymbol.get(symbol) || []), alert]);
-    }
-    const notificationsBySymbol = new Map<string, FeishuNotificationOutbox[]>();
-    for (const notification of notifications) {
-      const symbol = normalizeSymbol(String(objectValue(notification.metadata).symbol || ''));
-      if (!symbol) continue;
-      notificationsBySymbol.set(symbol, [
-        ...(notificationsBySymbol.get(symbol) || []),
-        notification,
-      ]);
-    }
     const morningBySymbol = new Map(
       morningItems.map(item => [normalizeSymbol(item.ticker), item] as const)
     );
     const multibaggerBySymbol = new Map(
-      multibaggerItems.map(item => [normalizeSymbol(item.ticker), item] as const)
+      multibaggerRows.map(item => [normalizeSymbol(item.ticker), item] as const)
     );
+    const morningFreshness = classifyResearchFreshness(
+      morningSnapshot?.tradingDay || null,
+      expectedResearchDay
+    );
+    const multibaggerHead = [...multibaggerRows].sort(
+      (a, b) => new Date(b.as_of_utc).getTime() - new Date(a.as_of_utc).getTime()
+    )[0];
+    const multibaggerDay = multibaggerHead
+      ? getShanghaiDate(new Date(multibaggerHead.as_of_utc))
+      : null;
+    const multibaggerFreshness = classifyResearchFreshness(multibaggerDay, expectedResearchDay);
 
     let position_value = 0;
-    let unread_alerts_count = 0;
     const ledgerPositions = positions.map(position => {
       const symbol = normalizeSymbol(position.symbol);
       const quote = quoteBySymbol.get(symbol);
-      const storedPrice = Number(position.current_price || 0);
       const quotePrice = numberOrNull(quote?.current_price);
-      const price = quotePrice && quotePrice > 0 ? quotePrice : storedPrice;
+      const validQuote = quote && quotePrice && quotePrice > 0 ? quote : null;
+      const useQuote = Boolean(validQuote);
+      const price = useQuote ? Number(quotePrice) : Number(position.current_price || 0);
       const quantity = Number(position.quantity || 0);
       const avgCost = Number(position.avg_cost || 0);
       const marketValue = price * quantity;
       const unrealizedPnl = (price - avgCost) * quantity;
       position_value += marketValue;
-      const quoteFreshness = classifyQuoteFreshness(
-        quote?.quote_time || null,
-        quote?.trade_date || null,
-        now
-      );
+      const quoteFreshness = validQuote
+        ? classifyQuoteFreshness(validQuote.quote_time, validQuote.trade_date, now)
+        : {
+            ...classifyQuoteFreshness(null, null, now),
+            freshness: 'missing' as QuoteFreshness,
+          };
 
       const symbolTrades = tradesBySymbol.get(symbol) || [];
       const outcome = outcomeBySymbol.get(symbol) || null;
-      const reasonSignalId = symbolTrades
-        .map(row => Number(objectValue(row.trade_reason).signal_id))
-        .find(value => Number.isFinite(value) && value > 0);
-      const signal = signalById.get(outcome?.signal_id || reasonSignalId || 0) || null;
-      const alerts = alertsBySymbol.get(symbol) || [];
-      const symbolNotifications = notificationsBySymbol.get(symbol) || [];
-      const symbolCorrections = corrections.filter(row =>
+      const exactEntryTrade = outcome?.entry_trade_id
+        ? symbolTrades.find(row => row.id === outcome.entry_trade_id)
+        : undefined;
+      const latestBuyTrade = [...symbolTrades].reverse().find(row => row.direction === 'BUY');
+      const sourceTrade = exactEntryTrade || latestBuyTrade;
+      const reasonSignalId = numberOrNull(objectValue(sourceTrade?.trade_reason).signal_id);
+      const exactSignalId = exactEntryTrade && outcome ? outcome.signal_id : reasonSignalId;
+      const signal = exactSignalId ? signalById.get(exactSignalId) || null : null;
+      const origin = tradeOrigin(sourceTrade);
+      const source_status = signal
+        ? 'signal_linked'
+        : origin
+        ? 'trade_origin_linked'
+        : 'unresolved';
+
+      const alerts = portfolioAlerts.filter(row => normalizeSymbol(row.symbol) === symbol);
+      const symbolNotifications = portfolioNotifications.filter(
+        row => normalizeSymbol(String(objectValue(row.metadata).symbol || '')) === symbol
+      );
+      const symbolCorrections = portfolioCorrections.filter(row =>
         correctionTouchesPosition(row, portfolio_id, symbol)
       );
-      unread_alerts_count += alerts.filter(row => !row.is_read).length;
-
       const morningItem = morningBySymbol.get(symbol) || null;
       const morningRecommendation = objectValue(morningItem?.recommendationJson);
       const multibaggerItem = multibaggerBySymbol.get(symbol) || null;
@@ -285,6 +591,7 @@ export class PortfolioLedgerService {
         });
       }
       for (const notification of symbolNotifications) {
+        const metadata = objectValue(notification.metadata);
         timeline.push({
           id: `notification:${notification.id}`,
           type: 'notification',
@@ -292,14 +599,14 @@ export class PortfolioLedgerService {
           detail: notification.kind,
           occurred_at: iso(notification.created_at) || now.toISOString(),
           status: notification.status,
-          corrected: Boolean(objectValue(notification.metadata).corrected),
+          corrected: Boolean(metadata.corrected || metadata.invalidated),
         });
       }
       for (const correction of symbolCorrections) {
         timeline.push({
           id: `correction:${correction.id}`,
           type: 'correction',
-          title: '账务更正',
+          title: '数据更正',
           detail: String(correction.reason || ''),
           occurred_at: iso(correction.created_at) || now.toISOString(),
           status: 'applied',
@@ -322,9 +629,9 @@ export class PortfolioLedgerService {
         },
         quote: {
           price,
-          source: quote ? quote.source : 'paper_position_cache',
-          quote_time: iso(quote?.quote_time) || iso(position.updated_at),
-          trade_date: quote?.trade_date || null,
+          source: validQuote ? validQuote.source : 'paper_position_cache',
+          quote_time: validQuote ? iso(validQuote.quote_time) : iso(position.updated_at),
+          trade_date: validQuote ? validQuote.trade_date : null,
           ...quoteFreshness,
         },
         valuation: {
@@ -332,8 +639,14 @@ export class PortfolioLedgerService {
           unrealized_pnl: Math.round(unrealizedPnl * 100) / 100,
           unrealized_pnl_pct: avgCost > 0 ? ((price - avgCost) / avgCost) * 100 : null,
         },
-        source_status: signal ? 'linked' : 'missing',
-        source_message: signal ? null : '未找到推荐来源',
+        source_status,
+        source_message:
+          source_status === 'signal_linked'
+            ? null
+            : source_status === 'trade_origin_linked'
+            ? `成交来源：${origin?.source}`
+            : '成交来源未记录，无法可靠归因',
+        trade_origin: origin,
         entry_trades: symbolTrades
           .filter(row => row.direction === 'BUY')
           .map(row => ({
@@ -378,6 +691,9 @@ export class PortfolioLedgerService {
               snapshot_id: morningSnapshot?.snapshotId || null,
               item_id: morningItem.itemId,
               trading_day: morningSnapshot?.tradingDay || null,
+              expected_trading_day: expectedResearchDay,
+              as_of: iso(morningSnapshot?.asOfUtc),
+              ...morningFreshness,
               rank: morningItem.sortRank,
               rating: morningItem.ratingBand,
               conviction: numberOrNull(morningItem.convictionFinal),
@@ -387,44 +703,35 @@ export class PortfolioLedgerService {
               matched: false,
               snapshot_id: morningSnapshot?.snapshotId || null,
               trading_day: morningSnapshot?.tradingDay || null,
+              expected_trading_day: expectedResearchDay,
+              as_of: iso(morningSnapshot?.asOfUtc),
+              ...morningFreshness,
             },
         multibagger: multibaggerItem
           ? {
               matched: true,
-              snapshot_id: multibaggerItem.multibaggerCandidateSnapshotId,
-              as_of: iso(multibaggerItem.asOfUtc),
+              snapshot_id: multibaggerItem.snapshot_id,
+              as_of: iso(multibaggerItem.as_of_utc),
+              available_at: iso(multibaggerItem.available_at_utc),
+              ...classifyResearchFreshness(
+                getShanghaiDate(new Date(multibaggerItem.as_of_utc)),
+                expectedResearchDay
+              ),
               stage: multibaggerItem.stage,
               conclusion: multibaggerItem.conclusion,
               rating: multibaggerItem.rating,
+              strategy_version: multibaggerItem.strategy_version,
             }
           : {
               matched: false,
-              as_of: iso(multibaggerHead?.asOfUtc),
+              as_of: iso(multibaggerHead?.as_of_utc),
+              available_at: iso(multibaggerHead?.available_at_utc),
+              ...multibaggerFreshness,
+              strategy_version: multibaggerHead?.strategy_version || null,
             },
-        alerts: alerts.map(row => ({
-          id: row.id,
-          level: row.level,
-          rule_id: row.rule_id,
-          message: row.message,
-          is_read: row.is_read,
-          created_at: iso(row.created_at),
-        })),
-        notifications: symbolNotifications.map(row => ({
-          id: Number(row.id),
-          title: row.title,
-          kind: row.kind,
-          status: row.status,
-          corrected: Boolean(objectValue(row.metadata).corrected),
-          created_at: iso(row.created_at),
-          sent_at: iso(row.sent_at),
-        })),
-        corrections: symbolCorrections.map(row => ({
-          id: Number(row.id),
-          correction_key: row.correction_key,
-          correction_type: row.correction_type,
-          reason: row.reason,
-          created_at: iso(row.created_at),
-        })),
+        alerts: alerts.map(mapAlert),
+        notifications: symbolNotifications.map(mapNotification),
+        corrections: symbolCorrections.map(mapCorrection),
         timeline: sortLedgerTimeline(timeline),
       };
     });
@@ -434,9 +741,35 @@ export class PortfolioLedgerService {
     const initial_capital = Number(portfolio.initial_capital || 0);
     const quoteTimes = ledgerPositions
       .map(row => row.quote.quote_time)
-      .filter((value): value is string => Boolean(value));
+      .filter((value): value is string => Boolean(value))
+      .sort();
+    const quoteSources = new Set(ledgerPositions.map(row => row.quote.source));
+    const quoteCounts = ledgerPositions.reduce<Record<QuoteFreshness, number>>(
+      (acc, row) => {
+        acc[row.quote.freshness] += 1;
+        return acc;
+      },
+      { live: 0, close: 0, delayed: 0, stale: 0, missing: 0 }
+    );
+    const accountAlerts = riskAlertRows.filter(row => {
+      const resolved = resolveAlertPortfolio(row);
+      return (
+        resolved === null ||
+        (resolved === portfolio_id && !symbols.includes(normalizeSymbol(row.symbol)))
+      );
+    });
+    const allVisibleAlerts = [
+      ...new Map([...portfolioAlerts, ...accountAlerts].map(row => [row.id, row])).values(),
+    ];
+    const correctionNotifications = portfolioNotifications.filter(
+      row => row.kind.includes('correction') || Boolean(objectValue(row.metadata).correction_id)
+    );
+    const morningNotifications = visibleAccountNotifications.filter(
+      row =>
+        row.kind.includes('morning') ||
+        String(objectValue(row.metadata).scenario || '').includes('morning_checkup')
+    );
 
-    quoteTimes.sort();
     return {
       portfolio: {
         id: portfolio.id,
@@ -455,24 +788,79 @@ export class PortfolioLedgerService {
         total_pnl_pct:
           initial_capital > 0 ? ((total_value - initial_capital) / initial_capital) * 100 : null,
         valued_at: quoteTimes.length ? quoteTimes[quoteTimes.length - 1] : null,
-        quote_source: 'realtime_quotes',
-        has_stale_quotes: ledgerPositions.some(row =>
-          ['stale', 'missing'].includes(row.quote.freshness)
-        ),
+        oldest_quote_at: quoteTimes.length ? quoteTimes[0] : null,
+        newest_quote_at: quoteTimes.length ? quoteTimes[quoteTimes.length - 1] : null,
+        quote_source:
+          quoteSources.size === 0
+            ? 'none'
+            : quoteSources.size === 1
+            ? [...quoteSources][0]
+            : 'mixed',
+        quote_counts: quoteCounts,
+        has_stale_quotes: quoteCounts.stale > 0 || quoteCounts.missing > 0,
       },
       latest_morning_brief: morningSnapshot
         ? {
             snapshot_id: morningSnapshot.snapshotId,
             trading_day: morningSnapshot.tradingDay,
+            expected_trading_day: expectedResearchDay,
             as_of: iso(morningSnapshot.asOfUtc),
+            ...morningFreshness,
+          }
+        : {
+            snapshot_id: null,
+            trading_day: null,
+            expected_trading_day: expectedResearchDay,
+            as_of: null,
+            ...morningFreshness,
+          },
+      latest_multibagger: multibaggerHead
+        ? {
+            as_of: iso(multibaggerHead.as_of_utc),
+            available_at: iso(multibaggerHead.available_at_utc),
+            market_scope: 'cn_a',
+            strategy_version: multibaggerHead.strategy_version,
+            ...multibaggerFreshness,
           }
         : null,
-      latest_multibagger: multibaggerHead
-        ? { as_of: iso(multibaggerHead.asOfUtc), market_scope: multibaggerHead.marketScope }
+      unread_alerts_count: allVisibleAlerts.filter(row => !row.is_read).length,
+      portfolio_alerts: portfolioAlerts.map(mapAlert),
+      account_alerts: accountAlerts.map(mapAlert),
+      portfolio_notifications: portfolioNotifications.map(mapNotification),
+      account_notifications: visibleAccountNotifications.map(mapNotification),
+      portfolio_corrections: portfolioCorrections.map(mapCorrection),
+      latest_morning_notification: morningNotifications.length
+        ? mapNotification(morningNotifications[0])
         : null,
-      unread_alerts_count,
+      latest_correction_notification: correctionNotifications.length
+        ? mapNotification(correctionNotifications[0])
+        : null,
       positions: ledgerPositions,
     };
+  }
+
+  private async loadLatestMultibaggerRows(now: Date): Promise<MultibaggerLedgerRow[]> {
+    try {
+      return await sequelize.query<MultibaggerLedgerRow>(
+        `SELECT DISTINCT ON (market_scope, exchange, ticker)
+                multibagger_candidate_snapshot_id AS snapshot_id,
+                ticker,
+                as_of_utc,
+                available_at_utc,
+                stage,
+                conclusion,
+                rating,
+                strategy_version
+           FROM multibagger_candidate_snapshot
+          WHERE market_scope = 'cn_a'
+            AND available_at_utc <= :now
+          ORDER BY market_scope, exchange, ticker,
+                   as_of_utc DESC, available_at_utc DESC, created_at DESC, strategy_version DESC`,
+        { replacements: { now }, type: QueryTypes.SELECT }
+      );
+    } catch {
+      return [];
+    }
   }
 
   private async loadCorrections(): Promise<Record<string, any>[]> {
@@ -482,7 +870,7 @@ export class PortfolioLedgerService {
                 reason, before_state, after_state, created_at
            FROM paper_trading_data_corrections
           ORDER BY created_at DESC
-          LIMIT 100`,
+          LIMIT 200`,
         { type: QueryTypes.SELECT }
       );
     } catch {

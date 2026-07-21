@@ -366,6 +366,7 @@ export class RecommendationTradeOutcome extends Model {
         }
         await emitWizardAlert({
           user_id: resolvedUserId,
+          portfolio_id: instance.portfolio_id,
           outcome_id: instance.id,
           symbol: instance.symbol,
           name: instance.symbol,

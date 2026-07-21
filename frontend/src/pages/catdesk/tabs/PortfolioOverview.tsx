@@ -49,6 +49,13 @@ const SOURCE_LABEL: Record<string, string> = {
   manual_analysis: '人工分析',
 };
 
+const ORIGIN_LABEL: Record<string, string> = {
+  manual: '手动建仓',
+  rebalance: '组合再平衡',
+  auto_buy_from_signals: '自动跟单',
+  analysis_engine_hard: '分析引擎执行',
+};
+
 const TIMELINE_ICON: Record<LedgerTimelineItem['type'], React.ReactNode> = {
   trade: <CheckCircleOutlined />,
   signal: <LinkOutlined />,
@@ -58,10 +65,31 @@ const TIMELINE_ICON: Record<LedgerTimelineItem['type'], React.ReactNode> = {
 };
 
 function FreshnessTag({ row }: { row: PortfolioLedgerPosition['quote'] }) {
-  if (row.freshness === 'fresh') return <Tag color="green">实时 · {row.age_minutes ?? 0} 分钟</Tag>;
+  if (row.freshness === 'live') return <Tag color="green">盘中 · {row.age_minutes ?? 0} 分钟</Tag>;
+  if (row.freshness === 'close') return <Tag color="blue">有效收盘价 · {row.trade_date}</Tag>;
   if (row.freshness === 'delayed') return <Tag color="gold">延迟 · {row.age_minutes} 分钟</Tag>;
   if (row.freshness === 'stale') return <Tag color="red">已过期</Tag>;
-  return <Tag>行情缺失</Tag>;
+  return <Tag>实时行情缺失 · 使用持仓缓存</Tag>;
+}
+
+function researchResult(
+  label: string,
+  row: Pick<
+    PortfolioLedgerPosition['morning_brief'],
+    'matched' | 'freshness' | 'trading_day' | 'expected_trading_day'
+  >
+) {
+  if (row.freshness === 'missing') return `${label}暂无可用研究`;
+  if (row.freshness === 'delayed') {
+    return `${label}研究已过期（数据日 ${row.trading_day || '—'}，应到 ${row.expected_trading_day}）`;
+  }
+  return `${label}${row.matched ? '命中' : '未入选'}`;
+}
+
+function researchTagLabel(row: { matched: boolean; freshness: 'fresh' | 'delayed' | 'missing' }) {
+  if (row.freshness === 'missing') return '暂无';
+  if (row.freshness === 'delayed') return '过期';
+  return row.matched ? '命中' : '未入选';
 }
 
 function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
@@ -86,8 +114,14 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
               {SOURCE_LABEL[row.investment_signal.source_type] || row.investment_signal.source_type}
               {row.investment_signal.rationale ? ` · ${row.investment_signal.rationale}` : ''}
             </p>
+          ) : row.trade_origin ? (
+            <p>
+              成交 #{row.trade_origin.trade_id} ·{' '}
+              {ORIGIN_LABEL[row.trade_origin.source] || row.trade_origin.source}
+              {row.trade_origin.summary ? ` · ${row.trade_origin.summary}` : ''}
+            </p>
           ) : (
-            <p className="is-warning">未找到推荐来源，不做推测归因</p>
+            <p className="is-warning">成交来源未记录，无法可靠归因</p>
           )}
         </article>
 
@@ -95,19 +129,25 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
           <span>研究交集</span>
           <p>
             A 股早报：
-            {row.morning_brief.matched
-              ? `${row.morning_brief.trading_day} · 第 ${Number(row.morning_brief.rank) + 1} 位 · ${
-                  row.morning_brief.rating
-                } 级`
-              : `${row.morning_brief.trading_day || '暂无快照'} · 未命中`}
+            {row.morning_brief.freshness !== 'fresh'
+              ? researchResult('', row.morning_brief)
+              : row.morning_brief.matched
+                ? `${row.morning_brief.trading_day} · 第 ${Number(row.morning_brief.rank) + 1} 位 · ${
+                    row.morning_brief.rating
+                  } 级`
+                : `${row.morning_brief.trading_day} · 未入选`}
           </p>
           <p>
             高倍潜力：
-            {row.multibagger.matched
-              ? `${row.multibagger.stage} · ${row.multibagger.conclusion} · ${
-                  row.multibagger.rating || '未评级'
-                }`
-              : `${dateTime(row.multibagger.as_of)} · 未命中`}
+            {row.multibagger.freshness === 'missing'
+              ? '暂无可用研究'
+              : row.multibagger.freshness === 'delayed'
+                ? `研究已过期 · ${dateTime(row.multibagger.as_of)}`
+                : row.multibagger.matched
+                  ? `${row.multibagger.stage} · ${row.multibagger.conclusion} · ${
+                      row.multibagger.rating || '未评级'
+                    }`
+                  : `${dateTime(row.multibagger.as_of)} · 未入选`}
           </p>
         </article>
 
@@ -187,10 +227,15 @@ export default function PortfolioOverview() {
 
   const quoteSummary = useMemo(() => {
     if (!data) return '尚未估值';
-    const stale = data.positions.filter(row => ['stale', 'missing'].includes(row.quote.freshness));
-    return stale.length
-      ? `${stale.length} 只行情过期或缺失，估值需谨慎`
-      : `全部 ${data.positions.length} 只持仓已对齐行情`;
+    const { live, close, delayed, stale, missing } = data.valuation.quote_counts;
+    const parts = [
+      live ? `${live} 只盘中价` : '',
+      close ? `${close} 只有效收盘价` : '',
+      delayed ? `${delayed} 只延迟` : '',
+      stale ? `${stale} 只过期` : '',
+      missing ? `${missing} 只使用持仓缓存` : '',
+    ].filter(Boolean);
+    return parts.join('，') || '当前无持仓行情';
   }, [data]);
 
   if (loading)
@@ -224,7 +269,7 @@ export default function PortfolioOverview() {
             自动跟单 {data.portfolio.auto_trade_enabled ? '开启' : '关闭'}
           </Tag>
           {data.unread_alerts_count ? (
-            <Tag color="red">{data.unread_alerts_count} 条未读持仓告警</Tag>
+            <Tag color="red">{data.unread_alerts_count} 条未读风控告警</Tag>
           ) : null}
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
             重新对账
@@ -235,9 +280,47 @@ export default function PortfolioOverview() {
       <div className="catdesk-ledger__quote-note" data-stale={String(valuation.has_stale_quotes)}>
         <ClockCircleOutlined />
         <span>
-          {quoteSummary} · 估值时间 {dateTime(valuation.valued_at)} · 来源 realtime_quotes
+          {quoteSummary} · 行情跨度 {dateTime(valuation.oldest_quote_at)}—
+          {dateTime(valuation.newest_quote_at)} · 来源 {valuation.quote_source}
         </span>
       </div>
+
+      {data.latest_correction_notification || data.portfolio_corrections.length ? (
+        <div className="catdesk-ledger__notice is-correction" role="status">
+          <SafetyCertificateOutlined />
+          <div>
+            <strong>
+              {data.latest_correction_notification?.title || '账户存在已应用的数据更正'}
+            </strong>
+            <span>
+              {data.portfolio_corrections.length}{' '}
+              条数据更正已纳入当前持仓与收益，请以本页重算结果为准
+            </span>
+          </div>
+        </div>
+      ) : null}
+
+      {data.account_alerts.length || data.account_notifications.length ? (
+        <div className="catdesk-ledger__notice">
+          <BellOutlined />
+          <div>
+            <strong>账户级告警与通知</strong>
+            <span>
+              {data.account_alerts.length} 条组合告警 · {data.account_notifications.length}{' '}
+              条账户通知
+              {data.latest_morning_notification
+                ? ` · 最近晨检：${data.latest_morning_notification.title}${
+                    data.latest_morning_notification.invalidated
+                      ? '（已作废）'
+                      : data.latest_morning_notification.corrected
+                        ? '（已更正）'
+                        : ''
+                  }`
+                : ' · 暂无晨检通知'}
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       <div className="catdesk-portfolio__ledger" aria-label="账户估值概览">
         <div>
@@ -268,15 +351,19 @@ export default function PortfolioOverview() {
       <div className="catdesk-ledger__research-strip">
         <span>
           <b>A 股早报</b>
-          {data.latest_morning_brief
+          {data.latest_morning_brief.freshness === 'fresh'
             ? `${data.latest_morning_brief.trading_day} · ${data.positions.filter(row => row.morning_brief.matched).length} 只命中`
-            : '暂无规范快照'}
+            : data.latest_morning_brief.freshness === 'delayed'
+              ? `数据停在 ${data.latest_morning_brief.trading_day} · 已过期`
+              : '暂无规范快照'}
         </span>
         <span>
           <b>高倍潜力</b>
-          {data.latest_multibagger
+          {data.latest_multibagger?.freshness === 'fresh'
             ? `${dateTime(data.latest_multibagger.as_of)} · ${data.positions.filter(row => row.multibagger.matched).length} 只命中`
-            : '暂无研究快照'}
+            : data.latest_multibagger
+              ? `${dateTime(data.latest_multibagger.as_of)} · 研究已过期`
+              : '暂无研究快照'}
         </span>
       </div>
 
@@ -332,16 +419,43 @@ export default function PortfolioOverview() {
                             </Tag>
                             <small>信号 #{row.investment_signal.id}</small>
                           </>
+                        ) : row.trade_origin ? (
+                          <>
+                            <Tag color="blue">
+                              {ORIGIN_LABEL[row.trade_origin.source] || row.trade_origin.source}
+                            </Tag>
+                            <small>成交 #{row.trade_origin.trade_id}</small>
+                          </>
                         ) : (
-                          <Tag color="red">未找到推荐来源</Tag>
+                          <Tag color="red">来源未记录</Tag>
                         )}
                       </td>
                       <td>
-                        <Tag color={row.morning_brief.matched ? 'green' : 'default'}>
-                          早报 {row.morning_brief.matched ? '命中' : '未命中'}
+                        <Tag
+                          color={
+                            row.morning_brief.freshness !== 'fresh'
+                              ? row.morning_brief.freshness === 'delayed'
+                                ? 'gold'
+                                : 'default'
+                              : row.morning_brief.matched
+                                ? 'green'
+                                : 'default'
+                          }
+                        >
+                          早报 {researchTagLabel(row.morning_brief)}
                         </Tag>
-                        <Tag color={row.multibagger.matched ? 'purple' : 'default'}>
-                          高倍 {row.multibagger.matched ? '命中' : '未命中'}
+                        <Tag
+                          color={
+                            row.multibagger.freshness !== 'fresh'
+                              ? row.multibagger.freshness === 'delayed'
+                                ? 'gold'
+                                : 'default'
+                              : row.multibagger.matched
+                                ? 'purple'
+                                : 'default'
+                          }
+                        >
+                          高倍 {researchTagLabel(row.multibagger)}
                         </Tag>
                       </td>
                       <td>

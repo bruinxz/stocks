@@ -86,6 +86,7 @@ export async function checkTPlus1(input: {
  */
 export async function checkPreBuyGuards(input: {
   user_id: number;
+  portfolio_id?: number;
   symbol: string;
   proposed_value: number;
 }): Promise<{ ok: true } | { ok: false; code: string; reason: string; detail?: any }> {
@@ -146,6 +147,7 @@ export async function checkPreBuyGuards(input: {
   try {
     limitResult = await positionLimitGuard.checkBuyOrder({
       user_id: input.user_id,
+      portfolio_id: input.portfolio_id,
       symbol: input.symbol,
       proposed_value: input.proposed_value,
     });
@@ -221,6 +223,7 @@ export type PreTradeGateInput =
   | {
       side: 'BUY';
       user_id: number;
+      portfolio_id?: number;
       symbol: string;
       proposed_value: number;
       caller_label?: string;
@@ -254,6 +257,7 @@ export async function checkAllPreTradeGates(input: PreTradeGateInput): Promise<P
   if (input.side === 'BUY') {
     const r = await checkPreBuyGuards({
       user_id: input.user_id,
+      portfolio_id: input.portfolio_id,
       symbol: input.symbol,
       proposed_value: input.proposed_value,
     });

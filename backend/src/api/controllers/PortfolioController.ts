@@ -421,8 +421,17 @@ export class PortfolioController {
         return res.status(401).json({ success: false, message: '未登录' });
       }
       const dryRun = req.body?.dry_run === true;
+      const requestedPortfolioId = req.body?.portfolio_id;
+      const portfolio_id =
+        requestedPortfolioId === undefined || requestedPortfolioId === null
+          ? undefined
+          : Number(requestedPortfolioId);
+      if (portfolio_id !== undefined && (!Number.isInteger(portfolio_id) || portfolio_id <= 0)) {
+        return res.status(400).json({ success: false, message: 'portfolio_id 必须为正整数' });
+      }
       const result = await industryConcentrationGuard.rebalanceIndustry({
         user_id,
+        portfolio_id,
         dry_run: dryRun,
       });
       res.json({

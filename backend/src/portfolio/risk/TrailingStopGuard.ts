@@ -273,6 +273,7 @@ export interface TrailingStopDataSource {
   /** Write a single RiskAlert row (level='HIGH'). */
   writeAlert(input: {
     user_id: number;
+    portfolio_id?: number;
     symbol: string;
     name: string;
     message: string;
@@ -375,6 +376,7 @@ export class DefaultTrailingStopDataSource implements TrailingStopDataSource {
 
   async writeAlert(input: {
     user_id: number;
+    portfolio_id?: number;
     symbol: string;
     name: string;
     message: string;
@@ -389,6 +391,10 @@ export class DefaultTrailingStopDataSource implements TrailingStopDataSource {
       // 的 HIGH 告警在 30 min 窗口内被 unknown::symbol::HIGH 互相吃掉。
       rule_id: 'trailing_stop',
       is_read: false,
+      metadata: {
+        portfolio_id: input.portfolio_id,
+        origin: 'trailing_stop_guard',
+      },
     } as any);
   }
 }
@@ -634,6 +640,7 @@ export class TrailingStopGuard {
             try {
               await this.source.writeAlert({
                 user_id,
+                portfolio_id: pos.portfolio_id,
                 symbol: pos.symbol,
                 name: `追踪止损触发 - ${pos.name || pos.symbol}`,
                 message,

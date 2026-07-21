@@ -120,6 +120,7 @@ export function checkTradeCompliance(input: ComplianceCheckInput): ComplianceChe
  */
 export async function emitWizardAlert(input: {
   user_id: number;
+  portfolio_id?: number;
   outcome_id: number;
   symbol: string;
   name?: string;
@@ -151,6 +152,8 @@ export async function emitWizardAlert(input: {
         input.result.violations.length > 3 ? `; +${input.result.violations.length - 3} more` : ''
       }`,
       metadata: {
+        portfolio_id: input.portfolio_id,
+        symbol: input.symbol,
         outcome_id: input.outcome_id,
         grade: input.result.rule_compliance_grade,
         severity_score: input.result.severity_score,
@@ -495,6 +498,8 @@ export async function emitPreTradeComplianceAlert(input: {
         input.result.violations.length > 3 ? `; +${input.result.violations.length - 3} more` : ''
       }`,
       metadata: {
+        portfolio_id: input.draft.portfolio_id,
+        symbol: input.symbol,
         draft: {
           portfolio_id: input.draft.portfolio_id,
           price: input.draft.price,

@@ -159,6 +159,7 @@ export interface IndustryAggregation {
 
 /** One industry concentration alert. */
 export interface IndustryConcentrationAlert {
+  portfolio_id: number;
   industry: string;
   pct: number;
   alert_pct: number;
@@ -549,12 +550,13 @@ export interface IndustryConcentrationDataSource {
     config: IndustryConcentrationConfig
   ): Promise<IndustryConcentrationConfig>;
   /** Load the user's portfolio header (just id). */
-  loadPortfolioId(user_id: number): Promise<number | null>;
+  loadPortfolioId(user_id: number, portfolio_id?: number): Promise<number | null>;
   /** Load all open positions (quantity > 0) for the user, with industry joined. */
-  loadOpenPositions(user_id: number): Promise<IndustryPositionSnapshot[]>;
+  loadOpenPositions(user_id: number, portfolio_id?: number): Promise<IndustryPositionSnapshot[]>;
   /** Write a single RiskAlert row (level='MEDIUM'). */
   writeAlert(input: {
     user_id: number;
+    portfolio_id?: number;
     symbol: string;
     name: string;
     message: string;
@@ -613,19 +615,21 @@ export class DefaultIndustryConcentrationDataSource implements IndustryConcentra
     return { ...config };
   }
 
-  async loadPortfolioId(user_id: number): Promise<number | null> {
+  async loadPortfolioId(user_id: number, portfolio_id?: number): Promise<number | null> {
     // 修复 (2026-06-16, HIGH H2): 兼容旧 caller, 显式取 active 集合中 id 最小者.
     const p = await PaperTradingPortfolio.findOne({
-      where: { user_id, is_active: true },
+      where: { user_id, is_active: true, ...(portfolio_id ? { id: portfolio_id } : {}) },
       order: [['id', 'ASC']],
     });
     return p ? p.id : null;
   }
 
-  async loadOpenPositions(user_id: number): Promise<IndustryPositionSnapshot[]> {
-    // 修复 (HIGH H2): 跨所有 active portfolio 拉持仓 (注意行业集中度按聚合算)
+  async loadOpenPositions(
+    user_id: number,
+    portfolio_id?: number
+  ): Promise<IndustryPositionSnapshot[]> {
     const portfolios = await PaperTradingPortfolio.findAll({
-      where: { user_id, is_active: true },
+      where: { user_id, is_active: true, ...(portfolio_id ? { id: portfolio_id } : {}) },
       attributes: ['id'],
     });
     if (portfolios.length === 0) return [];
@@ -658,6 +662,7 @@ export class DefaultIndustryConcentrationDataSource implements IndustryConcentra
 
   async writeAlert(input: {
     user_id: number;
+    portfolio_id?: number;
     symbol: string;
     name: string;
     message: string;
@@ -672,6 +677,10 @@ export class DefaultIndustryConcentrationDataSource implements IndustryConcentra
       // 不进 dispatcher 主流程，但保留 rule_id 让数据完整、未来扩 MEDIUM cron 聚合可复用)。
       rule_id: 'industry_concentration',
       is_read: false,
+      metadata: {
+        portfolio_id: input.portfolio_id,
+        origin: 'industry_concentration_guard',
+      },
     } as any);
   }
 
@@ -724,6 +733,7 @@ export interface EvaluateAfterCloseOptions {
 
 export interface RebalanceIndustryOptions {
   user_id: number;
+  portfolio_id?: number;
   /** If true, generate the plan but don't actually call closePosition. */
   dry_run?: boolean;
 }
@@ -823,34 +833,46 @@ export class IndustryConcentrationGuard {
       };
     }
 
-    const overAlertIndustries = pickOverAlertIndustries(breakdown, config.alert_pct);
-    const alerts: IndustryConcentrationAlert[] = overAlertIndustries.map(b => {
-      const message = buildIndustryConcentrationMessage({
-        industry: b.industry,
-        pct: b.pct,
-        alert_pct: config.alert_pct,
-        position_count: b.position_count,
-        symbols: b.symbols,
-      });
-      const industryLabel = b.industry === UNKNOWN_INDUSTRY_SENTINEL ? '未分类' : b.industry;
-      return {
-        industry: b.industry,
-        pct: b.pct,
-        alert_pct: config.alert_pct,
-        total_value: b.total_value,
-        position_count: b.position_count,
-        symbols: b.symbols,
-        message,
-        symbol: `${INDUSTRY_CONCENTRATION_SYMBOL_PREFIX}${b.industry}`,
-        name: `行业集中度告警 - ${industryLabel}`,
-      };
-    });
+    const positionsByPortfolio = new Map<number, IndustryPositionSnapshot[]>();
+    for (const position of positions) {
+      positionsByPortfolio.set(position.portfolio_id, [
+        ...(positionsByPortfolio.get(position.portfolio_id) || []),
+        position,
+      ]);
+    }
+    const alerts: IndustryConcentrationAlert[] = [];
+    for (const [alertPortfolioId, portfolioPositions] of positionsByPortfolio) {
+      const portfolioBreakdown = aggregateByIndustry(portfolioPositions).breakdown;
+      for (const b of pickOverAlertIndustries(portfolioBreakdown, config.alert_pct)) {
+        const message = buildIndustryConcentrationMessage({
+          industry: b.industry,
+          pct: b.pct,
+          alert_pct: config.alert_pct,
+          position_count: b.position_count,
+          symbols: b.symbols,
+        });
+        const industryLabel = b.industry === UNKNOWN_INDUSTRY_SENTINEL ? '未分类' : b.industry;
+        alerts.push({
+          portfolio_id: alertPortfolioId,
+          industry: b.industry,
+          pct: b.pct,
+          alert_pct: config.alert_pct,
+          total_value: b.total_value,
+          position_count: b.position_count,
+          symbols: b.symbols,
+          message,
+          symbol: `${INDUSTRY_CONCENTRATION_SYMBOL_PREFIX}${b.industry}`,
+          name: `行业集中度告警 - ${industryLabel}`,
+        });
+      }
+    }
 
     if (!dryRun) {
       for (const alert of alerts) {
         try {
           await this.source.writeAlert({
             user_id,
+            portfolio_id: alert.portfolio_id,
             symbol: alert.symbol,
             name: alert.name,
             message: alert.message,
@@ -889,7 +911,7 @@ export class IndustryConcentrationGuard {
     const { user_id } = options;
     const dryRun = Boolean(options.dry_run);
     const config = await this.source.loadConfig(user_id);
-    const portfolio_id = await this.source.loadPortfolioId(user_id);
+    const portfolio_id = await this.source.loadPortfolioId(user_id, options.portfolio_id);
     if (portfolio_id === null) {
       return {
         user_id,
@@ -906,7 +928,7 @@ export class IndustryConcentrationGuard {
         message: '未找到模拟盘，无可再平衡的持仓。',
       };
     }
-    const positions = await this.source.loadOpenPositions(user_id);
+    const positions = await this.source.loadOpenPositions(user_id, portfolio_id);
     const { breakdown, total_position_value } = aggregateByIndustry(positions);
     const planBundle = buildRebalanceSellPlan(
       breakdown,
