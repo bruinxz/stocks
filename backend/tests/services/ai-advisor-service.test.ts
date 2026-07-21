@@ -362,6 +362,35 @@ async function testBuildKeyPoints() {
     kp9,
     { news: ['Q3 业绩预告', '股权激励'] }
   );
+
+  // 10) 生产 TradingAgents 形态：detail={}，完整论证只在 rationale。
+  const productionRationale = [
+    '#### （1）中期技术转空信号明确，趋势性风险不可忽视',
+    '50日均线向下拐头、MACD下穿零轴且负值持续扩大，结合高ATR波动率，空头主导格局清晰。',
+    '#### （2）资金面无修复动力，短期反弹缺乏核心支撑',
+    '股价放量跌停且龙虎榜仅见资金出逃，无机构接盘痕迹，情绪驱动下无序波动风险较高。',
+    '#### （3）AI赛道逻辑缺乏基本面验证，确定性不足',
+    'AI手机备案利好虽为行业趋势，但公司未披露AI订单占比、中报业绩预告等硬数据。',
+  ].join('\n');
+  const kp10 = buildKeyPoints(
+    { detail: {}, rationale: productionRationale },
+    ['fundamental', 'technical', 'capital', 'news', 'sentiment']
+  );
+  assert(
+    'buildKeyPoints extracts all requested dimensions from rationale when detail is empty',
+    Object.values(kp10).every(points => points.length > 0),
+    JSON.stringify(kp10)
+  );
+  assert(
+    'rationale technical point preserves source evidence',
+    kp10.technical.some(point => point.includes('MACD')),
+    JSON.stringify(kp10.technical)
+  );
+  assert(
+    'rationale news point preserves disclosure evidence',
+    kp10.news.some(point => point.includes('披露')),
+    JSON.stringify(kp10.news)
+  );
 }
 
 async function testBuildAnalysisSummary() {
@@ -600,6 +629,33 @@ async function testBuildResultFromPayload() {
     baseCtx
   );
   assertEqual('no confidence → null', r8.confidence_score, null);
+
+  // 9) 生产异步结果会返回 detail={} + rationale；不能因空对象 truthy 丢掉全文。
+  const rationale = [
+    '技术面显示MACD下穿零轴、50日均线转弱。',
+    '资金面出现主力净流出，龙虎榜未见机构接盘。',
+    '基本面仍需财报业绩和订单数据验证。',
+    '公告披露与中报预告是后续新闻催化。',
+    '跌停与游资炒作导致短期市场情绪偏弱。',
+  ].join('\n');
+  const r9 = buildResultFromPayload(
+    {
+      status: 'COMPLETED',
+      data: { decision: 'SELL', detail: {}, rationale },
+    },
+    baseCtx
+  );
+  assertEqual('empty detail + rationale → completed', r9.status, 'completed');
+  assert(
+    'empty detail + rationale → all dimensions populated',
+    Object.values(r9.key_points).every(points => points.length > 0),
+    JSON.stringify(r9.key_points)
+  );
+  assertEqual(
+    'source rationale retained for archived report audit',
+    r9.metadata.tradingagents_rationale,
+    rationale
+  );
 }
 
 async function testNormalizeTradingAgentsError() {

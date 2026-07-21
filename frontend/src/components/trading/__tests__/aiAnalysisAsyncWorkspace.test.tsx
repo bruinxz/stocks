@@ -126,7 +126,8 @@ describe('AI async workspace', () => {
       stock_code: 'sh.600519',
       stock_name: '贵州茅台',
       dimensions: ['fundamental', 'technical'],
-      summary: '基本面与技术面共同改善。',
+      summary:
+        '**【AI 解读 · sh.600519 · 贵州茅台】**\n- 综合建议：买入\n- 基本面与技术面共同改善。',
       recommendation: 'buy',
       confidence_score: 82,
       risk_level: '中',
@@ -178,6 +179,7 @@ describe('AI async workspace', () => {
     });
     expect(container.textContent).toContain('会审完成，结果已归档');
     expect(container.textContent).toContain('基本面与技术面共同改善');
+    expect(container.textContent).not.toContain('**');
     expect(container.textContent).toContain('14 分 2 秒');
   });
 

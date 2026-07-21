@@ -26,6 +26,13 @@ function formatDuration(seconds: number): string {
   return minutes > 0 ? `${minutes} 分 ${remain} 秒` : `${remain} 秒`;
 }
 
+export function formatAnalysisSummaryForDisplay(summary: string): string {
+  return String(summary || '')
+    .replace(/\*\*/g, '')
+    .replace(/^\s*-\s*/gm, '')
+    .trim();
+}
+
 export default function AIAnalysisWorkspaceResult() {
   const { job, is_running, clearAnalysis } = useAIAnalysis();
   const [now, setNow] = useState(Date.now());
@@ -140,7 +147,9 @@ export default function AIAnalysisWorkspaceResult() {
           {result.summary ? (
             <article className="ai-analysis-sheet__summary">
               <span>会审摘要</span>
-              <p>{result.summary}</p>
+              <p style={{ whiteSpace: 'pre-line' }}>
+                {formatAnalysisSummaryForDisplay(result.summary)}
+              </p>
             </article>
           ) : null}
 
@@ -157,7 +166,7 @@ export default function AIAnalysisWorkspaceResult() {
                       ))}
                     </ul>
                   ) : (
-                    <Text type="secondary">暂无独立要点</Text>
+                    <Text type="secondary">远端报告未返回该维度结论</Text>
                   )}
                 </article>
               );
