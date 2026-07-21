@@ -1,0 +1,21 @@
+frontend/src/pages/catdesk/catdesk.css
+  s_4c5b09a99b8e55::t_71c6e6ca171fb7 1292-1293,1295,1298-1314
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cf2c3cb8e3605a41a8679b45f2b6232b553c64c2",
+  "prompts": {},
+  "sessions": {
+    "s_4c5b09a99b8e55": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8292-9b9c-7d72-96bc-4c77b91fe777",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
