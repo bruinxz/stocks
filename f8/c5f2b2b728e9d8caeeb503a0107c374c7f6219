@@ -1,0 +1,21 @@
+backend/src/api/controllers/PaperTradingController.ts
+  s_4c5b09a99b8e55::t_b7d5127a812e4c 934-938
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f8c5f2b2b728e9d8caeeb503a0107c374c7f6219",
+  "prompts": {},
+  "sessions": {
+    "s_4c5b09a99b8e55": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8292-9b9c-7d72-96bc-4c77b91fe777",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
