@@ -1,0 +1,73 @@
+backend/scripts/migrations/2026-07-21-portfolio-ledger-explicit-scope-rollback.sql
+  s_4c5b09a99b8e55::t_7f103ff76dd7af 1-38
+backend/scripts/migrations/2026-07-21-portfolio-ledger-explicit-scope.sql
+  s_4c5b09a99b8e55::t_73ff3dc67c3118 1-145
+backend/src/api/controllers/MultibaggerController.ts
+  s_4c5b09a99b8e55::t_381c93ba2cc5aa 109,222
+backend/src/api/controllers/PaperTradingController.ts
+  s_4c5b09a99b8e55::t_b896148c18f5e4 36-46,281,286,302-303,307,316,319,334,338,350,354,414,418,926-929,934,954-957,962-966
+backend/src/api/routes/paperTrading.routes.ts
+  s_4c5b09a99b8e55::t_c055c112da0f92 15-19,233,235,237,289-293,790-794,809-813,839,841,873,875
+backend/src/portfolio/RebalanceEngine.ts
+  s_4c5b09a99b8e55::t_34327f737ccdad 535,619,641,647,751
+backend/src/portfolio/internal/PaperTradingAutomationService.ts
+  s_4c5b09a99b8e55::t_c9e6477a35eba3 1104-1127,1315-1320,3445-3450,3863,3868,4409-4414,4664-4668,7182-7183,7353-7354
+backend/src/portfolio/internal/PortfolioLedgerService.ts
+  s_4c5b09a99b8e55::t_05eb0032b44243 33,236,318-321,330-331,346-347,355,362,364,385,387-397,515,527,539,544,548,551-553,565,706-711,770,773
+backend/src/portfolio/internal/tradeReasonBuilder.ts
+  s_4c5b09a99b8e55::t_5242b68800fc1d 386-389,391,449-452,456
+backend/src/portfolio/risk/DrawdownCircuitBreaker.ts
+  s_4c5b09a99b8e55::t_a9b445599cf59f 122-124,165,167,410,466-470,598,612-616,712,739,747-749,753-754,777-778,843,858-859
+backend/src/portfolio/risk/GuardSellExecutor.ts
+  s_4c5b09a99b8e55::t_6eed8117e10bc2 136
+backend/src/portfolio/risk/MorningRiskCheckupService.ts
+  s_4c5b09a99b8e55::t_ccb09a8aaef330 1013-1019
+backend/src/recommendations/SequelizeRecommendationSnapshotReadAdapter.ts
+  s_4c5b09a99b8e55::t_ccbd3a504526ec 417
+backend/src/services/PageFreshnessService.ts
+  s_4c5b09a99b8e55::t_3e59a18bc5288c 124
+backend/tests/api/paperTrading.trade-scope.test.ts
+  s_4c5b09a99b8e55::t_2040402b86b5cf 1-108
+backend/tests/portfolio/createBuyTrade-reason.test.ts
+  s_4c5b09a99b8e55::t_8811e39b58c738 181,192,200-203
+backend/tests/portfolio/paper-risk-quote-guard.test.ts
+  s_4c5b09a99b8e55::t_b3d889e965dcf9 5,68-86
+backend/tests/portfolio/rebalance-engine.test.ts
+  s_4c5b09a99b8e55::t_0cca6b62be5859 118,763
+backend/tests/portfolio/tradeReasonBuilder.test.ts
+  s_4c5b09a99b8e55::t_45d15c6447c228 245,258,267,273-274,279
+backend/tests/risk/drawdown-circuit-breaker.test.ts
+  s_4c5b09a99b8e55::t_d985a0c009960d 93-99
+backend/tests/services/notification-schema-contract.test.ts
+  s_4c5b09a99b8e55::t_a5fa43a0205234 179-205,235
+backend/tests/services/portfolio-ledger-contract.test.ts
+  s_4c5b09a99b8e55::t_0b520146f7a9bc 96,106,119-138,148-152,163-200,206
+frontend/src/pages/catdesk/catdesk.css
+  s_4c5b09a99b8e55::t_abd30a3398e3bf 1572,1580-1586,1669-1673,1719-1728
+frontend/src/pages/catdesk/tabs/PortfolioOverview.tsx
+  s_4c5b09a99b8e55::t_af22a1dc150687 115-116,139,151,164-166,175-180,305-306,312,316,318-323,363,372
+frontend/src/pages/catdesk/tabs/__tests__/portfolioAndAIEntry.test.tsx
+  s_4c5b09a99b8e55::t_aa02b5d4972d9e 118,133-147,245-256,274-277
+frontend/src/services/api.ts
+  s_4c5b09a99b8e55::t_6acbb459ec5412 255-256
+frontend/src/services/portfolioWorkspaceService.ts
+  s_4c5b09a99b8e55::t_f73937250f4d91 30,208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f0ed20813c19b629bab4571ce859a8665a21b205",
+  "prompts": {},
+  "sessions": {
+    "s_4c5b09a99b8e55": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8292-9b9c-7d72-96bc-4c77b91fe777",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
