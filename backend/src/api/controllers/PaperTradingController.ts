@@ -931,7 +931,11 @@ export class PaperTradingController {
         action: 'set_stop_loss',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: { position_id: positionId, portfolio_id: requiredPortfolioId(portfolio_id), stop_loss_price },
+        body: {
+          position_id: positionId,
+          portfolio_id: requiredPortfolioId(portfolio_id),
+          stop_loss_price,
+        },
       });
       res.json({
         success: true,
