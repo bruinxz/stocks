@@ -5,6 +5,158 @@
   min-height: 100%;
 }
 
+.jpkr-focus-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 22px;
+  border: 1px solid var(--cd-border);
+  border-radius: var(--cd-radius-md);
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--cd-accent) 10%, transparent), transparent 52%),
+    var(--cd-bg-surface);
+}
+
+.jpkr-focus-header > div:first-child > span,
+.jpkr-section-heading span {
+  color: var(--cd-accent);
+  font: 700 10px/1.2 var(--cd-font-mono);
+  letter-spacing: 0.12em;
+}
+
+.jpkr-focus-header h2,
+.jpkr-section-heading h3 {
+  margin: 5px 0 0;
+  font-family: 'Iowan Old Style', 'Noto Serif SC', serif;
+}
+
+.jpkr-focus-header h2 {
+  font-size: clamp(21px, 3vw, 31px);
+}
+
+.jpkr-focus-header p,
+.jpkr-section-heading p {
+  margin: 6px 0 0;
+  color: var(--cd-text-secondary);
+  font-size: 12px;
+}
+
+.jpkr-sector-section,
+.jpkr-representatives {
+  display: grid;
+  gap: 10px;
+}
+
+.jpkr-section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 3px;
+}
+
+.jpkr-section-heading h3 {
+  font-size: 19px;
+}
+
+.jpkr-sector-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.jpkr-sector-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 70px;
+  padding: 12px;
+  border: 1px solid var(--cd-border);
+  border-radius: var(--cd-radius-sm);
+  color: var(--cd-text-primary);
+  background: var(--cd-bg-surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.jpkr-sector-card:hover,
+.jpkr-sector-card[data-active='true'] {
+  border-color: color-mix(in srgb, var(--cd-accent) 62%, var(--cd-border));
+  background: color-mix(in srgb, var(--cd-accent) 8%, var(--cd-bg-surface));
+}
+
+.jpkr-sector-card > span:first-child {
+  color: var(--cd-accent);
+  font: 700 14px/1 var(--cd-font-mono);
+}
+
+.jpkr-sector-card strong {
+  font-size: 13px;
+}
+
+.jpkr-sector-card > strong:last-child {
+  font-family: var(--cd-font-mono);
+  font-size: 14px;
+}
+
+.jpkr-sector-card small,
+.jpkr-table-subtitle {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--cd-text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jpkr-table-price {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 2px 6px;
+  font-family: var(--cd-font-mono);
+}
+
+.jpkr-table-price [data-delta] {
+  grid-column: 1 / 3;
+}
+
+.jpkr-table-price small {
+  color: var(--cd-text-secondary);
+  font-size: 9px;
+}
+
+.jpkr-live-dot {
+  color: var(--cd-up);
+  font-size: 11px;
+}
+
+.jpkr-live-dot::before {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+  vertical-align: 1px;
+}
+
+.jpkr-market [data-delta='up'] {
+  color: var(--cd-up);
+}
+
+.jpkr-market [data-delta='down'] {
+  color: var(--cd-down);
+}
+
+.jpkr-market [data-delta='flat'] {
+  color: var(--cd-text-secondary);
+}
+
 .jpkr-kpi-strip {
   display: grid;
   grid-template-columns: repeat(5, minmax(132px, 1fr));
@@ -12,6 +164,14 @@
   border: 1px solid var(--cd-border);
   border-radius: var(--cd-radius-md);
   background: var(--cd-bg-surface);
+}
+
+.jpkr-kpi-strip--kr {
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+}
+
+.jpkr-kpi-strip--jp {
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
 }
 
 .jpkr-kpi-card {
@@ -102,7 +262,11 @@
 }
 
 @media (max-width: 1080px) {
-  .jpkr-kpi-strip {
+  .jpkr-sector-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .jpkr-kpi-strip:not(.jpkr-kpi-strip--kr):not(.jpkr-kpi-strip--jp) {
     grid-template-columns: repeat(3, minmax(148px, 1fr));
   }
 
@@ -117,6 +281,16 @@
 }
 
 @media (max-width: 640px) {
+  .jpkr-focus-header,
+  .jpkr-section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .jpkr-sector-board {
+    grid-template-columns: 1fr;
+  }
+
   .jpkr-kpi-strip {
     grid-template-columns: 1fr 1fr;
   }

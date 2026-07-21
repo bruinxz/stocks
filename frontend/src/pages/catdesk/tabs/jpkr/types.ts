@@ -2,6 +2,7 @@ export type JpKrMarket = 'JP' | 'KR';
 
 export type JpKrSector =
   | 'semiconductor'
+  | 'internet_platform'
   | 'automotive'
   | 'battery'
   | 'ai_robotics'
@@ -25,6 +26,7 @@ export type JpKrMarketRow = {
   name_en: string;
   market: JpKrMarket;
   sector: JpKrSector;
+  as_of: string;
   close: number;
   change_pct: number;
   currency: 'JPY' | 'KRW';
@@ -33,12 +35,6 @@ export type JpKrMarketRow = {
   fx_beta: number;
   is_halted: boolean;
   data_sources: string[];
-  recommendation?: import('../c1Types').CandidateListEntry;
-};
-
-export type JpKrRecommendationStatus = {
-  kind: 'ready' | 'not_generated' | 'unavailable';
-  profile: 'japan_blue_chip' | 'korea_semiconductor_chain';
 };
 
 export type JpKrKpi = {
@@ -64,6 +60,24 @@ export type JpKrFxKpiSnapshot = {
 export type JpKrMarketResponse = {
   kpi: JpKrKpi;
   rows: JpKrMarketRow[];
+  sector_performance: JpKrSectorPerformance[];
+  market_summary: {
+    focus: 'technology_representatives' | 'market_representatives';
+    leader_sector: JpKrSector | null;
+    leader_sector_label: string | null;
+    leader_change_pct: number | null;
+    advancing_sectors: number;
+    sector_count: number;
+  };
   date: string;
-  recommendation_status?: JpKrRecommendationStatus;
+};
+
+export type JpKrSectorPerformance = {
+  sector: JpKrSector;
+  sector_label: string;
+  change_pct: number;
+  representative_count: number;
+  representative_symbols: string[];
+  calculation_basis: 'representative_equal_weight';
+  as_of: string;
 };

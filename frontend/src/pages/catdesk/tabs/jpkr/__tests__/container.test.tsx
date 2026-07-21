@@ -3,7 +3,6 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { API_DOMAIN_URL } from 'services/api';
-import { snapshotFixture } from '../../daily-report/testFixtures';
 import JpKrMarket from '../JpKrMarket';
 
 jest.mock('shared/components/FilterChip', () => ({
@@ -22,60 +21,36 @@ jest.mock('../../../shared/EmptyState', () => ({
 jest.mock('../../../shared/ErrorState', () => ({
   ErrorState: ({ message }: { message: string }) => <div role="alert">{message}</div>,
 }));
-jest.mock('../../../shared/DisclaimerFooter', () => ({
-  DisclaimerFooter: () => null,
-}));
+jest.mock('../../../shared/DisclaimerFooter', () => ({ DisclaimerFooter: () => null }));
 jest.mock('../JpKrTable', () => ({
-  JpKrTable: ({
-    rows,
-    error,
-  }: {
-    rows: Array<{
-      symbol: string;
-      recommendation?: {
-        score: { total: number };
-        risk_gate: { gate: string };
-        entry_plan: { entry: { low: number; high: number } };
-      };
-    }>;
-    error: Error | null;
-  }) =>
-    error ? (
-      <div role="alert">table error</div>
-    ) : (
-      <div>
-        {rows
-          .map(row =>
-            row.recommendation
-              ? `${row.symbol}:${row.recommendation.score.total}:${row.recommendation.risk_gate.gate}:${row.recommendation.entry_plan.entry.low}-${row.recommendation.entry_plan.entry.high}`
-              : row.symbol
-          )
-          .join(',')}
-      </div>
-    ),
+  JpKrTable: ({ rows }: { rows: Array<{ symbol: string; sector: string }> }) => (
+    <div data-testid="jpkr-table">{rows.map(row => `${row.symbol}:${row.sector}`).join(',')}</div>
+  ),
 }));
 
-const DATE = '2026-07-10';
+const DATE = '2026-07-21';
 const originalFetch = globalThis.fetch;
 
-function marketRow() {
+function marketRow(overrides: Record<string, unknown> = {}) {
   return {
-    symbol: '7203',
-    name_local: 'トヨタ自動車',
-    name_en: 'Toyota Motor',
-    market: 'JP',
-    sector: 'automotive',
-    close: 3125.5,
+    symbol: '005930',
+    name_local: '삼성전자',
+    name_en: 'Samsung Electronics',
+    market: 'KR',
+    sector: 'semiconductor',
+    as_of: DATE,
+    close: 251000,
     change_pct: 1.25,
-    currency: 'JPY',
+    currency: 'KRW',
     disclosure_events: [],
     revenue_by_region: [],
-    fx_beta: 0.75,
+    fx_beta: 0,
     is_halted: false,
-    data_sources: ['jpx-daily-statistics-pdf'],
+    data_sources: ['naver-public'],
     score: null,
     risk_gate: null,
     risk_triggers: [],
+    ...overrides,
   };
 }
 
@@ -83,80 +58,40 @@ function payload(rows: unknown[] = [marketRow()]) {
   return {
     date: DATE,
     kpi: {
-      nikkei225: { value: 41000.5, change_pct: 0.8, as_of: DATE },
-      topix: { value: 2900.25, change_pct: 0.4, as_of: DATE },
-      kospi: null,
-      usdjpy: { rate: 150.25, change_pct: 0.2, as_of: DATE },
-      usdkrw: null,
+      nikkei225: null,
+      topix: null,
+      kospi: { value: 3250.5, change_pct: 0.8, as_of: DATE },
+      usdjpy: null,
+      usdkrw: { rate: 1380.5, change_pct: -0.1, as_of: DATE },
     },
     rows,
+    sector_performance:
+      rows.length === 0
+        ? []
+        : [
+            {
+              sector: 'semiconductor',
+              sector_label: '半导体',
+              change_pct: 1.25,
+              representative_count: 1,
+              representative_symbols: ['005930'],
+              calculation_basis: 'representative_equal_weight',
+              as_of: DATE,
+            },
+          ],
+    market_summary: {
+      focus: 'technology_representatives',
+      leader_sector: rows.length === 0 ? null : 'semiconductor',
+      leader_sector_label: rows.length === 0 ? null : '半导体',
+      leader_change_pct: rows.length === 0 ? null : 1.25,
+      advancing_sectors: rows.length === 0 ? 0 : 1,
+      sector_count: rows.length === 0 ? 0 : 1,
+    },
   };
 }
 
-function jpRecommendationSnapshot() {
-  const base = snapshotFixture();
-  const recommendation = base.items[0].recommendation;
-  return snapshotFixture({
-    profile: 'japan_blue_chip',
-    market_scope: 'jp',
-    disclaimer: {
-      ...base.disclaimer,
-      short_text: '参考情報です',
-      full_text: '投資判断はご自身の責任で行ってください。',
-      language: 'ja-JP',
-    },
-    items: [
-      {
-        recommendation: {
-          ...recommendation,
-          ticker: '7203',
-          score: {
-            ...recommendation.score,
-            profile: 'japan_blue_chip',
-            market_scope: 'jp',
-          },
-          conviction: { ...recommendation.conviction, ticker: '7203' },
-          risk_gate: { ...recommendation.risk_gate, ticker: '7203' },
-          entry_plan: {
-            ...recommendation.entry_plan,
-            ticker: '7203',
-            entry: { low: 3000, high: 3150, currency: 'JPY' },
-            stop: { value: 2850, currency: 'JPY' },
-            targets: [{ value: 3500, currency: 'JPY' }],
-          },
-          explanation: { ...recommendation.explanation, language: 'ja-JP' },
-          evidence_refs: [
-            {
-              ...recommendation.evidence_refs[0],
-              source_uri: 'jpx-edinet://E00001/2026-07-10/annual-report',
-            },
-          ],
-        },
-        rating_band: 'A',
-      },
-    ],
-  });
-}
-
 function response(status: number, body?: unknown): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-  } as Response;
-}
-
-function installFetch(
-  marketBody: unknown,
-  recommendation: { status: number; body?: unknown } = { status: 404 }
-) {
-  const fetchMock = jest.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
-    String(input).includes('/api/v1/ai/recommendations/latest?')
-      ? response(recommendation.status, recommendation.body)
-      : response(200, marketBody)
-  );
-  globalThis.fetch = fetchMock as unknown as typeof fetch;
-  return fetchMock;
+  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
 }
 
 async function settle(): Promise<void> {
@@ -164,7 +99,7 @@ async function settle(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 0));
 }
 
-describe('JpKrMarket real container', () => {
+describe('JpKrMarket technology-focused container', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -184,128 +119,78 @@ describe('JpKrMarket real container', () => {
     jest.restoreAllMocks();
   });
 
-  test('loads both authenticated endpoints and keeps a missing snapshot explicit', async () => {
-    const fetchMock = installFetch(payload());
+  test('defaults to Korea, uses one authenticated endpoint and renders sectors before stocks', async () => {
+    const fetchMock = jest.fn(async () => response(200, payload()));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await act(async () => {
       root.render(<JpKrMarket tradingDay={DATE} />);
       await settle();
     });
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      `${API_DOMAIN_URL}/api/v1/jpkr-market/${DATE}?market=JP`,
-      expect.objectContaining({
-        signal: expect.any(AbortSignal),
-        credentials: 'include',
-        headers: expect.any(Headers),
-      })
+      `${API_DOMAIN_URL}/api/v1/jpkr-market/${DATE}?market=KR`,
+      expect.objectContaining({ credentials: 'include', signal: expect.any(AbortSignal) })
     );
-    const [, requestInit] = fetchMock.mock.calls[0];
-    expect(new Headers(requestInit?.headers).get('Authorization')).toBe('Bearer jpkr-access-token');
-    expect(fetchMock).toHaveBeenCalledWith(
-      `${API_DOMAIN_URL}/api/v1/ai/recommendations/latest?profile=japan_blue_chip&market_scope=jp`,
-      expect.objectContaining({
-        signal: expect.any(AbortSignal),
-        credentials: 'include',
-        headers: expect.any(Headers),
-      })
-    );
-    expect(container.textContent).toContain('41,000.50');
-    expect(container.textContent).toContain('150.25');
-    expect(container.textContent).toContain('日本央行');
-    expect(container.querySelectorAll('[data-state="available"]')).toHaveLength(3);
-    expect(container.querySelectorAll('[data-state="unavailable"]')).toHaveLength(2);
-    expect(container.textContent?.match(/暂无数据/g)).toHaveLength(2);
-    expect(container.textContent).toContain('7203');
-    expect(container.textContent).toContain('尚未生成该市场');
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer jpkr-access-token');
+    const text = container.textContent ?? '';
+    expect(text.indexOf('板块涨幅')).toBeLessThan(text.indexOf('韩国科技代表股'));
+    expect(text).toContain('005930:semiconductor');
+    expect(text).not.toContain('推荐服务');
   });
 
-  test('merges a strict v0.3.1 snapshot into score, risk and entry-plan UI data', async () => {
-    installFetch(payload(), { status: 200, body: jpRecommendationSnapshot() });
-
-    await act(async () => {
-      root.render(<JpKrMarket tradingDay={DATE} />);
-      await settle();
-    });
-
-    expect(container.textContent).toContain('7203:87.75:GREEN:3000-3150');
-    expect(container.textContent).not.toContain('尚未生成该市场');
-    expect(container.textContent).not.toContain('推荐服务当前不可用');
-  });
-
-  test('keeps market data visible when recommendation storage is unavailable', async () => {
-    installFetch(payload(), { status: 503 });
-
-    await act(async () => {
-      root.render(<JpKrMarket tradingDay={DATE} />);
-      await settle();
-    });
-
-    expect(container.textContent).toContain('41,000.50');
-    expect(container.textContent).toContain('7203');
-    expect(container.textContent).toContain('推荐服务当前不可用');
-  });
-
-  test('keeps the loading state visible until the HTTP response settles', async () => {
-    let resolveFetch: ((response: unknown) => void) | undefined;
-    globalThis.fetch = jest.fn((input: RequestInfo | URL) =>
-      String(input).includes('/api/v1/ai/recommendations/latest?')
-        ? Promise.resolve(response(404))
-        : new Promise(resolve => {
-            resolveFetch = resolve;
-          })
+  test('keeps loading visible until the market response settles', async () => {
+    let resolveFetch: ((value: Response) => void) | undefined;
+    globalThis.fetch = jest.fn(
+      () =>
+        new Promise<Response>(resolve => {
+          resolveFetch = resolve;
+        })
     ) as unknown as typeof fetch;
 
     await act(async () => {
       root.render(<JpKrMarket tradingDay={DATE} />);
       await Promise.resolve();
     });
-    expect(container.querySelector('[aria-busy="true"]')?.textContent).toBe('loading');
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
 
     await act(async () => {
       resolveFetch?.(response(200, payload()));
       await settle();
     });
     expect(container.querySelector('[aria-busy="true"]')).toBeNull();
-    expect(container.textContent).toContain('41,000.50');
+    expect(container.textContent).toContain('005930');
   });
 
-  test('keeps KPI unavailable distinct from zero while preserving the empty state', async () => {
-    installFetch({
-      ...payload([]),
-      kpi: {},
-    });
-
+  test('preserves unavailable KPIs and an explicit empty representative state', async () => {
+    globalThis.fetch = jest.fn(async () =>
+      response(200, { ...payload([]), kpi: {} })
+    ) as unknown as typeof fetch;
     await act(async () => {
       root.render(<JpKrMarket tradingDay={DATE} />);
       await settle();
     });
-
-    expect(container.querySelectorAll('[data-state="unavailable"]')).toHaveLength(5);
-    expect(container.textContent?.match(/暂无数据/g)).toHaveLength(5);
-    expect(container.textContent).not.toContain('0.00');
+    expect(container.querySelectorAll('[data-state="unavailable"]')).toHaveLength(2);
     expect(container.querySelector('[data-testid="empty-state"]')?.textContent).toContain(
-      '当日暂无可用行情'
+      '暂无可用代表股行情'
     );
   });
 
-  test('fails closed into the error state when the backend wire is malformed', async () => {
-    installFetch({
-      ...payload(),
-      kpi: {
-        ...payload().kpi,
-        usdjpy: { rate: '150.25', change_pct: 0.2, as_of: DATE },
-      },
-    });
-
+  test('fails closed when the backend wire is malformed', async () => {
+    globalThis.fetch = jest.fn(async () =>
+      response(200, {
+        ...payload(),
+        market_summary: { ...payload().market_summary, focus: 'all_stocks' },
+      })
+    ) as unknown as typeof fetch;
     await act(async () => {
       root.render(<JpKrMarket tradingDay={DATE} />);
       await settle();
     });
-
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      '日韩市场数据暂时不可用'
+      '日韩科技行情暂时不可用'
     );
-    expect(container.querySelector('[aria-label="日韩市场关键指标"]')).toBeNull();
   });
 });

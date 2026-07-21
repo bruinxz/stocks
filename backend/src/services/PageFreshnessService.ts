@@ -104,19 +104,15 @@ const PAGE_FRESHNESS_SQL = `
       FROM ai_recommendation_snapshot
      WHERE profile = 'us_preferred' AND market_scope = 'cn_a'
     UNION ALL
-    SELECT 'us', '美股催化', MAX(created_at), MAX(trading_day),
-           'ai_recommendation_snapshot/us'
-      FROM ai_recommendation_snapshot
-     WHERE profile = 'us_preferred' AND market_scope = 'us'
+    SELECT 'us', '美股科技', MAX(available_at_utc), MAX(trading_day),
+           'global_tech_daily_quote/us'
+      FROM global_tech_daily_quote
+     WHERE market_scope = 'us'
     UNION ALL
-    SELECT 'jpkr', '日韩市场', MIN(latest_at), MIN(latest_day),
-           'jpkr_daily_kline (JP + KR slower watermark)'
-      FROM (
-        SELECT market_scope, MAX(available_at_utc) AS latest_at, MAX(trading_day) AS latest_day
-          FROM jpkr_daily_kline
-         WHERE market_scope IN ('jp', 'kr')
-         GROUP BY market_scope
-      ) jpkr_watermarks
+    SELECT 'jpkr', '韩股科技', MAX(available_at_utc), MAX(trading_day),
+           'jpkr_daily_kline/kr technology representatives'
+      FROM jpkr_daily_kline
+     WHERE market_scope = 'kr'
     UNION ALL
     SELECT 'multi', '高倍潜力', MAX(as_of_utc), MAX(as_of_utc)::date,
            'multibagger_candidate_snapshot'

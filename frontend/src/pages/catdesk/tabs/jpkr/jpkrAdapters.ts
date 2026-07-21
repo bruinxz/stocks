@@ -14,6 +14,7 @@ type UnknownRecord = Record<string, unknown>;
 const MARKET_SET = new Set<JpKrMarket>(['JP', 'KR']);
 const SECTOR_SET = new Set<JpKrSector>([
   'semiconductor',
+  'internet_platform',
   'automotive',
   'battery',
   'ai_robotics',
@@ -198,6 +199,7 @@ function parseMarketRow(value: unknown, rowIndex: number): JpKrMarketRow {
       'name_en',
       'market',
       'sector',
+      'as_of',
       'close',
       'change_pct',
       'currency',
@@ -231,6 +233,7 @@ function parseMarketRow(value: unknown, rowIndex: number): JpKrMarketRow {
     name_en: requiredString(raw.name_en, `${label}.name_en`),
     market,
     sector: parseSector(raw.sector, `${label}.sector`),
+    as_of: dateString(raw.as_of, `${label}.as_of`),
     close: finiteNumber(raw.close, `${label}.close`, 0),
     change_pct: finiteNumber(raw.change_pct, `${label}.change_pct`),
     currency: expectedCurrency,
@@ -306,7 +309,12 @@ export function parseJpKrMarketResponse(
   requestedMarket: JpKrMarket
 ): JpKrMarketResponse {
   const expectedDate = dateString(requestedDate, 'requested date');
-  const raw = exactRecord(value, ['kpi', 'rows', 'date'], [], 'response');
+  const raw = exactRecord(
+    value,
+    ['kpi', 'rows', 'sector_performance', 'market_summary', 'date'],
+    [],
+    'response'
+  );
   const responseDate = dateString(raw.date, 'response.date');
   if (responseDate !== expectedDate) {
     throw new JpKrContractError(
@@ -323,9 +331,91 @@ export function parseJpKrMarketResponse(
       `rows[${mismatchedIndex}].market does not match request "${requestedMarket}"`
     );
   }
+  if (!Array.isArray(raw.sector_performance)) {
+    throw new JpKrContractError('response.sector_performance must be an array');
+  }
+  const sector_performance = raw.sector_performance.map((value, index) => {
+    const label = `response.sector_performance[${index}]`;
+    const sector = exactRecord(
+      value,
+      [
+        'sector',
+        'sector_label',
+        'change_pct',
+        'representative_count',
+        'representative_symbols',
+        'calculation_basis',
+        'as_of',
+      ],
+      [],
+      label
+    );
+    if (sector.calculation_basis !== 'representative_equal_weight') {
+      throw new JpKrContractError(`${label}.calculation_basis is invalid`);
+    }
+    return {
+      sector: parseSector(sector.sector, `${label}.sector`),
+      sector_label: requiredString(sector.sector_label, `${label}.sector_label`),
+      change_pct: finiteNumber(sector.change_pct, `${label}.change_pct`),
+      representative_count: finiteNumber(
+        sector.representative_count,
+        `${label}.representative_count`,
+        1
+      ),
+      representative_symbols: stringArray(
+        sector.representative_symbols,
+        `${label}.representative_symbols`
+      ),
+      calculation_basis: 'representative_equal_weight' as const,
+      as_of: dateString(sector.as_of, `${label}.as_of`),
+    };
+  });
+  const summary = exactRecord(
+    raw.market_summary,
+    [
+      'focus',
+      'leader_sector',
+      'leader_sector_label',
+      'leader_change_pct',
+      'advancing_sectors',
+      'sector_count',
+    ],
+    [],
+    'response.market_summary'
+  );
+  const expectedFocus =
+    requestedMarket === 'KR' ? 'technology_representatives' : 'market_representatives';
+  if (summary.focus !== expectedFocus) {
+    throw new JpKrContractError(`response.market_summary.focus must be ${expectedFocus}`);
+  }
   return {
     kpi: parseKpi(raw.kpi, expectedDate),
     rows,
+    sector_performance,
+    market_summary: {
+      focus: expectedFocus,
+      leader_sector:
+        summary.leader_sector == null
+          ? null
+          : parseSector(summary.leader_sector, 'response.market_summary.leader_sector'),
+      leader_sector_label:
+        summary.leader_sector_label == null
+          ? null
+          : requiredString(
+              summary.leader_sector_label,
+              'response.market_summary.leader_sector_label'
+            ),
+      leader_change_pct:
+        summary.leader_change_pct == null
+          ? null
+          : finiteNumber(summary.leader_change_pct, 'response.market_summary.leader_change_pct'),
+      advancing_sectors: finiteNumber(
+        summary.advancing_sectors,
+        'response.market_summary.advancing_sectors',
+        0
+      ),
+      sector_count: finiteNumber(summary.sector_count, 'response.market_summary.sector_count', 0),
+    },
     date: responseDate,
   };
 }

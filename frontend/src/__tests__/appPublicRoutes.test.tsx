@@ -47,11 +47,11 @@ jest.mock('../pages/catdesk/tabs/a-share-market/AShareMarket', () => ({
 }));
 jest.mock('../pages/catdesk/tabs/USStockPicks', () => ({
   __esModule: true,
-  default: () => <div data-testid="tab-us">美股优选</div>,
+  default: () => <div data-testid="tab-us">美股科技</div>,
 }));
 jest.mock('../pages/catdesk/tabs/JPKRMarket', () => ({
   __esModule: true,
-  default: () => <div data-testid="tab-jpkr">日韩市场</div>,
+  default: () => <div data-testid="tab-jpkr">韩股科技</div>,
 }));
 jest.mock('../pages/catdesk/tabs/HighMultipotential', () => ({
   __esModule: true,
@@ -81,8 +81,8 @@ jest.mock('../pages/catdesk/tabs/ReportHistory', () => ({
 const TAB_LABEL: Record<TabKey, string> = {
   market: 'A股市场',
   morning: 'A股早报',
-  us: '美股优选',
-  jpkr: '日韩市场',
+  us: '美股科技',
+  jpkr: '韩股科技',
   multi: '高倍潜力',
   portfolio: '我的持仓',
   ai: 'AI 分析',

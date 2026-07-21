@@ -4,7 +4,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { API_DOMAIN_URL } from 'services/api';
 import AShareMorningBrief from '../AShareMorningBrief';
-import USStockPicks from '../USStockPicks';
 import { recommendationLatestUrl } from '../recommendationCandidates';
 import { snapshotFixture } from '../daily-report/testFixtures';
 
@@ -31,13 +30,6 @@ jest.mock('../morning/MorningBriefTable', () => ({
     <div data-testid="candidate-table">{data.map(item => item.symbol).join(',')}</div>
   ),
 }));
-jest.mock('../us/USFilterBar', () => ({ USFilterBar: () => null }));
-jest.mock('../us/USKpiSlots', () => ({ USKpiSlots: () => null }));
-jest.mock('../us/USTable', () => ({
-  USTable: ({ data }: { data: Array<{ symbol: string }> }) => (
-    <div data-testid="candidate-table">{data.map(item => item.symbol).join(',')}</div>
-  ),
-}));
 
 const originalFetch = globalThis.fetch;
 
@@ -49,7 +41,7 @@ function response(status: number, body?: unknown): Response {
   } as Response;
 }
 
-function snapshotFor(marketScope: 'cn_a' | 'us') {
+function snapshotFor(marketScope: 'cn_a') {
   const base = snapshotFixture();
   const recommendation = base.items[0].recommendation;
   return snapshotFixture({
@@ -77,12 +69,6 @@ const containers = [
     Component: AShareMorningBrief,
     marketScope: 'cn_a' as const,
     url: recommendationLatestUrl('us_preferred', 'cn_a'),
-  },
-  {
-    name: 'Tab2 USStockPicks',
-    Component: USStockPicks,
-    marketScope: 'us' as const,
-    url: recommendationLatestUrl('us_preferred', 'us'),
   },
 ];
 
