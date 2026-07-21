@@ -1,0 +1,49 @@
+backend/scripts/migrations/2026-07-21-backfill-paper-alert-portfolio-linkage-rollback.sql
+  s_4c5b09a99b8e55::t_094f69dc8dd565 1-13
+backend/scripts/migrations/2026-07-21-backfill-paper-alert-portfolio-linkage.sql
+  s_4c5b09a99b8e55::t_e1cb2fabaa2ed9 1-92
+backend/src/models/RecommendationTradeOutcome.ts
+  s_4c5b09a99b8e55::t_87bd59d60c0d05 369
+backend/src/portfolio/PaperTradingFacade.ts
+  s_4c5b09a99b8e55::t_cc28a62f0a51c1 1275
+backend/src/portfolio/internal/PaperTradingAutomationService.ts
+  s_4c5b09a99b8e55::t_2c992b95e43333 6988
+backend/src/portfolio/internal/preTradeGuards.ts
+  s_4c5b09a99b8e55::t_c025797d7612a8 89,150,226,260
+backend/src/portfolio/risk/IndustryConcentrationGuard.ts
+  s_4c5b09a99b8e55::t_df219b8ef0bfb9 162,553,555,559,618,621,627-630,632,665,680-683,736,836-868,875,914,931
+backend/src/portfolio/risk/PositionLimitGuard.ts
+  s_4c5b09a99b8e55::t_68e3b9fd193d15 257,259,269,281-288,298,300-304,357-363,389-392,442,480,487,521
+backend/src/portfolio/risk/TrailingStopGuard.ts
+  s_4c5b09a99b8e55::t_7d87fbd965d01f 276,379,394-397,643
+backend/src/services/PageFreshnessService.ts
+  s_4c5b09a99b8e55::t_fc6b7a0ea98578 71
+backend/src/services/RecommendationSnapshotSignalProjectionService.ts
+  s_4c5b09a99b8e55::t_a813753082d520 10-12,36-39,81-82,106,134-137,157-160,162-171,236-237,241,249-262,267-269,286-291,302-304
+backend/src/services/TradeComplianceChecker.ts
+  s_4c5b09a99b8e55::t_dfa6b9f782602b 123,155-156,501-502
+backend/tests/services/recommendation-snapshot-signal-projection.test.ts
+  s_4c5b09a99b8e55::t_1781695e83b687 21,66-67,78,92-96,107-120
+frontend/src/pages/catdesk/catdesk.css
+  s_4c5b09a99b8e55::t_99e4c6855b08d3 1517-1561
+frontend/src/services/portfolioWorkspaceService.ts
+  s_4c5b09a99b8e55::t_a008ef2a04589c 50,52-53,60,62-67,105-109,119-123,130,135,142,145-147,155-156,180-181,183,187-195,197-202,205-211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c9fe8397df7d88bfd4f12d403378f62dc8ddc8de",
+  "prompts": {},
+  "sessions": {
+    "s_4c5b09a99b8e55": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8292-9b9c-7d72-96bc-4c77b91fe777",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
