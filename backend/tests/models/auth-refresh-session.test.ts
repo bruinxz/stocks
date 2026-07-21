@@ -34,6 +34,10 @@ const smokeScript = fs.readFileSync(
   path.join(ROOT, '../scripts/tests/smoke_readonly_core.js'),
   'utf8'
 );
+const healthGateSource = fs.readFileSync(
+  path.join(ROOT, '../scripts/deployment/release_health_gate.js'),
+  'utf8'
+);
 
 let passed = 0;
 let failed = 0;
@@ -82,8 +86,14 @@ assert('active family index exists', /ix_auth_refresh_sessions_active_family/.te
 assert('password-change revocation reason is physical', /'password_changed'/.test(up));
 assert('raw refresh token column is absent', !/\brefresh_token\b/.test(up));
 assert('rollback checks ownership marker', /rollback ownership mismatch/.test(down));
-assert('registration does not print User instances', !/console\.log\(['"]User (object|id)/.test(controller));
-assert('refresh rotation uses a database transaction', /refreshToken[\s\S]*sequelize\.transaction/.test(controller));
+assert(
+  'registration does not print User instances',
+  !/console\.log\(['"]User (object|id)/.test(controller)
+);
+assert(
+  'refresh rotation uses a database transaction',
+  /refreshToken[\s\S]*sequelize\.transaction/.test(controller)
+);
 assert('reuse detection revokes a family', /revokeFamily\([\s\S]*reuse_detected/.test(controller));
 assert(
   'production startup verifies exact auth-session schema',
@@ -106,6 +116,17 @@ assert(
   /printf '%s\\n' "\$OPS_PASSWORD" \| ssh_ops "sudo -S env/.test(deployScript)
 );
 assert(
+  'release health gate avoids nested bash quoting',
+  /node '\$CURRENT\/scripts\/deployment\/release_health_gate\.js'/.test(deployScript) &&
+    !/bash -lc '\s*if \[ -f \$CURRENT\/scripts\/deployment\/release_health_gate\.js/.test(
+      deployScript
+    )
+);
+assert(
+  'remote frontend build defaults to a production-safe heap cap',
+  /FRONTEND_BUILD_MAX_OLD_SPACE_MB="\$\{FRONTEND_BUILD_MAX_OLD_SPACE_MB:-3072\}"/.test(deployScript)
+);
+assert(
   'release smoke password is required before deployment mutates production',
   deployScript.indexOf('RELEASE_SMOKE_PASSWORD is required') > 0 &&
     deployScript.indexOf('RELEASE_SMOKE_PASSWORD is required') <
@@ -113,19 +134,20 @@ assert(
 );
 assert(
   'release gate defaults to the stocks account',
-  /const defaultSmokeUser = 'stocks'/.test(
-    fs.readFileSync(path.join(ROOT, '../scripts/deployment/release_health_gate.js'), 'utf8')
-  )
+  /const defaultSmokeUser = ["']stocks["']/.test(healthGateSource)
+);
+assert(
+  'release gate polls slow service readiness',
+  /function waitForCommand\(/.test(healthGateSource) &&
+    /RELEASE_HEALTH_READY_TIMEOUT_SECONDS/.test(healthGateSource) &&
+    !/run\('sleep 8'\)/.test(healthGateSource)
 );
 for (const retiredPath of [
   '/api/quant/fusion-audits?limit=5',
   '/api/quant/rankings?limit=5',
   '/api/ai/recommendations/loop-policy-snapshots?limit=5',
 ]) {
-  assert(
-    `retired smoke probe is removed: ${retiredPath}`,
-    !smokeScript.includes(retiredPath)
-  );
+  assert(`retired smoke probe is removed: ${retiredPath}`, !smokeScript.includes(retiredPath));
 }
 
 assert(
@@ -134,9 +156,18 @@ assert(
 );
 assert('PG harness forbids ambient DATABASE_URL', /DATABASE_URL is forbidden/.test(pgHarness));
 assert('PG harness requires Unix socket', /local Unix-socket directory/.test(pgHarness));
-assert('PG harness exercises rotation', /rotation did not create one active successor/.test(pgHarness));
-assert('PG harness exercises reuse family revocation', /reuse did not revoke the family/.test(pgHarness));
-assert('PG harness exercises rollback ownership', /expected tampered rollback to fail/.test(pgHarness));
+assert(
+  'PG harness exercises rotation',
+  /rotation did not create one active successor/.test(pgHarness)
+);
+assert(
+  'PG harness exercises reuse family revocation',
+  /reuse did not revoke the family/.test(pgHarness)
+);
+assert(
+  'PG harness exercises rollback ownership',
+  /expected tampered rollback to fail/.test(pgHarness)
+);
 
 console.log(`\nResult: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

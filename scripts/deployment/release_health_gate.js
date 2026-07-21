@@ -13,26 +13,31 @@
  * post-activation guard that should run after /opt/stocks/current is switched.
  */
 
-const { spawnSync } = require('child_process');
-const { resolveTargets } = require('./release_targets');
+const { spawnSync } = require("child_process");
+const { resolveTargets } = require("./release_targets");
 
 function readBool(value, fallback = false) {
-  if (value === undefined || value === null || value === '') return fallback;
+  if (value === undefined || value === null || value === "") return fallback;
   const normalized = String(value).trim().toLowerCase();
-  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
   return fallback;
+}
+
+function readPositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function parseEnvs() {
   if (process.env.RELEASE_TARGET_CONFIG) {
-    const keys = String(process.env.RELEASE_TARGETS || 'main')
-      .split(',')
-      .map(item => item.trim())
+    const keys = String(process.env.RELEASE_TARGETS || "main")
+      .split(",")
+      .map((item) => item.trim())
       .filter(Boolean);
     const catalog = JSON.parse(process.env.RELEASE_TARGET_CONFIG);
-    return keys.map(key => {
-      const target = catalog.find(item => item.key === key);
+    return keys.map((key) => {
+      const target = catalog.find((item) => item.key === key);
       if (!target) throw new Error(`Unknown release target: ${key}`);
       return target;
     });
@@ -43,24 +48,24 @@ function parseEnvs() {
 function run(command, options = {}) {
   const result = spawnSync(command, {
     shell: true,
-    encoding: 'utf8',
-    stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    encoding: "utf8",
+    stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
   });
   if (options.capture) {
     return {
-      status: result.status || 0,
-      stdout: (result.stdout || '').trim(),
-      stderr: (result.stderr || '').trim(),
+      status: typeof result.status === "number" ? result.status : 1,
+      stdout: (result.stdout || "").trim(),
+      stderr: (result.stderr || "").trim(),
     };
   }
   if (result.status !== 0) {
     throw new Error(`Command failed (${result.status}): ${command}`);
   }
-  return { status: 0, stdout: '', stderr: '' };
+  return { status: 0, stdout: "", stderr: "" };
 }
 
 function sh(value) {
-  return `'${String(value ?? '').replace(/'/g, `'\\''`)}'`;
+  return `'${String(value ?? "").replace(/'/g, `'\\''`)}'`;
 }
 
 function capture(command) {
@@ -69,6 +74,29 @@ function capture(command) {
     throw new Error(`${command}\n${result.stderr || result.stdout}`);
   }
   return result.stdout;
+}
+
+function waitForCommand(command, label) {
+  const timeoutSeconds = readPositiveInteger(
+    process.env.RELEASE_HEALTH_READY_TIMEOUT_SECONDS,
+    45
+  );
+  const intervalSeconds = readPositiveInteger(
+    process.env.RELEASE_HEALTH_READY_INTERVAL_SECONDS,
+    2
+  );
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  let lastOutput = "";
+
+  while (Date.now() <= deadline) {
+    const result = run(command, { capture: true });
+    if (result.status === 0) return;
+    lastOutput = result.stderr || result.stdout || "";
+    if (Date.now() < deadline) run(`sleep ${intervalSeconds}`);
+  }
+
+  const detail = lastOutput ? `: ${lastOutput}` : "";
+  throw new Error(`${label} not ready within ${timeoutSeconds}s${detail}`);
 }
 
 function currentRelease(target) {
@@ -85,39 +113,67 @@ function previousRelease(target, current) {
 }
 
 function restartServices(targets) {
-  const services = targets.map(item => item.service).join(' ');
-  const aiUnit = run('systemctl cat stocks-tradingagents.service >/dev/null 2>&1', { capture: true });
-  if (aiUnit.status === 0) run('systemctl restart stocks-tradingagents.service');
+  const services = targets.map((item) => item.service).join(" ");
+  const aiUnit = run(
+    "systemctl cat stocks-tradingagents.service >/dev/null 2>&1",
+    { capture: true }
+  );
+  if (aiUnit.status === 0)
+    run("systemctl restart stocks-tradingagents.service");
   run(`systemctl restart ${services}`);
-  run('sleep 8');
-  run(`systemctl is-active ${services}`);
+  waitForCommand(`systemctl is-active ${services}`, "backend services");
+  if (aiUnit.status === 0) {
+    waitForCommand(
+      "systemctl is-active stocks-tradingagents.service",
+      "TradingAgents service"
+    );
+  }
 }
 
 function healthCheck(target) {
   console.log(`\n🔎 health: ${target.key}`);
+  waitForCommand(
+    `curl -fsS ${sh(`${target.backend_url}/health`)} >/dev/null`,
+    `${target.key} backend health`
+  );
   run(`curl -fsS ${sh(`${target.backend_url}/health`)}`);
   const vendoredUnit = `${target.root}/current/scripts/deployment/samples/stocks-tradingagents.service`;
-  const requiresVendoredRuntime = run(`test -f ${sh(vendoredUnit)}`, { capture: true }).status === 0;
+  const requiresVendoredRuntime =
+    run(`test -f ${sh(vendoredUnit)}`, { capture: true }).status === 0;
   if (requiresVendoredRuntime) {
-    run(
+    waitForCommand(
       `curl -fsS ${sh(
-        'http://127.0.0.1:8000/health'
-      )} | grep -q '"runtime":"vendored"'`
+        "http://127.0.0.1:8000/health"
+      )} | grep -q '"runtime":"vendored"'`,
+      "vendored TradingAgents runtime"
     );
-    run(`curl -fsS ${sh('http://127.0.0.1:8000/health')} | grep -q '"ready":true'`);
+    waitForCommand(
+      `curl -fsS ${sh(
+        "http://127.0.0.1:8000/health"
+      )} | grep -q '"ready":true'`,
+      "vendored TradingAgents readiness"
+    );
   } else {
-    console.warn('  previous release predates the managed vendored TradingAgents runtime');
+    console.warn(
+      "  previous release predates the managed vendored TradingAgents runtime"
+    );
   }
-  run(`curl -fsSI ${sh(`${target.frontend_url}/`)} >/dev/null`);
+  waitForCommand(
+    `curl -fsSI ${sh(`${target.frontend_url}/`)} >/dev/null`,
+    `${target.key} frontend health`
+  );
 
   const smoke = readBool(process.env.RELEASE_RUN_SMOKE, true);
   if (smoke) {
     // Sprint 37: lym/xz sandbox 已关停, 仅 main 的 stocks 用户做 smoke 登录测试
-    const defaultSmokeUser = 'stocks';
+    const defaultSmokeUser = "stocks";
     const username =
-      process.env.RELEASE_SMOKE_USERNAME || process.env.SMOKE_USERNAME || defaultSmokeUser;
+      process.env.RELEASE_SMOKE_USERNAME ||
+      process.env.SMOKE_USERNAME ||
+      defaultSmokeUser;
     // P0 launch-helper：禁止 '666' 默认密码
-    const password = process.env.RELEASE_SMOKE_PASSWORD || process.env.SMOKE_PASSWORD || '';
+    const password =
+      process.env.RELEASE_SMOKE_PASSWORD || process.env.SMOKE_PASSWORD || "";
     if (!password) {
       throw new Error(
         'RELEASE_SMOKE_PASSWORD (or SMOKE_PASSWORD) is required; "666" fallback removed.'
@@ -128,7 +184,9 @@ function healthCheck(target) {
         target.backend_url
       )} SMOKE_USERNAME=${sh(username)} SMOKE_PASSWORD=${sh(
         password
-      )} SMOKE_TIMEOUT_MS=${sh(process.env.RELEASE_SMOKE_TIMEOUT_MS || '20000')} node scripts/tests/smoke_readonly_core.js`
+      )} SMOKE_TIMEOUT_MS=${sh(
+        process.env.RELEASE_SMOKE_TIMEOUT_MS || "20000"
+      )} node scripts/tests/smoke_readonly_core.js`
     );
   }
 }
@@ -144,33 +202,37 @@ function rollback(target, previous) {
 
 async function main() {
   const targets = parseEnvs();
-  const before = targets.map(target => {
+  const before = targets.map((target) => {
     const current = currentRelease(target);
     return { target, current, previous: previousRelease(target, current) };
   });
 
-  console.log('🚦 release health gate');
+  console.log("🚦 release health gate");
   for (const item of before) {
-    console.log(`- ${item.target.key}: current=${item.current} previous=${item.previous || '-'}`);
+    console.log(
+      `- ${item.target.key}: current=${item.current} previous=${
+        item.previous || "-"
+      }`
+    );
   }
 
   try {
     restartServices(targets);
     for (const { target } of before) healthCheck(target);
-    console.log('\n✅ release health gate passed');
+    console.log("\n✅ release health gate passed");
   } catch (error) {
     console.error(`\n❌ release health gate failed: ${error.message || error}`);
     if (readBool(process.env.RELEASE_AUTO_ROLLBACK, true)) {
       for (const item of before) rollback(item.target, item.previous);
       restartServices(targets);
       for (const { target } of before) healthCheck(target);
-      console.log('\n✅ rollback health gate passed');
+      console.log("\n✅ rollback health gate passed");
     }
     process.exit(1);
   }
 }
 
-main().catch(error => {
+main().catch((error) => {
   console.error(error.message || error);
   process.exit(1);
 });
