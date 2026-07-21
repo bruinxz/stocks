@@ -19444,6 +19444,12 @@ a {
   padding-top: 8px;
 }
 
+.ai-analysis-workspace-flow {
+  display: grid;
+  gap: 28px;
+  min-width: 0;
+}
+
 .ai-analysis-capabilities {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -19550,6 +19556,227 @@ a {
   transform: translateY(-1px);
 }
 
+.ai-analysis-recent__chip.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+  transform: none !important;
+}
+
+/* 长耗时分析离开弹窗后落在一张持续更新的“会审稿”上。 */
+.ai-analysis-sheet {
+  position: relative;
+  overflow: hidden;
+  padding: 24px;
+  border: 1px solid rgba(48, 42, 34, 0.22);
+  border-radius: 4px 22px 4px 22px;
+  background:
+    linear-gradient(90deg, rgba(169, 67, 34, 0.045) 1px, transparent 1px) 0 0 / 28px 28px,
+    #fffaf0;
+  box-shadow: 8px 10px 0 rgba(169, 67, 34, 0.1);
+}
+
+.ai-analysis-sheet::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: #b64f2d;
+}
+
+.ai-analysis-sheet.is-completed::before {
+  background: #6d7f4b;
+}
+
+.ai-analysis-sheet.is-failed::before {
+  background: #a6372b;
+}
+
+.ai-analysis-sheet__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px dashed rgba(48, 42, 34, 0.24);
+}
+
+.ai-analysis-sheet__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #a94322;
+  font: 800 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.ai-analysis-sheet__header h3.ant-typography {
+  margin: 8px 0 4px;
+  color: #2e281f;
+  font-family: 'Iowan Old Style', 'Songti SC', STSong, Georgia, serif;
+  font-size: clamp(22px, 3vw, 31px);
+}
+
+.ai-analysis-sheet__header .ant-typography {
+  margin-bottom: 0;
+  color: rgba(46, 40, 31, 0.66);
+}
+
+.ai-analysis-sheet__clock {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 3px 7px;
+  min-width: 118px;
+  padding: 11px 13px;
+  border: 1px solid rgba(48, 42, 34, 0.18);
+  background: rgba(255, 255, 255, 0.55);
+  color: rgba(46, 40, 31, 0.58);
+  font-size: 11px;
+}
+
+.ai-analysis-sheet__clock strong {
+  grid-column: 1 / -1;
+  color: #2e281f;
+  font: 750 17px/1.2 'Iowan Old Style', 'Songti SC', serif;
+}
+
+.ai-analysis-sheet__working {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 18px;
+  align-items: center;
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid rgba(182, 79, 45, 0.2);
+  background: rgba(255, 244, 223, 0.72);
+}
+
+.ai-analysis-sheet__working strong {
+  color: #2e281f;
+  font-family: 'Songti SC', STSong, Georgia, serif;
+  font-size: 17px;
+}
+
+.ai-analysis-sheet__working p {
+  margin: 7px 0 0;
+  color: rgba(46, 40, 31, 0.68);
+  line-height: 1.65;
+}
+
+.ai-analysis-sheet__pulse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 54px;
+}
+
+.ai-analysis-sheet__pulse i {
+  width: 7px;
+  height: 26px;
+  background: #b64f2d;
+  animation: ai-sheet-pulse 1.15s ease-in-out infinite;
+}
+
+.ai-analysis-sheet__pulse i:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.ai-analysis-sheet__pulse i:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+@keyframes ai-sheet-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scaleY(0.45);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+.ai-analysis-sheet > .ant-alert,
+.ai-analysis-sheet__result {
+  margin-top: 20px;
+}
+
+.ai-analysis-sheet__result {
+  display: grid;
+  gap: 18px;
+}
+
+.ai-analysis-sheet__verdict,
+.ai-analysis-sheet__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.ai-analysis-sheet__verdict > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(46, 40, 31, 0.62);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.ai-analysis-sheet__summary {
+  padding: 18px 20px;
+  border-left: 3px solid #b64f2d;
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.ai-analysis-sheet__summary > span {
+  color: #a94322;
+  font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.ai-analysis-sheet__summary p {
+  margin: 10px 0 0;
+  color: #3a3228;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.ai-analysis-sheet__dimensions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ai-analysis-sheet__dimensions article {
+  padding: 15px 16px;
+  border: 1px solid rgba(48, 42, 34, 0.14);
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.ai-analysis-sheet__dimensions strong {
+  color: #2e281f;
+  font-family: 'Songti SC', STSong, Georgia, serif;
+}
+
+.ai-analysis-sheet__dimensions ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: rgba(46, 40, 31, 0.75);
+  line-height: 1.65;
+}
+
+.ai-analysis-sheet__footer {
+  padding-top: 16px;
+  border-top: 1px dashed rgba(48, 42, 34, 0.22);
+  color: rgba(46, 40, 31, 0.58);
+  font-size: 11px;
+}
+
 @media (max-width: 720px) {
   .ai-analysis-capabilities {
     grid-template-columns: 1fr;
@@ -19563,6 +19790,30 @@ a {
     align-items: flex-start;
     flex-direction: column;
     gap: 3px;
+  }
+
+  .ai-analysis-sheet {
+    padding: 18px;
+  }
+
+  .ai-analysis-sheet__header,
+  .ai-analysis-sheet__verdict,
+  .ai-analysis-sheet__footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ai-analysis-sheet__working {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-analysis-sheet__pulse {
+    justify-content: flex-start;
+    height: 36px;
+  }
+
+  .ai-analysis-sheet__dimensions {
+    grid-template-columns: 1fr;
   }
 }
 

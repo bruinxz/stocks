@@ -64,6 +64,8 @@ export class AIAdvisorController {
     this.resolveTicker = this.resolveTicker.bind(this);
     this.analyzeSingleStock = this.analyzeSingleStock.bind(this);
     this.analyzePriceDecision = this.analyzePriceDecision.bind(this);
+    this.submitPriceDecisionAsync = this.submitPriceDecisionAsync.bind(this);
+    this.getPriceDecisionTask = this.getPriceDecisionTask.bind(this);
     this.streamSingleStockAnalysis = this.streamSingleStockAnalysis.bind(this);
     this.getReportById = this.getReportById.bind(this);
     this.listReports = this.listReports.bind(this);
@@ -420,6 +422,77 @@ export class AIAdvisorController {
       });
     } catch (error: any) {
       logger.error('analyzePriceDecision 失败:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * POST /api/ai/price-decision/async — 只提交长耗时任务并立即返回 task_id。
+   * 页面轮询专用状态接口完成 TradingAgents 结果归档与当前价计划生成。
+   */
+  async submitPriceDecisionAsync(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const body = req.body || {};
+      const stockCodeInput = typeof body.stock_code === 'string' ? body.stock_code.trim() : '';
+      if (!stockCodeInput) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'stock_code 不能为空（股票代码或名称）' });
+      }
+      const resolvedTicker = await this.resolveTicker(stockCodeInput);
+      if (!resolvedTicker) {
+        return res.status(404).json({ success: false, message: `无法识别股票: ${stockCodeInput}` });
+      }
+      const userId = Number((req as any).user?.id);
+      if (!Number.isSafeInteger(userId) || userId <= 0) {
+        return res.status(401).json({ success: false, message: '未识别当前用户' });
+      }
+
+      const plannedCapital = Number(body.planned_capital);
+      const holdingCost = Number(body.holding_cost);
+      const result = await aiPriceDecisionService.submitAsync(resolvedTicker, {
+        dimensions: normalizeAnalysisDimensions(body.dimensions),
+        target_date: typeof body.target_date === 'string' ? body.target_date : undefined,
+        user_id: userId,
+        stock_name: typeof body.stock_name === 'string' ? body.stock_name : undefined,
+        task_label:
+          typeof body.task_label === 'string' ? body.task_label : 'ai_price_decision_async',
+        refresh_quote: body.refresh_quote !== false,
+        position_state: body.position_state === 'holding' ? 'holding' : 'watching',
+        planned_capital:
+          Number.isFinite(plannedCapital) && plannedCapital > 0 && plannedCapital <= 1_000_000_000
+            ? plannedCapital
+            : undefined,
+        holding_cost:
+          Number.isFinite(holdingCost) && holdingCost > 0 && holdingCost <= 1_000_000
+            ? holdingCost
+            : undefined,
+      });
+      return res.status(202).json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('submitPriceDecisionAsync 失败:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /** GET /api/ai/price-decision/tasks/:taskId — 当前用户的异步分析状态与最终结果。 */
+  async getPriceDecisionTask(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const taskId = String(req.params.taskId || '').trim();
+      if (!taskId) {
+        return res.status(400).json({ success: false, message: 'taskId 不能为空' });
+      }
+      const userId = Number((req as any).user?.id);
+      if (!Number.isSafeInteger(userId) || userId <= 0) {
+        return res.status(401).json({ success: false, message: '未识别当前用户' });
+      }
+      const result = await aiPriceDecisionService.getAsyncResult(taskId, userId);
+      if (!result) {
+        return res.status(404).json({ success: false, message: '未找到当前用户的分析任务' });
+      }
+      return res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('getPriceDecisionTask 失败:', error);
       return res.status(500).json({ success: false, message: error.message });
     }
   }

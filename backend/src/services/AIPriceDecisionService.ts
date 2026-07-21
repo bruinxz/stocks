@@ -10,6 +10,8 @@ import {
   AnalysisDimension,
   AnalyzeSingleStockResult,
   aiAdvisorService,
+  buildResultFromPayload,
+  RemoteAnalyzePayload,
 } from './AIAdvisorService';
 
 export type AIPriceDecisionPositionState = 'watching' | 'holding';
@@ -95,12 +97,19 @@ export interface AIPriceDecisionOptions {
   holding_cost?: number;
 }
 
+export interface AIPriceDecisionTaskResult extends AIPriceDecisionResult {
+  task_phase: 'pending' | 'processing' | 'completed' | 'failed';
+  elapsed_time: number;
+}
+
 export interface AIPriceDecisionDataSource {
   loadMarketSnapshot(
     stock_code: string,
     options: { refresh_quote: boolean }
   ): Promise<AIPriceMarketSnapshot | null>;
   enrichReport(report_id: string, metadata: Record<string, unknown>): Promise<void>;
+  loadReportByTask(task_id: string, user_id: number): Promise<AnalyzeSingleStockResult | null>;
+  finalizeReport(result: AnalyzeSingleStockResult): Promise<void>;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -546,6 +555,58 @@ class ProductionAIPriceDecisionDataSource implements AIPriceDecisionDataSource {
   async enrichReport(report_id: string, metadata: Record<string, unknown>): Promise<void> {
     await AIStockAnalysisReport.update({ metadata }, { where: { report_id } });
   }
+
+  async loadReportByTask(
+    task_id: string,
+    user_id: number
+  ): Promise<AnalyzeSingleStockResult | null> {
+    const row = await AIStockAnalysisReport.findOne({ where: { task_id, user_id } });
+    if (!row) return null;
+    const plain = row.get({ plain: true }) as any;
+    return {
+      report_id: plain.report_id,
+      stock_code: plain.stock_code,
+      stock_name: plain.stock_name,
+      dimensions: Array.isArray(plain.dimensions) ? plain.dimensions : [],
+      summary: plain.summary || '',
+      recommendation: plain.recommendation || 'unknown',
+      confidence_score:
+        plain.confidence_score === null || plain.confidence_score === undefined
+          ? null
+          : Number(plain.confidence_score),
+      risk_level: plain.risk_level || null,
+      key_points:
+        plain.key_points_json && typeof plain.key_points_json === 'object'
+          ? plain.key_points_json
+          : {},
+      status: plain.status,
+      task_id: plain.task_id,
+      target_date: plain.target_date,
+      error: plain.error || null,
+      generated_at: new Date(plain.generated_at).toISOString(),
+      metadata: plain.metadata && typeof plain.metadata === 'object' ? plain.metadata : {},
+      persisted: true,
+    } as AnalyzeSingleStockResult;
+  }
+
+  async finalizeReport(result: AnalyzeSingleStockResult): Promise<void> {
+    await AIStockAnalysisReport.update(
+      {
+        summary: result.summary,
+        recommendation: result.recommendation,
+        confidence_score: result.confidence_score,
+        risk_level: result.risk_level,
+        key_points_json: result.key_points,
+        status: result.status,
+        task_id: result.task_id,
+        target_date: result.target_date,
+        error: result.error,
+        generated_at: new Date(result.generated_at),
+        metadata: result.metadata,
+      },
+      { where: { report_id: result.report_id } }
+    );
+  }
 }
 
 export const PRODUCTION_AI_PRICE_DECISION_DATA_SOURCE: AIPriceDecisionDataSource =
@@ -564,7 +625,7 @@ export class AIPriceDecisionService {
   constructor(
     private readonly analysis_service: Pick<
       AIAdvisorService,
-      'analyzeSingleStock'
+      'analyzeSingleStock' | 'getTaskStatus'
     > = aiAdvisorService,
     private readonly data_source: AIPriceDecisionDataSource = PRODUCTION_AI_PRICE_DECISION_DATA_SOURCE
   ) {}
@@ -650,6 +711,174 @@ export class AIPriceDecisionService {
       }
     }
     return result;
+  }
+
+  /**
+   * 只提交长耗时 TradingAgents 任务。接口返回后浏览器即可关闭配置弹窗；
+   * 价格与仓位参数跟 pending report 一起持久化，后续任何页面实例都能继续轮询。
+   */
+  async submitAsync(
+    stock_code: string,
+    options: AIPriceDecisionOptions & { user_id: number }
+  ): Promise<AIPriceDecisionTaskResult> {
+    const analysis = await this.analysis_service.analyzeSingleStock(stock_code, {
+      dimensions: options.dimensions,
+      target_date: options.target_date,
+      user_id: options.user_id,
+      stock_name: options.stock_name,
+      dry_run: false,
+      is_async: true,
+      task_label: options.task_label || 'ai_price_decision_async',
+    });
+    if (analysis.status !== 'pending' || !analysis.task_id) {
+      throw new Error(analysis.error || 'TradingAgents 未返回可轮询的异步任务 ID');
+    }
+
+    const metadata: Record<string, unknown> = {
+      ...(analysis.metadata || {}),
+      price_decision_request: {
+        position_state: options.position_state === 'holding' ? 'holding' : 'watching',
+        planned_capital: options.planned_capital ?? null,
+        holding_cost: options.holding_cost ?? null,
+        refresh_quote: options.refresh_quote !== false,
+      },
+      async_phase: 'pending',
+      async_submitted_at: new Date().toISOString(),
+    };
+    if (analysis.persisted) {
+      try {
+        await this.data_source.enrichReport(analysis.report_id, metadata);
+      } catch (error: any) {
+        logger.warn(
+          `[AIPriceDecision] async request metadata persist failed report_id=${
+            analysis.report_id
+          }: ${error?.message || error}`
+        );
+        metadata.async_metadata_persist_error = String(error?.message || error);
+      }
+    }
+
+    return {
+      ...analysis,
+      metadata,
+      market_snapshot: null,
+      price_decision: null,
+      task_phase: 'pending',
+      elapsed_time: 0,
+    };
+  }
+
+  /**
+   * 按当前用户读取并收口异步任务。完成时复用 TradingAgents 已产出的结果生成
+   * 当前价计划，不再发起第二次大模型分析；重复轮询幂等返回同一份报告。
+   */
+  async getAsyncResult(
+    task_id: string,
+    user_id: number
+  ): Promise<AIPriceDecisionTaskResult | null> {
+    const stored = await this.data_source.loadReportByTask(task_id, user_id);
+    if (!stored) return null;
+
+    const storedMetadata = stored.metadata || {};
+    const storedPhase = String(storedMetadata.async_phase || '').toLowerCase();
+    if (
+      (stored.status === 'completed' ||
+        stored.status === 'partial' ||
+        stored.status === 'failed') &&
+      (storedPhase === 'completed' || storedPhase === 'failed')
+    ) {
+      return {
+        ...stored,
+        market_snapshot:
+          (storedMetadata.market_snapshot as AIPriceDecisionResult['market_snapshot']) || null,
+        price_decision: (storedMetadata.price_decision as AIPriceDecisionPlan) || null,
+        task_phase: storedPhase === 'failed' ? 'failed' : 'completed',
+        elapsed_time: Number(storedMetadata.elapsed_time || 0),
+      };
+    }
+
+    const remote = (await this.analysis_service.getTaskStatus(task_id)) as RemoteAnalyzePayload & {
+      elapsed_time?: number;
+    };
+    const remoteStatus = String(remote?.status || '').toUpperCase();
+    const elapsedTime = Number(remote?.elapsed_time || 0);
+    if (remoteStatus === 'PENDING' || remoteStatus === 'PROCESSING' || remoteStatus === 'RUNNING') {
+      const taskPhase = remoteStatus === 'PENDING' ? 'pending' : 'processing';
+      return {
+        ...stored,
+        status: 'pending',
+        metadata: {
+          ...storedMetadata,
+          async_phase: taskPhase,
+          elapsed_time: elapsedTime,
+        },
+        market_snapshot: null,
+        price_decision: null,
+        task_phase: taskPhase,
+        elapsed_time: elapsedTime,
+      };
+    }
+
+    const finalized = buildResultFromPayload(remote, {
+      report_id: stored.report_id,
+      stock_code: stored.stock_code,
+      stock_name: stored.stock_name,
+      dimensions: stored.dimensions,
+      target_date: stored.target_date,
+      metadata: storedMetadata,
+      is_async: false,
+      now: new Date(),
+    });
+    finalized.task_id = task_id;
+    finalized.persisted = true;
+
+    const request = (storedMetadata.price_decision_request || {}) as Record<string, unknown>;
+    let market: AIPriceMarketSnapshot | null = null;
+    let plan: AIPriceDecisionPlan | null = null;
+    if (finalized.status === 'completed' || finalized.status === 'partial') {
+      market = await this.data_source
+        .loadMarketSnapshot(stored.stock_code, { refresh_quote: request.refresh_quote !== false })
+        .catch((error: any) => {
+          logger.warn(
+            `[AIPriceDecision] async market snapshot failed ${stored.stock_code}: ${
+              error?.message || error
+            }`
+          );
+          return null;
+        });
+      if (market) {
+        plan = buildAIPriceDecisionPlan({
+          recommendation: finalized.recommendation,
+          confidence_score: finalized.confidence_score,
+          risk_level: finalized.risk_level,
+          market,
+          position_state: request.position_state === 'holding' ? 'holding' : 'watching',
+          planned_capital: positiveNumber(request.planned_capital) ?? undefined,
+          holding_cost: positiveNumber(request.holding_cost) ?? undefined,
+        });
+      }
+    }
+
+    const snapshot = publicMarketSnapshot(market);
+    const taskPhase = finalized.status === 'failed' ? 'failed' : 'completed';
+    finalized.metadata = {
+      ...finalized.metadata,
+      async_phase: taskPhase,
+      elapsed_time: elapsedTime,
+      async_finalized_at: new Date().toISOString(),
+      price_decision_version: 'tradingagents_price_v1',
+      market_snapshot: snapshot,
+      price_decision: plan,
+    };
+    await this.data_source.finalizeReport(finalized);
+
+    return {
+      ...finalized,
+      market_snapshot: snapshot,
+      price_decision: plan,
+      task_phase: taskPhase,
+      elapsed_time: elapsedTime,
+    };
   }
 }
 

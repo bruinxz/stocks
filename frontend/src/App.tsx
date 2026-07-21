@@ -31,6 +31,7 @@ import { clearUserScopedStorage } from './utils/sessionCleanup';
 import { authService } from './services/authService';
 import { API_DOMAIN_URL } from './services/api';
 import { PortfolioProvider } from './contexts/PortfolioContext';
+import { AIAnalysisProvider } from './contexts/AIAnalysisContext';
 import GlobalPortfolioSelector from './components/layout/GlobalPortfolioSelector';
 import AlertsBell from './components/layout/AlertsBell';
 import CriticalAlertModal from './components/layout/CriticalAlertModal';
@@ -711,6 +712,9 @@ const AppContent: React.FC = () => {
 };
 
 const App: React.FC = () => {
+  const authUserId = useSelector((state: RootState) => state.auth.user?.id ?? null);
+  const authIdentityPending = Boolean(localStorage.getItem('token')) && authUserId === null;
+
   return (
     <ConfigProvider
       locale={zhCN}
@@ -815,7 +819,12 @@ const App: React.FC = () => {
     >
       <Router>
         <PortfolioProvider>
-          <AppContent />
+          <AIAnalysisProvider
+            current_user_id={authUserId}
+            auth_identity_pending={authIdentityPending}
+          >
+            <AppContent />
+          </AIAnalysisProvider>
         </PortfolioProvider>
       </Router>
     </ConfigProvider>

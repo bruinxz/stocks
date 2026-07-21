@@ -324,6 +324,12 @@ async function testService(): Promise<void> {
     async enrichReport(report_id, metadata) {
       enriched.push({ report_id, metadata });
     },
+    async loadReportByTask() {
+      return null;
+    },
+    async finalizeReport() {
+      return undefined;
+    },
   };
   const analysisService = {
     async analyzeSingleStock() {
@@ -355,6 +361,77 @@ async function testService(): Promise<void> {
   equal('AI failed 不生成价格计划', failedResult.price_decision, null);
 }
 
+async function testAsyncService(): Promise<void> {
+  let analyzeCalls = 0;
+  let taskCalls = 0;
+  let stored = makeAnalysis({
+    report_id: 'AI-600519-async',
+    status: 'pending',
+    task_id: 'task-async-1',
+    summary: '',
+    recommendation: 'unknown',
+    persisted: true,
+    metadata: { user_id: 23 },
+  });
+  const dataSource: AIPriceDecisionDataSource = {
+    async loadMarketSnapshot() {
+      return makeMarket();
+    },
+    async enrichReport(_report_id, metadata) {
+      stored = { ...stored, metadata };
+    },
+    async loadReportByTask(task_id, user_id) {
+      return task_id === 'task-async-1' && user_id === 23 ? stored : null;
+    },
+    async finalizeReport(result) {
+      stored = { ...result };
+    },
+  };
+  const analysisService = {
+    async analyzeSingleStock() {
+      analyzeCalls += 1;
+      return stored;
+    },
+    async getTaskStatus() {
+      taskCalls += 1;
+      return {
+        task_id: 'task-async-1',
+        status: 'COMPLETED',
+        ticker: 'sh.600519',
+        target_date: '2026-07-20',
+        elapsed_time: 842.5,
+        data: {
+          decision: 'BUY',
+          rationale: '基本面与趋势共同改善',
+          detail: { technical: ['趋势向上'] },
+          confidence_score: 82,
+          risk_level: '中',
+        },
+      };
+    },
+  };
+  const service = new AIPriceDecisionService(analysisService as any, dataSource);
+  const submitted = await service.submitAsync('sh.600519', {
+    user_id: 23,
+    position_state: 'watching',
+    planned_capital: 200_000,
+  });
+  equal('异步提交返回 pending', submitted.task_phase, 'pending');
+  equal('异步提交返回 task_id', submitted.task_id, 'task-async-1');
+  equal('异步提交只调用一次分析入口', analyzeCalls, 1);
+
+  const completed = await service.getAsyncResult('task-async-1', 23);
+  equal('异步轮询完成', completed?.task_phase, 'completed');
+  equal('异步轮询保留真实耗时', completed?.elapsed_time, 842.5);
+  assert('异步完成生成价格计划', completed?.price_decision !== null);
+  equal('异步完成不重复分析', analyzeCalls, 1);
+  equal('异步完成只查一次远端任务', taskCalls, 1);
+  equal('异步最终报告落回同一 report', stored.report_id, 'AI-600519-async');
+
+  const crossUser = await service.getAsyncResult('task-async-1', 99);
+  equal('异步任务按用户隔离', crossUser, null);
+}
+
 async function main(): Promise<void> {
   await testMarketSourceSelection();
   await testFreshness();
@@ -364,6 +441,7 @@ async function main(): Promise<void> {
   await testDegradedPlan();
   await testRiskAdjustedPosition();
   await testService();
+  await testAsyncService();
   console.log(`\nai-price-decision-service.test.ts: ${passed} ok / ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
 }

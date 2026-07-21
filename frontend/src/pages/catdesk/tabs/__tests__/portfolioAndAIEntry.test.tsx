@@ -30,6 +30,7 @@ jest.mock('../../../../components/trading/AIStockAnalysisModal', () => ({
 }));
 
 import AIAnalysisLauncher from '../../../../components/trading/AIAnalysisLauncher';
+import { AIAnalysisProvider } from '../../../../contexts/AIAnalysisContext';
 import PortfolioOverview from '../PortfolioOverview';
 
 async function flush() {
@@ -133,7 +134,11 @@ describe('CatDesk portfolio and AI entries', () => {
     );
 
     await act(async () => {
-      root.render(<AIAnalysisLauncher compact />);
+      root.render(
+        <AIAnalysisProvider>
+          <AIAnalysisLauncher compact />
+        </AIAnalysisProvider>
+      );
       await flush();
     });
 
