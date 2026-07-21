@@ -734,6 +734,77 @@ function roundNumber(value: any, digits = 2): number {
   return Math.round(num * base) / base;
 }
 
+/** 与 paper_trading_trades.execute_price 的 DECIMAL(..., 2) 保持同一量化口径。 */
+export function quantizePaperExecutionPrice(value: number): number {
+  return roundNumber(value, 2);
+}
+
+export interface PaperSellFinancialsInput {
+  latest_price: number;
+  quantity: number;
+  avg_cost: number;
+  slippage_rate: number;
+  commission_rate: number;
+  min_commission: number;
+  stamp_tax_rate: number;
+  transfer_fee_rate: number;
+}
+
+export interface PaperSellFinancials {
+  execute_price: number;
+  amount: number;
+  broker_commission: number;
+  stamp_tax: number;
+  transfer_fee: number;
+  commission: number;
+  net_revenue: number;
+  buy_amount: number;
+  estimated_buy_commission: number;
+  realized_pnl: number;
+  realized_return_pct: number;
+}
+
+/**
+ * 模拟卖出通知、交易和资金回写共用的唯一金额口径。
+ * 成交价先量化到数据库的两位小数，再计算成交额、税费、净回款和净收益率。
+ */
+export function calculatePaperSellFinancials(input: PaperSellFinancialsInput): PaperSellFinancials {
+  const execute_price = quantizePaperExecutionPrice(input.latest_price * (1 - input.slippage_rate));
+  const amount = roundNumber(execute_price * input.quantity, 2);
+  const broker_commission = roundNumber(
+    Math.max(amount * input.commission_rate, input.min_commission),
+    2
+  );
+  const stamp_tax = roundNumber(amount * input.stamp_tax_rate, 2);
+  const transfer_fee = roundNumber(amount * input.transfer_fee_rate, 2);
+  const commission = roundNumber(broker_commission + stamp_tax + transfer_fee, 2);
+  const net_revenue = roundNumber(amount - commission, 2);
+  const buy_amount = roundNumber(input.avg_cost * input.quantity, 2);
+  const estimated_buy_broker = roundNumber(
+    Math.max(buy_amount * input.commission_rate, input.min_commission),
+    2
+  );
+  const estimated_buy_transfer = roundNumber(buy_amount * input.transfer_fee_rate, 2);
+  const estimated_buy_commission = roundNumber(estimated_buy_broker + estimated_buy_transfer, 2);
+  const realized_pnl = roundNumber(net_revenue - buy_amount - estimated_buy_commission, 2);
+  const cost_basis = buy_amount + estimated_buy_commission;
+  const realized_return_pct = cost_basis > 0 ? (realized_pnl / cost_basis) * 100 : 0;
+
+  return {
+    execute_price,
+    amount,
+    broker_commission,
+    stamp_tax,
+    transfer_fee,
+    commission,
+    net_revenue,
+    buy_amount,
+    estimated_buy_commission,
+    realized_pnl,
+    realized_return_pct,
+  };
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -1006,6 +1077,102 @@ function dateOnly(value?: Date | string | null): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
   return moment(date).tz('Asia/Shanghai').format('YYYY-MM-DD');
+}
+
+export interface PaperRiskQuoteGuardInput {
+  now?: Date;
+  quote_date?: string | null;
+  quote_time?: string | Date | null;
+  quote_source?: string | null;
+  max_intraday_age_minutes?: number;
+}
+
+export interface PaperRiskQuoteGuardResult {
+  allowed: boolean;
+  session: 'continuous' | 'post_close' | 'closed';
+  code:
+    | 'ok'
+    | 'non_trading_day'
+    | 'outside_execution_window'
+    | 'quote_trade_date_mismatch'
+    | 'intraday_quote_not_realtime'
+    | 'intraday_quote_stale';
+  message: string;
+}
+
+/**
+ * 模拟盘风控只能在有“当日可成交行情”的窗口执行。
+ *
+ * 盘中必须使用当日、30 分钟内的实时行情；15:00 后的收盘风控允许使用当日
+ * 收盘快照。盘前、午休、夜间或行情日期不是今天时一律跳过，避免把旧日线
+ * 当成集合竞价成交价（2026-07-21 09:15 误卖的根因）。
+ */
+export function evaluatePaperRiskQuoteGuard(
+  input: PaperRiskQuoteGuardInput
+): PaperRiskQuoteGuardResult {
+  const now = moment(input.now || new Date()).tz('Asia/Shanghai');
+  const weekday = now.isoWeekday();
+  if (weekday > 5) {
+    return {
+      allowed: false,
+      session: 'closed',
+      code: 'non_trading_day',
+      message: '非交易日不执行模拟盘风控成交',
+    };
+  }
+
+  const minutes = now.hour() * 60 + now.minute();
+  const isMorning = minutes >= 9 * 60 + 30 && minutes <= 11 * 60 + 30;
+  const isAfternoon = minutes >= 13 * 60 && minutes <= 15 * 60;
+  const isPostClose = minutes > 15 * 60 && minutes <= 18 * 60;
+  const session = isMorning || isAfternoon ? 'continuous' : isPostClose ? 'post_close' : 'closed';
+  if (session === 'closed') {
+    return {
+      allowed: false,
+      session,
+      code: 'outside_execution_window',
+      message: '当前不在连续竞价或收盘风控窗口，禁止使用历史价格模拟成交',
+    };
+  }
+
+  const quoteDate = String(input.quote_date || '').slice(0, 10);
+  const today = now.format('YYYY-MM-DD');
+  if (quoteDate !== today) {
+    return {
+      allowed: false,
+      session,
+      code: 'quote_trade_date_mismatch',
+      message: `行情日期 ${quoteDate || '缺失'} 不是当日 ${today}，跳过风控成交`,
+    };
+  }
+
+  if (session === 'continuous') {
+    const source = String(input.quote_source || '').toLowerCase();
+    const isRealtime =
+      source !== 'daily_bar' && source !== 'stock_snapshot' && source !== 'fallback';
+    if (!isRealtime || !input.quote_time) {
+      return {
+        allowed: false,
+        session,
+        code: 'intraday_quote_not_realtime',
+        message: '盘中风控必须使用当日实时行情，日线或静态快照不可成交',
+      };
+    }
+
+    const quoteTime = moment(input.quote_time);
+    const ageMinutes = quoteTime.isValid() ? Math.max(0, now.diff(quoteTime, 'minutes')) : Infinity;
+    const maxAge = Math.max(1, Number(input.max_intraday_age_minutes || 30));
+    if (ageMinutes > maxAge) {
+      return {
+        allowed: false,
+        session,
+        code: 'intraday_quote_stale',
+        message: `盘中行情已过期 ${ageMinutes} 分钟（上限 ${maxAge} 分钟），跳过风控成交`,
+      };
+    }
+  }
+
+  return { allowed: true, session, code: 'ok', message: '行情可用于风控成交' };
 }
 
 function riskReasonLabel(reason: RiskExitReason): string {
@@ -2153,7 +2320,9 @@ class PaperTradingAutomationService {
         0,
         strategyPositionCap
       );
-      const execute_price = roundNumber(quote.price * (1 + this.slippageRate), 3);
+      // paper_trading_trades.execute_price 是 DECIMAL(..., 2)。成交价先按同一精度
+      // 量化再算 amount，避免 DB 显示 10.69、金额却按 10.689 计算的账实不符。
+      const execute_price = quantizePaperExecutionPrice(quote.price * (1 + this.slippageRate));
       const oneLotQuantity = 100;
       const oneLotAmount = roundNumber(execute_price * oneLotQuantity, 2);
       const oneLotCommission = roundNumber(oneLotAmount * this.commissionRate, 2);
@@ -3928,6 +4097,16 @@ class PaperTradingAutomationService {
           continue;
         }
 
+        const quoteGuard = evaluatePaperRiskQuoteGuard({
+          quote_date: quote.date,
+          quote_time: quote.quote_time,
+          quote_source: quote.source,
+        });
+        if (!quoteGuard.allowed) {
+          await skip(quoteGuard.message);
+          continue;
+        }
+
         if (enableStopLoss && stopLossPct > 0 && pnlPct <= -stopLossPct) {
           exitReason = 'stop_loss';
         } else if (enableTakeProfit && takeProfitPct > 0 && pnlPct >= takeProfitPct) {
@@ -4038,34 +4217,26 @@ class PaperTradingAutomationService {
           continue;
         }
 
-        const execute_price = roundNumber(latestPrice * (1 - this.slippageRate), 3);
-        const amount = roundNumber(execute_price * quantity, 2);
-        // 修复 CRITICAL #1 (2026-06-16): A 股 SELL 单边印花税. baseCommission = 千 0.3 broker,
-        // stampTax = 千 1, total = 千 1.3. 之前漏算 stampTax 让 realized_pnl 高估 0.1%.
-        // Batch S (2026-06-17, G1): 补 min_commission 5 元地板 + transfer_fee 千 0.01.
-        const brokerCommission = roundNumber(
-          Math.max(amount * this.commissionRate, this.minCommission),
-          2
-        );
-        const stampTax = roundNumber(amount * this.stampTaxRate, 2);
-        const transferFee = roundNumber(amount * this.transferFeeRate, 2);
-        const commission = roundNumber(brokerCommission + stampTax + transferFee, 2);
-        const net_revenue = roundNumber(amount - commission, 2);
-        // 修复 CRITICAL #2 (2026-06-16): realized_pnl 公式漏 BUY commission.
-        // 实盘正确: realized_pnl = (sell_revenue - sell_commission) - (buy_amount + buy_commission)
-        // avgCost 不含 BUY commission (createBuyTrade 写 avg_cost = execute_price 单纯成交价).
-        // Batch S (G1): BUY commission 估算同款补 min_commission + transfer_fee.
-        const buyAmount = avgCost * quantity;
-        const estBuyBroker = roundNumber(
-          Math.max(buyAmount * this.commissionRate, this.minCommission),
-          2
-        );
-        const estBuyTransfer = roundNumber(buyAmount * this.transferFeeRate, 2);
-        const estimatedBuyCommission = roundNumber(estBuyBroker + estBuyTransfer, 2);
-        const realized_pnl = roundNumber(
-          amount - buyAmount - commission - estimatedBuyCommission,
-          2
-        );
+        // 成交、税费、净回款和通知展示必须共享同一计算结果，避免再次出现
+        // “成交价显示 10.69、金额却按 10.689 计算”的账实不符。
+        const financials = calculatePaperSellFinancials({
+          latest_price: latestPrice,
+          quantity,
+          avg_cost: avgCost,
+          slippage_rate: this.slippageRate,
+          commission_rate: this.commissionRate,
+          min_commission: this.minCommission,
+          stamp_tax_rate: this.stampTaxRate,
+          transfer_fee_rate: this.transferFeeRate,
+        });
+        const {
+          execute_price,
+          amount,
+          commission,
+          net_revenue,
+          realized_pnl,
+          realized_return_pct: realizedReturnPct,
+        } = financials;
 
         const exitItem: PaperTradingRiskExitItem = {
           ...baseItem,
@@ -4098,7 +4269,7 @@ class PaperTradingAutomationService {
             // AL-3 (2026-06-21): 透传 exit_reason / pnl 上下文 / sell_signal 给 reason builder.
             exit_reason: exitReason,
             exit_context: {
-              pnl_pct: typeof pnlPct === 'number' ? `${(pnlPct * 100).toFixed(2)}%` : undefined,
+              pnl_pct: typeof pnlPct === 'number' ? `${pnlPct.toFixed(2)}%` : undefined,
               holding_days: holdingDays,
               max_profit_pct: trailingStats?.max_profit_pct,
               drawdown_from_peak_pct: trailingStats?.drawdown_from_peak_pct,
@@ -4122,6 +4293,12 @@ class PaperTradingAutomationService {
             const icon = realized_pnl >= 0 ? '🟢' : '🔴';
             const pnlEmoji = realized_pnl >= 0 ? '💰' : '📉';
             const headerTemplate = realized_pnl >= 0 ? 'green' : 'red';
+            const reasonDetail =
+              exitReason === 'trailing_take_profit'
+                ? `（峰值 +${trailingStats.max_profit_pct.toFixed(2)}%，当前回撤 ${Math.abs(
+                    trailingStats.drawdown_from_peak_pct
+                  ).toFixed(2)}% / 触发 ${positionTrailingDrawdownPct.toFixed(2)}%）`
+                : '';
             const card = {
               msg_type: 'interactive',
               card: {
@@ -4135,7 +4312,7 @@ class PaperTradingAutomationService {
                     tag: 'div',
                     text: {
                       tag: 'lark_md',
-                      content: `**卖出原因**: ${reasonText}`,
+                      content: `**卖出原因**: ${reasonText}${reasonDetail}`,
                     },
                   },
                   {
@@ -4167,11 +4344,26 @@ class PaperTradingAutomationService {
                       },
                       {
                         is_short: true,
-                        text: { tag: 'lark_md', content: `**总金额**\n¥${amount.toFixed(0)}` },
+                        text: { tag: 'lark_md', content: `**成交额**\n¥${amount.toFixed(2)}` },
                       },
                       {
                         is_short: true,
                         text: { tag: 'lark_md', content: `**持有天数**\n${holdingDays} 天` },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**税费**\n¥${commission.toFixed(2)}` },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**净回款**\n¥${net_revenue.toFixed(2)}` },
+                      },
+                      {
+                        is_short: true,
+                        text: {
+                          tag: 'lark_md',
+                          content: `**净收益率**\n${pnlSign}${realizedReturnPct.toFixed(2)}%`,
+                        },
                       },
                     ],
                   },

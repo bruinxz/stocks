@@ -18,7 +18,6 @@
  *     - 完整 env → ok=true
  *     - 缺 DB_HOST → ok=false + errors 含 DB_HOST required
  *     - 缺 JWT_SECRET → required error
- *     - 缺 TRADING_AGENTS_URL → required error
  *     - JWT_SECRET 是占位符 production → error / development → warning
  *     - JWT_SECRET 短于 32 production → error / development → ok
  *     - SMTP_HOST 填了但 SMTP_USER/PASS 空 → error (部分配置)
@@ -29,7 +28,6 @@
  *     - ALIYUN_SMS 部分填写 → error
  *     - 端口非法 (PORT=99999) → invalid_format error
  *     - DB_PORT 非数字 → invalid_format
- *     - TRADING_AGENTS_URL 非 URL → invalid_format
  *     - NODE_ENV 默认 'development'
  *     - PORT 默认 3000 / DB_PORT 默认 5432 / REDIS_PORT 默认 6379
  *     - 未知 env 字段不报 error (允许 unknown)
@@ -112,7 +110,6 @@ function makeValidEnv(overrides: Record<string, string | undefined> = {}): NodeJ
     JWT_SECRET: 'a-real-secret-key-not-a-placeholder',
     JWT_REFRESH_SECRET: 'a-real-refresh-secret-not-placeholder',
     ENABLE_SECURE_COOKIE: 'true',
-    TRADING_AGENTS_URL: 'http://127.0.0.1:8000',
     STOCKS_REPLAY_RUNTIME_DIR: '/var/lib/stocks/replay-test',
     DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/stock_backtest',
     STOCKS_REPLAY_MODEL_VERSION: '1.0.0',
@@ -289,13 +286,6 @@ assertEqual('production 缺 JWT_REFRESH_SECRET → ok=false', r7bRefresh.ok, fal
 assert(
   'errors 含 JWT_REFRESH_SECRET',
   r7bRefresh.errors.some(e => e.field === 'JWT_REFRESH_SECRET')
-);
-
-const r7c = validateEnv(makeValidEnv({ TRADING_AGENTS_URL: undefined }));
-assertEqual('缺 TRADING_AGENTS_URL → ok=false', r7c.ok, false);
-assert(
-  'errors 含 TRADING_AGENTS_URL',
-  r7c.errors.some(e => e.field === 'TRADING_AGENTS_URL')
 );
 
 const r7d = validateEnv(makeValidEnv({ REDIS_HOST: undefined }));
@@ -559,13 +549,7 @@ assert(
   r17.errors.some(e => e.field === 'DB_PORT')
 );
 
-console.log('\n[18] TRADING_AGENTS_URL 非 URL...');
-const r18 = validateEnv(makeValidEnv({ TRADING_AGENTS_URL: 'not-a-url' }));
-assertEqual('TRADING_AGENTS_URL 非 URL → ok=false', r18.ok, false);
-assert(
-  'TRADING_AGENTS_URL invalid_format',
-  r18.errors.some(e => e.field === 'TRADING_AGENTS_URL' && e.category === 'invalid_format')
-);
+console.log('\n[18] TradingAgents 固定走 loopback，不再校验远程 URL...');
 
 console.log('\n[19] 默认值注入...');
 const r19 = validateEnv(

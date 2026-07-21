@@ -64,17 +64,20 @@ stocks/
 |---|---|
 | `tradingagents/dataflows/internal_api_config.py` | 删除硬编码 `INTERNAL_API_KEY`, 改 `os.getenv(..., "")` |
 | `tradingagents/db/config.py` | 删除硬编码库密码, `POSTGRES_PASSWORD` 默认空、`POSTGRES_DB` 默认 `stock_backtest`; 打印时对密码做掩码 |
-| `config.json` | 清空硬编码 `ARK_API_KEY` 后删除(已 gitignore, 走 env 回退) |
+| 旧 `config.json` | 运行时读取逻辑已删除；密钥仅由 systemd EnvironmentFile 注入 |
 | `docker-compose.db.yml` | `POSTGRES_PASSWORD` 改为 `${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}` |
 | `.env.example` (新增) | 汇总 INTERNAL_API_*, POSTGRES_*, REDIS_*, LLM keys 的样例(无真实值) |
 
-单一真源: AI 服务的 `INTERNAL_API_KEY`、Redis 参数与 stocks `backend/.env` 保持同值。TA 配置优先级为 `config.json > 环境变量 > 默认值`。
+单一真源: AI 服务的 `INTERNAL_API_KEY`、Redis 参数与 stocks `backend.env` 保持同值；
+LLM 密钥和模型只从 `/opt/stocks/shared/tradingagents.env` 读取。配置优先级为
+`环境变量 > 无密钥默认值`。
 
 ## 5. 部署方案
 
 - AI 服务与 stocks 同机, 通过 `127.0.0.1:3000` 访问后端 `/api/internal/*`, 共用 Postgres `stock_backtest` 与 Redis。
-- 复制 `.env.example → .env` 并填真实值(`INTERNAL_API_KEY`、`POSTGRES_PASSWORD`、`ARK_API_KEY` 等)。
-- 沿用 stocks 现有发布约定(releases 时间戳目录 + `current` 符号链接 + nginx reload); AI 子服务作为独立 Python 进程运行, 不改动既有 Node 后端/前端发布流程。
+- 生产密钥写入 `/opt/stocks/shared/tradingagents.env`，权限限制为服务用户可读。
+- 沿用 stocks 现有发布约定(releases 时间戳目录 + `current` 符号链接 + nginx reload)；
+  AI 子服务由 `stocks-tradingagents.service` 管理并固定监听 `127.0.0.1:8000`。
 
 ## 6. 验证清单
 

@@ -6,7 +6,7 @@
  * 5 个被检依赖 + uptime：
  *   1. db          — Sequelize `SELECT 1` (1500ms 超时)
  *   2. redis       — redisLock.healthCheck() 调底层 `PING` (1500ms 超时)
- *   3. tradingAgents — GET ${TRADING_AGENTS_URL}/health (3000ms 超时)
+ *   3. tradingAgents — GET 本机 vendored TradingAgents /health (3000ms 超时)
  *   4. akshare     — python3 -c "import akshare; print(akshare.__version__)" (5000ms 超时)
  *   5. feishu      — 检查业务 / OPS / 实盘三类 webhook 是否至少一类配置；
  *                    若未配 → 'not_configured'；配了 → 不实际发请求避免噪音 → 'ok' (配置存在)。

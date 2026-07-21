@@ -5962,6 +5962,24 @@ class SchedulerService {
   }
 
   async ensureDefaultTasks() {
+    // 2026-07-21: 旧盘中任务会在 09:15 无当日行情时回退旧日线，曾造成虚假
+    // 移动止盈卖出。正式风控已由 15:50 的“模拟盘风控退出检查”接管；启动时
+    // 幂等停用遗留行，防未执行独立 SQL 迁移的环境继续注册它。
+    await ScheduledTask.update(
+      {
+        is_active: false,
+        last_run_status: 'SKIPPED',
+      },
+      {
+        where: {
+          name: 'stock-风控退出检查',
+          type: 'PAPER_TRADING_RISK_CHECK',
+          cron_expression: '15,45 9,10,11,13,14 * * 1-5',
+          is_active: true,
+        },
+      }
+    );
+
     const defaultTasks = [
       {
         name: '每日行情增量同步',

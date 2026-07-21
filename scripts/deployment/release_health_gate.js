@@ -86,6 +86,8 @@ function previousRelease(target, current) {
 
 function restartServices(targets) {
   const services = targets.map(item => item.service).join(' ');
+  const aiUnit = run('systemctl cat stocks-tradingagents.service >/dev/null 2>&1', { capture: true });
+  if (aiUnit.status === 0) run('systemctl restart stocks-tradingagents.service');
   run(`systemctl restart ${services}`);
   run('sleep 8');
   run(`systemctl is-active ${services}`);
@@ -94,6 +96,18 @@ function restartServices(targets) {
 function healthCheck(target) {
   console.log(`\n🔎 health: ${target.key}`);
   run(`curl -fsS ${sh(`${target.backend_url}/health`)}`);
+  const vendoredUnit = `${target.root}/current/scripts/deployment/samples/stocks-tradingagents.service`;
+  const requiresVendoredRuntime = run(`test -f ${sh(vendoredUnit)}`, { capture: true }).status === 0;
+  if (requiresVendoredRuntime) {
+    run(
+      `curl -fsS ${sh(
+        'http://127.0.0.1:8000/health'
+      )} | grep -q '"runtime":"vendored"'`
+    );
+    run(`curl -fsS ${sh('http://127.0.0.1:8000/health')} | grep -q '"ready":true'`);
+  } else {
+    console.warn('  previous release predates the managed vendored TradingAgents runtime');
+  }
   run(`curl -fsSI ${sh(`${target.frontend_url}/`)} >/dev/null`);
 
   const smoke = readBool(process.env.RELEASE_RUN_SMOKE, true);

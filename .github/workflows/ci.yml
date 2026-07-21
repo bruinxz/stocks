@@ -59,6 +59,7 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              - 'ai/tradingagents-app/**'
               - 'scripts/ci/**'
               - '.github/workflows/ci.yml'
             frontend:
@@ -66,6 +67,8 @@ jobs:
               - '.github/workflows/ci.yml'
             docker:
               - 'docker-compose.yml'
+              - 'ai/tradingagents-app/Dockerfile'
+              - 'ai/tradingagents-app/docker-compose*.yml'
               - 'backend/Dockerfile*'
               - 'frontend/Dockerfile*'
               - '.github/workflows/ci.yml'
@@ -106,6 +109,11 @@ jobs:
 
       - name: Install frontend dependencies for cross-monorepo tests
         run: npm ci --prefix ../frontend
+
+      - name: Vendored TradingAgents runtime contract
+        run: |
+          python3 -m compileall -q ../ai/tradingagents-app
+          python3 -m unittest discover -s ../ai/tradingagents-app/tests -p 'test_runtime_contract.py'
 
       - name: Diagnostic baseline comparator regression guard
         run: |
@@ -302,7 +310,6 @@ jobs:
           JWT_SECRET: ci-only-jwt-secret-32chars-min-do-not-deploy-aaaaaaaaaaaaaaaa
           JWT_REFRESH_SECRET: ci-only-refresh-secret-32chars-min-do-not-deploy-bbbbbbbbbbbbbbbb
           ENABLE_SECURE_COOKIE: 'true'
-          TRADING_AGENTS_URL: http://trading-agents.internal:8000
           STOCKS_REPLAY_RUNTIME_DIR: /tmp/stocks-ci-replay
           DATABASE_URL: postgresql://ci_user@ci-postgres:5432/ci_stocks
           STOCKS_REPLAY_MODEL_VERSION: 1.0.0-ci.1

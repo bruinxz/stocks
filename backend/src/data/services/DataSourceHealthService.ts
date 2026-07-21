@@ -165,7 +165,7 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
       quant_usage_notes:
         '不直接提供行情数据，用于对量化 Top 候选做基本面、新闻面、情绪面和技术面二次研判。',
       recommendation: '保持健康探测；只对高分候选调用，控制成本和延迟。',
-      configuration_hint: 'TRADING_AGENTS_URL 指向已部署服务',
+      configuration_hint: '启动本仓 stocks-tradingagents.service（127.0.0.1:8000）',
       strengths: ['外部信息补充', '解释性强', '适合二次确认'],
       limitations: ['非行情源', '耗时较长，应队列化调用'],
     },

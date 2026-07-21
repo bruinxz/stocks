@@ -5,8 +5,8 @@ services:
       - .env
     volumes:
       - ./results:/home/appuser/app/results
-    tty: true
-    stdin_open: true
+    ports:
+      - "127.0.0.1:8000:8000"
 
   ollama:
     image: ollama/ollama:latest

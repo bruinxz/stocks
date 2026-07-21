@@ -8,7 +8,13 @@ import threading
 from tradingagents.dataflows.internal_api import InternalStockAPI
 from tradingagents.utils.symbol_converter import SymbolConverter
 
-DB_DIR = "local_db/historical_data"
+DB_DIR = os.path.join(
+    os.getenv(
+        "TRADINGAGENTS_DATA_CACHE_DIR",
+        os.path.join(os.path.dirname(__file__), "data_cache"),
+    ),
+    "historical_data",
+)
 os.makedirs(DB_DIR, exist_ok=True)
 
 _SYMBOL_FILE_LOCKS = {}

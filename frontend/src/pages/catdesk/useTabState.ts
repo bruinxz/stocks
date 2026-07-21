@@ -7,6 +7,8 @@ export const TAB_KEYS = [
   'us',
   'jpkr',
   'multi',
+  'portfolio',
+  'ai',
   'backtest',
   'daily',
   'history',

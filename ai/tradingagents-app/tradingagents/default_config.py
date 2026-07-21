@@ -5,9 +5,12 @@ DEFAULT_CONFIG = {
     "project_dir": os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
     "results_dir": get_env_or_config("TRADINGAGENTS_RESULTS_DIR", "./results"),
     "storage_dir": get_env_or_config("TRADINGAGENTS_STORAGE_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "local_storage"))),
-    "data_cache_dir": os.path.join(
-        os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
-        "dataflows/data_cache",
+    "data_cache_dir": get_env_or_config(
+        "TRADINGAGENTS_DATA_CACHE_DIR",
+        os.path.join(
+            os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
+            "dataflows/data_cache",
+        ),
     ),
     # LLM settings
     "llm_provider": "openai",

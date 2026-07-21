@@ -57,6 +57,14 @@ jest.mock('../pages/catdesk/tabs/HighMultipotential', () => ({
   __esModule: true,
   default: () => <div data-testid="tab-multi">高倍潜力</div>,
 }));
+jest.mock('../pages/catdesk/tabs/PortfolioOverview', () => ({
+  __esModule: true,
+  default: () => <div data-testid="tab-portfolio">我的持仓</div>,
+}));
+jest.mock('../pages/catdesk/tabs/AIAnalysisDesk', () => ({
+  __esModule: true,
+  default: () => <div data-testid="tab-ai">AI 分析</div>,
+}));
 jest.mock('../pages/catdesk/tabs/BacktestEvidence', () => ({
   __esModule: true,
   default: () => <div data-testid="tab-backtest">回测证据</div>,
@@ -76,6 +84,8 @@ const TAB_LABEL: Record<TabKey, string> = {
   us: '美股优选',
   jpkr: '日韩市场',
   multi: '高倍潜力',
+  portfolio: '我的持仓',
+  ai: 'AI 分析',
   backtest: '回测证据',
   daily: '每日日报',
   history: '报告历史',

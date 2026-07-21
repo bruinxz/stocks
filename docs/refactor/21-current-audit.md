@@ -52,7 +52,7 @@
    └──────────────┘   └──────────────┘   └────────────────┘
                               │
                               │ HTTP GET/POST
-                              ▼ (env TRADING_AGENTS_URL)
+                              ▼ (固定 loopback)
                           127.0.0.1:8000
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -274,7 +274,7 @@
 
 ### 5.2 TS → AI 服务（`ai/tradingagents-app`）
 
-- **配置**：`backend/src/config/externalServices.ts` · `TRADING_AGENTS_BASE_URL` 默认 `http://127.0.0.1:8000`，env `TRADING_AGENTS_URL` 覆盖
+- **配置**：`backend/src/config/externalServices.ts` · `TRADING_AGENTS_BASE_URL` 固定为 `http://127.0.0.1:8000`，不接受远程 env 覆盖
 - **直接调用点 15 处**：
   - Controllers: `AIAdvisorController`
   - Services: `AIAdvisorService` / `AnnouncementNLPService` / `EnhancedTradingJournalService` / `MarketBriefService` / `SystemHealthDetailService` / `TechnicalAnalysisService` / `WeeklyReviewReportService` / `DataSourceHealthService`

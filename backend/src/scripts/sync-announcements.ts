@@ -25,7 +25,7 @@
  *
  * 配套环境变量:
  *   ANNOUNCEMENT_TIMEOUT_MS  Python 子进程 timeout (默认 180_000)
- *   TRADING_AGENTS_URL       AI 远端 (默认见 config/externalServices.ts)
+ *   TradingAgents 由本机 stocks-tradingagents.service 提供 (127.0.0.1:8000)
  *   PYTHON_PATH              python3 路径
  */
 

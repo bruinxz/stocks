@@ -198,52 +198,6 @@ class InternalStockAPI:
             return {}
 
     @staticmethod
-    def get_realtime_quotes(symbols: Union[str, List[str]]) -> Dict[str, Any]:
-        """
-        批量极速切片接口，获取股票的实时盘口数据。
-        Endpoint: GET /api/internal/data/quotes
-        
-        Args:
-            symbols: 单个股票代码或股票代码列表（最多 50 只）
-            
-        Returns:
-            包含各股票实时行情数据的字典
-        """
-        if not symbols:
-            return {}
-            
-        if isinstance(symbols, str):
-            symbols = [symbols]
-            
-        if len(symbols) > 50:
-            logger.warning(f"Requested {len(symbols)} symbols for realtime quotes. Limiting to 50.")
-            symbols = symbols[:50]
-            
-        formatted_symbols = [SymbolConverter.to_internal_api_format(s) for s in symbols]
-        symbols_str = ",".join(formatted_symbols)
-        
-        url = f"{INTERNAL_API_BASE_URL}/api/internal/data/quotes"
-        params = {"symbols": symbols_str}
-        
-        try:
-            response = requests.get(url, headers=get_internal_api_headers(), params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            
-            if data.get("success") and "data" in data:
-                result = {}
-                for orig_sym, fmt_sym in zip(symbols, formatted_symbols):
-                    if fmt_sym in data["data"]:
-                        result[orig_sym] = data["data"][fmt_sym]
-                return result
-            else:
-                logger.warning(f"Internal API returned failure for realtime quotes: {data}")
-                return {}
-        except Exception as e:
-            logger.error(f"Failed to fetch realtime quotes from internal API: {e}")
-            return {}
-
-    @staticmethod
     def get_intraday_data(symbol: str, period: str = "1m", limit: int = 240) -> Optional[pd.DataFrame]:
         """
         获取日内分时 K 线数据。

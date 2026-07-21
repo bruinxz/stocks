@@ -1,0 +1,34 @@
+[Unit]
+Description=Stocks vendored TradingAgents API
+After=network-online.target postgresql.service redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stocks_app
+Group=stocks
+WorkingDirectory=/opt/stocks/current/ai/tradingagents-app
+EnvironmentFile=/opt/stocks/shared/backend.env
+EnvironmentFile=-/opt/stocks/shared/tradingagents.env
+Environment=INTERNAL_API_BASE_URL=http://127.0.0.1:3000
+Environment=TRADINGAGENTS_RESULTS_DIR=/opt/stocks/shared/tradingagents/results
+Environment=TRADINGAGENTS_STORAGE_DIR=/opt/stocks/shared/tradingagents/storage
+Environment=TRADINGAGENTS_DATA_CACHE_DIR=/opt/stocks/shared/tradingagents/data-cache
+ExecStart=/opt/stocks/shared/tradingagents-venv/bin/python -m uvicorn api:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+MemoryMax=5G
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stocks-tradingagents
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/stocks/shared/tradingagents
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

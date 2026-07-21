@@ -24,11 +24,10 @@ stocks/
 └── ai/
     └── tradingagents-app/   # 【新增】vendored 的 TradingAgents Python 服务
         ├── api.py           # FastAPI 入口
-        ├── main.py          # CLI 入口
+        ├── main.py          # 受管运行时配置与分析入口
         ├── tradingagents/   # 核心包 (agents/dataflows/db/graph/...)
         ├── requirements.txt
-        ├── .env.example     # 【新增】合并后共享环境变量样例
-        └── config.json      # (gitignored) ARK key 已清空
+        └── .env.example     # 【新增】合并后共享环境变量样例
 ```
 
 vendoring 时排除了独立 `.git`、生成产物 (results / data_cache / local_db 缓存)、
@@ -56,10 +55,8 @@ vendoring 时排除了独立 `.git`、生成产物 (results / data_cache / local
 | `tradingagents/dataflows/internal_api_config.py` | 硬编码 `INTERNAL_API_KEY` | `os.getenv("INTERNAL_API_KEY", "")`,base URL 默认 `http://127.0.0.1:3000` |
 | `tradingagents/db/config.py` | 硬编码 Postgres 密码 | `os.getenv("POSTGRES_PASSWORD", "")` |
 
-未被跟踪(gitignored)的密钥载体:
-
-- `config.json` — `ARK_API_KEY` 已清空为 `""`(结构保留)。
-- `.env` — 不入库;运行时从此文件注入真实值。
+运行时不再读取 `config.json`。所有密钥只通过 systemd 的
+`/opt/stocks/shared/tradingagents.env` 注入，文件不入库并限制读取权限。
 
 ## 5. 共享环境变量 `.env.example`
 
@@ -71,7 +68,8 @@ vendoring 时排除了独立 `.git`、生成产物 (results / data_cache / local
 - **共享 Redis**:`REDIS_*`
 - **LLM**:`ARK_API_KEY`(火山方舟)/ `OPENAI_API_KEY` / `GOOGLE_API_KEY` / `ANTHROPIC_API_KEY`
 
-部署时复制为 `.env` 并填入真实值即可。
+生产部署时把对应值写入 `/opt/stocks/shared/tradingagents.env`；本地开发可复制为
+`.env`。后端固定调用 `127.0.0.1:8000`，不再支持远程 URL 覆盖。
 
 ## 6. 验证记录
 
@@ -80,8 +78,9 @@ vendoring 时排除了独立 `.git`、生成产物 (results / data_cache / local
 - TypeScript:`backend/` 下 `tsc --noEmit` 退出码 0,vendoring 未破坏 Node 构建。
 - 安全:提交集不含 `__pycache__` / `.pyc`,无残留密钥,`.env.example` 占位为空。
 
-## 7. 尚未做的事(部署前需人工确认)
+## 7. 生产运行形态
 
-- 未部署上线。生产环境需在服务器上按 `.env.example` 配置真实 `.env`。
-- Python 依赖 (`requirements.txt`) 的生产安装与进程编排(与 Node 后端如何共存启动)
-  留待部署阶段落地。
+- `stocks-tradingagents.service` 使用本仓 `api.py`，只监听 `127.0.0.1:8000`。
+- Python 依赖安装在 `/opt/stocks/shared/tradingagents-venv`，运行数据写入
+  `/opt/stocks/shared/tradingagents/`，均随 release 之外持久化。
+- release 健康门禁要求 `/health` 返回 `runtime=vendored` 且 `ready=true`。
