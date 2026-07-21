@@ -1289,8 +1289,28 @@
     overflow: visible;
   }
   .catdesk-topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     align-items: flex-start;
+    gap: 12px;
     padding: 20px 16px 14px;
+  }
+  .catdesk-topbar-meta {
+    width: 100%;
+    min-width: 0;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .catdesk-topbar-tools {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+  }
+  .catdesk-topbar-tools .ant-select {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none;
+    flex: 1 1 210px;
   }
   .catdesk-title-group h1 {
     font-size: 28px;
