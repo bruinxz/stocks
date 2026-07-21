@@ -25,6 +25,8 @@ export const USER_SCOPED_LOCAL_STORAGE_KEYS: ReadonlyArray<string> = [
   'aiAdvisor_ticker',
   'aiAdvisor_decision',
   'aiAdvisor_analyzing',
+  // AI 分析页的跨 Tab / 刷新异步任务恢复点
+  'ai_price_analysis_job_v1',
   // 收藏 / pinned 类
   'stocks_pinned_symbols', // PINNED_KEY in StockExplorer
   // US-047 FactorWorkspace 组合模板 (FE-008) — 用户自定义因子组合 (权重 + 选股参数), localStorage-only

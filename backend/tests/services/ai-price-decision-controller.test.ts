@@ -83,6 +83,8 @@ async function main(): Promise<void> {
 
   const controller = new AIAdvisorController();
   const originalAnalyze = (aiPriceDecisionService as any).analyze;
+  const originalSubmitAsync = (aiPriceDecisionService as any).submitAsync;
+  const originalGetAsyncResult = (aiPriceDecisionService as any).getAsyncResult;
 
   try {
     let serviceCalls = 0;
@@ -195,8 +197,62 @@ async function main(): Promise<void> {
       '行情缺失返回明确提示',
       String(noMarket.state.body?.message || '').includes('缺少可用行情')
     );
+
+    (controller as any).resolveTicker = async () => 'sh.600519';
+    let submittedUserId: number | undefined;
+    (aiPriceDecisionService as any).submitAsync = async (
+      _stock_code: string,
+      options: Record<string, unknown>
+    ) => {
+      submittedUserId = Number(options.user_id);
+      return completedResult({
+        status: 'pending',
+        task_id: 'task-price-1',
+        market_snapshot: null,
+        price_decision: null,
+        task_phase: 'pending',
+        elapsed_time: 0,
+      });
+    };
+    const asyncSubmit = createResponse();
+    await controller.submitPriceDecisionAsync(
+      {
+        body: { stock_code: '600519', planned_capital: 200_000 },
+        user: { id: 23 },
+      } as any,
+      asyncSubmit.response as any,
+      (() => undefined) as any
+    );
+    equal('异步提交返回 202', asyncSubmit.state.status_code, 202);
+    equal('异步提交返回 task_id', asyncSubmit.state.body?.data?.task_id, 'task-price-1');
+    equal('异步提交绑定当前用户', submittedUserId, 23);
+
+    let polledUserId: number | undefined;
+    (aiPriceDecisionService as any).getAsyncResult = async (_task_id: string, user_id: number) => {
+      polledUserId = user_id;
+      return completedResult({ task_phase: 'completed', elapsed_time: 842.5 });
+    };
+    const asyncPoll = createResponse();
+    await controller.getPriceDecisionTask(
+      { params: { taskId: 'task-price-1' }, user: { id: 23 } } as any,
+      asyncPoll.response as any,
+      (() => undefined) as any
+    );
+    equal('异步查询成功', asyncPoll.state.body?.success, true);
+    equal('异步查询绑定当前用户', polledUserId, 23);
+
+    (aiPriceDecisionService as any).getAsyncResult = async () => null;
+    const crossUser = createResponse();
+    await controller.getPriceDecisionTask(
+      { params: { taskId: 'other-user-task' }, user: { id: 23 } } as any,
+      crossUser.response as any,
+      (() => undefined) as any
+    );
+    equal('其他用户任务返回 404', crossUser.state.status_code, 404);
   } finally {
     (aiPriceDecisionService as any).analyze = originalAnalyze;
+    (aiPriceDecisionService as any).submitAsync = originalSubmitAsync;
+    (aiPriceDecisionService as any).getAsyncResult = originalGetAsyncResult;
   }
 
   console.log(`\nai-price-decision-controller.test.ts: ${passed} ok / ${failed} failed`);

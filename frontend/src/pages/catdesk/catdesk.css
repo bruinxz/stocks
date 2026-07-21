@@ -1493,6 +1493,16 @@
   border-color: var(--cd-border);
   background: color-mix(in srgb, var(--cd-paper) 90%, transparent);
 }
+.catdesk-ai-desk .ai-analysis-workspace-flow {
+  min-width: 0;
+}
+.catdesk-ai-desk .ai-analysis-sheet {
+  border-color: var(--cd-border);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--cd-accent) 5%, transparent) 1px, transparent 1px)
+      0 0 / 28px 28px,
+    color-mix(in srgb, var(--cd-paper) 94%, white);
+}
 
 @media (max-width: 900px) {
   .catdesk-portfolio__ledger {

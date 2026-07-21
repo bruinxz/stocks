@@ -25,6 +25,7 @@ import {
 import {
   ALL_ANALYSIS_DIMENSIONS,
   AIPriceDecisionPositionState,
+  AIPriceDecisionRequest,
   AIPriceDecisionResult,
   AnalysisDimension,
   AnalyzeSingleStockResult,
@@ -69,10 +70,11 @@ function pickActionRiskWarnings(actionPlan: { risk_warnings?: string[] }, limit:
  *   - stockCode / stockName：触发分析的目标股票
  *   - open / onClose：受控 Modal
  *   - taskLabel：归档时区分入口（'portfolio_position' / 'factor_pick' / 'today_signal'）
+ *   - onSubmitAsync：AI 分析工作台传入；弹窗只采集参数，提交后立即关闭，由页面渲染进度与结果
  *
  * UI 流程：
  *   1. Modal 打开 → 用户选 dimensions（默认 5 维度全选） → 点 "开始分析"；
- *   2. POST /api/ai/analyze-stock → 显示 loading；
+ *   2. 工作台模式 POST 异步任务并关闭；兼容入口仍可走同步请求并在弹窗展示；
  *   3. 收到 result 后:
  *      - **v2 layout** (metadata.engine_variant==='multi_dim_v1' / hard 短路 / per_dimension 非空) →
  *        显示 8 dim score bar + confidence + evidence + 行动计划 (entry_zone/stop_loss/take_profit/position) +
@@ -95,6 +97,8 @@ interface AIStockAnalysisModalProps {
   taskLabel?: string;
   /** 初始 dimensions；不传 = 全 5 维度。 */
   initialDimensions?: AnalysisDimension[];
+  /** AI 分析页传入时只提交后台任务，弹窗立即关闭，结果由页面级状态渲染。 */
+  onSubmitAsync?: (request: AIPriceDecisionRequest) => void;
 }
 
 const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
@@ -104,6 +108,7 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
   stockName,
   taskLabel = 'manual',
   initialDimensions,
+  onSubmitAsync,
 }) => {
   const [selectedDims, setSelectedDims] = useState<AnalysisDimension[]>(
     initialDimensions && initialDimensions.length > 0
@@ -126,20 +131,26 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
       antdMessage.warning('请至少选择一个分析维度');
       return;
     }
+    const request: AIPriceDecisionRequest = {
+      stock_code: stockCode,
+      dimensions: selectedDims,
+      task_label: taskLabel,
+      stock_name: stockName || undefined,
+      position_state: positionState,
+      planned_capital: plannedCapital || undefined,
+      holding_cost: positionState === 'holding' ? holdingCost || undefined : undefined,
+      refresh_quote: true,
+    };
+    if (onSubmitAsync) {
+      onSubmitAsync(request);
+      onClose();
+      return;
+    }
     setLoading(true);
     setError(null);
     setResult(null);
     try {
-      const data = await aiStockAnalysisService.analyzePriceDecision({
-        stock_code: stockCode,
-        dimensions: selectedDims,
-        task_label: taskLabel,
-        stock_name: stockName || undefined,
-        position_state: positionState,
-        planned_capital: plannedCapital || undefined,
-        holding_cost: positionState === 'holding' ? holdingCost || undefined : undefined,
-        refresh_quote: true,
-      });
+      const data = await aiStockAnalysisService.analyzePriceDecision(request);
       setResult(data);
       if (data.status === 'failed') {
         antdMessage.error(`AI 分析失败：${data.error || '未知错误'}`);
@@ -157,7 +168,17 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [holdingCost, plannedCapital, positionState, selectedDims, stockCode, stockName, taskLabel]);
+  }, [
+    holdingCost,
+    onClose,
+    onSubmitAsync,
+    plannedCapital,
+    positionState,
+    selectedDims,
+    stockCode,
+    stockName,
+    taskLabel,
+  ]);
 
   const handleClose = useCallback(() => {
     if (loading) return; // 防止用户在请求未完成时关闭丢失结果
@@ -191,7 +212,7 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
       open={open}
       onCancel={handleClose}
       width={760}
-      destroyOnClose
+      destroyOnHidden
       title={
         <Space>
           <RobotOutlined style={{ color: '#722ed1' }} />

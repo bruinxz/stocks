@@ -142,6 +142,11 @@ export interface AIPriceDecisionResult extends AnalyzeSingleStockResult {
   price_decision: AIPriceDecisionPlan | null;
 }
 
+export interface AIPriceDecisionTaskResult extends AIPriceDecisionResult {
+  task_phase: 'pending' | 'processing' | 'completed' | 'failed';
+  elapsed_time: number;
+}
+
 export interface AIPriceDecisionRequest extends SingleStockAnalysisRequest {
   position_state?: AIPriceDecisionPositionState;
   planned_capital?: number;
@@ -162,6 +167,34 @@ export async function analyzePriceDecision(
   }>('/ai/price-decision', request);
   if (!response.data?.success || !response.data.data) {
     throw new Error(response.data?.message || 'AI 买卖测算请求失败');
+  }
+  return response.data.data;
+}
+
+/** 提交长耗时分析；202 表示已进入 TradingAgents 后台任务。 */
+export async function submitPriceDecisionAsync(
+  request: AIPriceDecisionRequest
+): Promise<AIPriceDecisionTaskResult> {
+  const response = await api.post<{
+    success: boolean;
+    data?: AIPriceDecisionTaskResult;
+    message?: string;
+  }>('/ai/price-decision/async', request);
+  if (!response.data?.success || !response.data.data?.task_id) {
+    throw new Error(response.data?.message || 'AI 异步任务提交失败');
+  }
+  return response.data.data;
+}
+
+/** 查询当前用户的一条异步分析任务；完成时包含最终报告与当前价计划。 */
+export async function getPriceDecisionTask(task_id: string): Promise<AIPriceDecisionTaskResult> {
+  const response = await api.get<{
+    success: boolean;
+    data?: AIPriceDecisionTaskResult;
+    message?: string;
+  }>(`/ai/price-decision/tasks/${encodeURIComponent(task_id)}`);
+  if (!response.data?.success || !response.data.data) {
+    throw new Error(response.data?.message || 'AI 异步任务查询失败');
   }
   return response.data.data;
 }
@@ -225,6 +258,8 @@ export async function listReports(
 export const aiStockAnalysisService = {
   analyzeSingleStock,
   analyzePriceDecision,
+  submitPriceDecisionAsync,
+  getPriceDecisionTask,
   getReportById,
   listReports,
 };

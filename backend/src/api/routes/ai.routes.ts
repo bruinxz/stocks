@@ -64,6 +64,71 @@ router.post(
 );
 
 /**
+ * 长耗时 AI 价格分析使用提交 + 轮询，不占用浏览器 30 秒同步请求。
+ */
+/**
+ * @openapi
+ * /api/ai/price-decision/async:
+ *   post:
+ *     tags: [AI 智能分析]
+ *     summary: 异步提交 TradingAgents 价格分析
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [stock_code]
+ *             properties:
+ *               stock_code: { type: string, example: sh.600519 }
+ *               stock_name: { type: string }
+ *               dimensions:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   enum: [fundamental, technical, capital, news, sentiment]
+ *               position_state: { type: string, enum: [watching, holding], default: watching }
+ *               planned_capital: { type: number }
+ *               holding_cost: { type: number }
+ *               refresh_quote: { type: boolean, default: true }
+ *     responses:
+ *       '202': { description: 已提交，返回 task_id 与初始状态 }
+ *       '400': { description: 参数错误 }
+ *       '401': { description: 未授权 }
+ *       '404': { description: 股票不存在 }
+ */
+router.post(
+  '/price-decision/async',
+  authController.authenticate,
+  aiAdvisorController.submitPriceDecisionAsync
+);
+/**
+ * @openapi
+ * /api/ai/price-decision/tasks/{taskId}:
+ *   get:
+ *     tags: [AI 智能分析]
+ *     summary: 查询当前用户的异步价格分析任务
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: taskId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       '200': { description: 排队、分析中或最终分析结果 }
+ *       '401': { description: 未授权 }
+ *       '404': { description: 当前用户无此任务 }
+ */
+router.get(
+  '/price-decision/tasks/:taskId',
+  authController.authenticate,
+  aiAdvisorController.getPriceDecisionTask
+);
+
+/**
  * @route GET /api/ai/analyze-stock/stream
  * @desc US-055 单股深度分析 SSE 流式返回
  * @access Public（EventSource 无法方便传 Bearer Header）

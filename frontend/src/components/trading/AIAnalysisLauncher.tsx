@@ -8,7 +8,9 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import AIStockAnalysisModal from './AIStockAnalysisModal';
+import AIAnalysisWorkspaceResult from './AIAnalysisWorkspaceResult';
 import { searchStocks } from '../../services/api';
+import { useAIAnalysis } from '../../contexts/AIAnalysisContext';
 
 const { Text } = Typography;
 
@@ -36,11 +38,12 @@ function loadRecent(): StockHit[] {
   }
 }
 
-/** 搜股、最近分析和分析弹窗的唯一实现，供独立工作区与 CatDesk 页签复用。 */
+/** 搜股、参数弹窗与页面级异步结果的唯一实现，供独立工作区与 CatDesk 页签复用。 */
 export default function AIAnalysisLauncher({
   taskLabel = 'ai_analysis_hub',
   compact = false,
 }: AIAnalysisLauncherProps) {
+  const { startAnalysis, is_running } = useAIAnalysis();
   const [keyword, setKeyword] = useState('');
   const [options, setOptions] = useState<
     Array<{ value: string; label: React.ReactNode; hit: StockHit }>
@@ -133,7 +136,7 @@ export default function AIAnalysisLauncher({
   }, [keyword, options, trigger]);
 
   return (
-    <>
+    <div className="ai-analysis-workspace-flow">
       <div className={`ai-analysis-launch${compact ? ' is-compact' : ''}`}>
         <div className="ai-analysis-capabilities" aria-label="分析能力">
           <div>
@@ -168,6 +171,7 @@ export default function AIAnalysisLauncher({
             style={{ width: '100%' }}
             popupMatchSelectWidth={false}
             notFoundContent={searching ? '搜索中…' : keyword.trim() ? '无匹配股票' : null}
+            disabled={is_running}
           >
             <Input
               size="large"
@@ -175,13 +179,14 @@ export default function AIAnalysisLauncher({
               placeholder="输入股票代码或名称，如 600519 / 贵州茅台"
               prefix={<SearchOutlined />}
               onPressEnter={runManual}
+              disabled={is_running}
             />
           </AutoComplete>
           <Button
             size="large"
             type="primary"
             icon={<ThunderboltOutlined />}
-            disabled={!keyword.trim()}
+            disabled={!keyword.trim() || is_running}
             onClick={runManual}
           >
             开始分析
@@ -197,8 +202,11 @@ export default function AIAnalysisLauncher({
               {recent.map(hit => (
                 <Tag
                   key={hit.symbol}
-                  className="ai-analysis-recent__chip"
-                  onClick={() => trigger(hit)}
+                  className={`ai-analysis-recent__chip${is_running ? ' is-disabled' : ''}`}
+                  aria-disabled={is_running}
+                  onClick={() => {
+                    if (!is_running) trigger(hit);
+                  }}
                 >
                   <RobotOutlined /> <Text strong>{hit.symbol}</Text>
                   {hit.name ? <Text style={{ marginLeft: 6 }}>{hit.name}</Text> : null}
@@ -216,8 +224,10 @@ export default function AIAnalysisLauncher({
           stockCode={target.symbol}
           stockName={target.name}
           taskLabel={taskLabel}
+          onSubmitAsync={startAnalysis}
         />
       ) : null}
-    </>
+      <AIAnalysisWorkspaceResult />
+    </div>
   );
 }
