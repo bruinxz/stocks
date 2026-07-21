@@ -547,6 +547,10 @@ const AppContent: React.FC = () => {
                   }
                 />
                 <Route
+                  path="/workspace/portfolio"
+                  element={<Navigate to="/catdesk?tab=portfolio" replace />}
+                />
+                <Route
                   path="/workspace/data"
                   element={
                     <ProtectedRoute>

@@ -10,7 +10,7 @@
  *     caller (`index.ts` / CLI `check-env`) 自由决定 "立即 exit" 还是 "降级
  *     运行" —— production 必须 exit，CLI 报告型工具显示完整 errors 然后 exit。
  *  3. **必填 vs 可选 4 个分类**：
- *     - REQUIRED_ALWAYS：DB 连接 / JWT_SECRET / TradingAgents URL —— 任何
+ *     - REQUIRED_ALWAYS：DB 连接 / JWT_SECRET —— 任何
  *       env 下都必须存在；缺失 = 启动失败。
  *     - REQUIRED_PRODUCTION：production 模式下追加要求（如 JWT_SECRET 必须
  *       非占位符值）；development 模式不强制。
@@ -186,7 +186,7 @@ export const ALIYUN_SMS_REQUIRED_GROUP: readonly string[] = Object.freeze([
  * - DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD —— Postgres 连接四件套
  * - REDIS_HOST / REDIS_PORT —— Bull 队列 + redisLock 依赖
  * - JWT_SECRET —— access-token auth trust boundary，缺失时 fail-closed
- * - TRADING_AGENTS_URL —— AI 投研 / 公告 NLP / KOL 等 6+ feature 共用
+ * TradingAgents 固定走同机 127.0.0.1:8000，由独立 systemd unit 管理，不再收远程 URL。
  */
 function buildBaseSchema(): Joi.ObjectSchema {
   return Joi.object({
@@ -213,9 +213,6 @@ function buildBaseSchema(): Joi.ObjectSchema {
     JWT_REFRESH_SECRET: Joi.string().min(8).optional(),
     JWT_EXPIRES_IN: Joi.string().default('7d'),
     ENABLE_SECURE_COOKIE: Joi.string().valid('true', 'false').optional(),
-
-    // ----------- 必填: TradingAgents -----------
-    TRADING_AGENTS_URL: Joi.string().uri().required(),
 
     // ----------- production 必填: Tab6/7 durable replay -----------
     STOCKS_REPLAY_RUNTIME_DIR: Joi.string().pattern(/^\//).allow('').optional(),

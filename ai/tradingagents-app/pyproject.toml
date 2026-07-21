@@ -10,6 +10,13 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "langchain-core>=0.3.81",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "httpx>=0.28.0",
+    "pydantic>=2.10.0",
+    "python-dotenv>=1.0.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.0",
     "backtrader>=1.9.78.123",
     "langchain-anthropic>=0.3.15",
     "langchain-experimental>=0.3.4",
@@ -35,9 +42,13 @@ dependencies = [
 
 [project.scripts]
 tradingagents = "cli.main:app"
+tradingagents-api = "api:main"
 
 [tool.setuptools.packages.find]
 include = ["tradingagents*", "cli*"]
+
+[tool.setuptools]
+py-modules = ["api", "main"]
 
 [tool.setuptools.package-data]
 cli = ["static/*"]

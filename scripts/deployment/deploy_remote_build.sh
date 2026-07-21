@@ -138,7 +138,7 @@ if [[ "$TARGET" == "main" && "${SKIP_DB_BACKUP:-false}" != "true" ]]; then
       bash $CURRENT/scripts/backup-db.sh
     else
       echo \"  (no backup-db.sh in current release; doing inline pg_dump)\"
-      docker exec stocks_postgres pg_dump -U postgres stock_backtest | gzip > \$OUT
+      docker exec stocks-postgres pg_dump -U postgres stock_backtest | gzip > \$OUT
     fi
     ls -lh \$BACKUP_DIR | tail -3
   '" || { echo "ERROR: DB backup failed; aborting deploy" >&2; exit 1; }
@@ -193,6 +193,19 @@ if [ -f "\$GLOBAL_MARKET_REQUIREMENTS" ]; then
   "\$PYTHON_RUNTIME" -m pip install --disable-pip-version-check --no-input \
     -r "\$GLOBAL_MARKET_REQUIREMENTS" 2>&1 | tail -10
 fi
+
+# TradingAgents is a first-class local runtime. Keep its Python environment in
+# shared/ so release rotation only replaces source, not the dependency layer.
+AI_REQUIREMENTS="\$WORK/ai/tradingagents-app/requirements.txt"
+AI_VENV="$SHARED/tradingagents-venv"
+if [ ! -x "\$AI_VENV/bin/python" ]; then
+  echo "▶ create TradingAgents venv..."
+  python3 -m venv "\$AI_VENV"
+fi
+echo "▶ pip install (TradingAgents runtime)..."
+"\$AI_VENV/bin/python" -m pip install --disable-pip-version-check --no-input \
+  -r "\$AI_REQUIREMENTS" 2>&1 | tail -20
+mkdir -p "$SHARED/tradingagents/results" "$SHARED/tradingagents/storage" "$SHARED/tradingagents/data-cache"
 
 # Reuse old node_modules if exists (huge time saver)
 OLD_BACKEND_NM='$CURRENT/backend/node_modules'
@@ -323,11 +336,16 @@ EOF
 # Restart systemd
 # ---------------------------------------------------------------------------
 echo ""
-echo "▶ [7/9] Restart $SERVICE (sudo via ops)..."
-ssh_ops "echo '$OPS_PASSWORD' | sudo -S systemctl restart $SERVICE" 2>&1 | tail -5
+echo "▶ [7/9] Install/restart local TradingAgents and $SERVICE (sudo via ops)..."
+ssh_ops "echo '$OPS_PASSWORD' | sudo -S install -m 0644 '$CURRENT/scripts/deployment/samples/stocks-tradingagents.service' /etc/systemd/system/stocks-tradingagents.service && echo '$OPS_PASSWORD' | sudo -S chown -R stocks_app:stocks '$SHARED/tradingagents' && echo '$OPS_PASSWORD' | sudo -S systemctl daemon-reload && echo '$OPS_PASSWORD' | sudo -S systemctl enable stocks-tradingagents.service && echo '$OPS_PASSWORD' | sudo -S systemctl restart stocks-tradingagents.service && echo '$OPS_PASSWORD' | sudo -S systemctl restart $SERVICE" 2>&1 | tail -10
 sleep 3
-ssh_ops "echo '$OPS_PASSWORD' | sudo -S systemctl is-active $SERVICE" || \
-  { echo "ERROR: service failed to start" >&2; exit 1; }
+if ! ssh_ops "echo '$OPS_PASSWORD' | sudo -S systemctl is-active stocks-tradingagents.service $SERVICE"; then
+  if [[ "${SKIP_HEALTH_GATE:-false}" == "true" ]]; then
+    echo "ERROR: service failed to start and health gate is disabled" >&2
+    exit 1
+  fi
+  echo "WARN: service is not active yet; release health gate will diagnose and roll back if needed" >&2
+fi
 
 # ---------------------------------------------------------------------------
 # Sync Sequelize schema (creates missing tables for new models)

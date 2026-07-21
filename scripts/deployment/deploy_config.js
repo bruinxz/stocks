@@ -99,7 +99,7 @@ function getDeployConfig(options = {}) {
       user: pick(process.env.DEPLOY_PG_USER, process.env.PGUSER, 'pgg_superadmins'),
       database: pick(process.env.DEPLOY_PG_DATABASE, backendEnv.DB_NAME, 'stock_backtest'),
       password: requirePostgres ? required(postgresPassword, 'DEPLOY_PG_PASSWORD') : postgresPassword,
-      docker_container: pick(process.env.DEPLOY_PG_CONTAINER, 'stock_postgres'),
+      docker_container: pick(process.env.DEPLOY_PG_CONTAINER, 'stocks-postgres'),
     },
     backend_env: {
       ...backendEnv,
@@ -147,7 +147,6 @@ function renderBackendEnv(env) {
     'NODE_ENV',
     'PORT',
     'INTERNAL_API_KEY',
-    'TRADING_AGENTS_URL',
     'FEISHU_RECOMMENDATION_BOT_WEBHOOK',
     'FEISHU_BOT_WEBHOOK',
     'OPS_ALERT_FEISHU_WEBHOOK',

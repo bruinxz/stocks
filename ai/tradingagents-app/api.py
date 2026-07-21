@@ -3,7 +3,7 @@ import uuid
 import logging
 import time
 from enum import Enum
-from typing import Optional, Dict
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Depends
 from fastapi.responses import StreamingResponse
@@ -32,7 +32,9 @@ if engine:
         engine = None
 
 # 导入核心逻辑
-from main import run_trading_analysis
+from main import build_runtime_config, run_trading_analysis
+from tradingagents.llm_clients.base_client import normalize_content
+from tradingagents.llm_clients.factory import create_llm_client
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -88,6 +90,12 @@ class CallbackPayload(BaseModel):
     elapsed_time: float = 0.0                # 任务耗时（秒）
     data: Optional[AnalysisResultData] = None
     error: Optional[str] = None
+
+
+class PromptRequest(BaseModel):
+    prompt: str
+    max_chars: Optional[int] = None
+    target: Optional[str] = None
 
 # ==========================================
 # 2. 任务状态存储 (Task Store)
@@ -330,43 +338,8 @@ async def analyze_stock_stream(request: Request, ticker: str, target_date: Optio
         import json
         yield f"data: {json.dumps({'type': 'system', 'message': f'开始对 {ticker} 在 {final_target_date} 的数据进行多智能体分析...'})}\n\n"
         
-        from tradingagents.default_config import DEFAULT_CONFIG
         from tradingagents.graph.trading_graph import TradingAgentsGraph
-        
-        config = DEFAULT_CONFIG.copy()
-        
-        # 强制切换为 akshare 以使用本地高速缓存
-        config["data_vendors"] = {
-            "core_stock_apis": "akshare",
-            "technical_indicators": "akshare",
-            "fundamental_data": "akshare",
-            "news_data": "akshare",
-        }
-        
-        query_ticker = ticker
-        
-        import os
-        for key in list(os.environ.keys()):
-            if key.startswith("OPENAI_"):
-                del os.environ[key]
-
-        try:
-            with open("config.json") as f:
-                cfg = json.load(f)
-                if "ARK_API_KEY" in cfg:
-                    os.environ["OPENAI_API_KEY"] = cfg["ARK_API_KEY"]
-                    os.environ["OPENAI_API_BASE"] = "https://ark.cn-beijing.volces.com/api/v3"
-                    os.environ["OPENAI_BASE_URL"] = "https://ark.cn-beijing.volces.com/api/v3"
-                    config["llm_provider"] = "volcengine"
-                    config["deep_think_llm"] = "ep-20260106180228-bc8dv"
-                    config["quick_think_llm"] = "ep-20260106180228-bc8dv"
-                    config["backend_url"] = "https://ark.cn-beijing.volces.com/api/v3"
-        except Exception as e:
-            import traceback
-            logger.error(f"Failed to load config.json: {e}")
-            traceback.print_exc()
-
-        # 针对 akshare，A股代码不需要加后缀，如果是6位直接使用
+        config = build_runtime_config()
         query_ticker = ticker
         
         try:
@@ -562,9 +535,138 @@ async def analyze_stock_stream(request: Request, ticker: str, target_date: Optio
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+def _complete_prompt_sync(prompt: str, max_chars: Optional[int] = None) -> str:
+    config = build_runtime_config()
+    client = create_llm_client(
+        config["llm_provider"],
+        config["quick_think_llm"],
+        config["backend_url"],
+        timeout=float(os.getenv("TRADINGAGENTS_PROMPT_TIMEOUT_SECONDS", "90")),
+    )
+    response = normalize_content(client.get_llm().invoke(prompt))
+    text = str(getattr(response, "content", "") or "").strip()
+    if max_chars and max_chars > 0:
+        text = "".join(list(text)[:max_chars])
+    if not text:
+        raise RuntimeError("LLM returned empty content")
+    return text
+
+
+async def _complete_prompt(request: PromptRequest) -> str:
+    if not request.prompt.strip():
+        raise HTTPException(status_code=422, detail="prompt is required")
+    try:
+        return await run_in_threadpool(_complete_prompt_sync, request.prompt, request.max_chars)
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.error("Prompt completion failed: %s", error)
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post("/api/market-brief")
+async def market_brief(request: PromptRequest):
+    return {"status": "OK", "data": {"view": await _complete_prompt(request)}}
+
+
+@app.post("/api/attribution-summary")
+async def attribution_summary(request: PromptRequest):
+    return {"summary": await _complete_prompt(request)}
+
+
+@app.post("/api/diary-summary")
+async def diary_summary(request: PromptRequest):
+    return {"diary": await _complete_prompt(request)}
+
+
+@app.post("/api/trading-journal")
+async def trading_journal(request: PromptRequest):
+    return {
+        "status": "OK",
+        "data": {"markdown": await _complete_prompt(request), "mood": "AI", "tags": ["AI复盘"]},
+    }
+
+
+@app.post("/api/nlp-summary")
+async def nlp_summary(payload: dict):
+    title = str(payload.get("title") or "").strip()
+    prompt = (
+        "请把下面这条 A 股公告标题压缩成不超过 120 字的中文摘要，只陈述事实，"
+        "不要给买卖建议。\n"
+        f"股票：{payload.get('stock_code') or '未知'}\n"
+        f"类型：{payload.get('announcement_type') or '未知'}\n"
+        f"标题：{title}"
+    )
+    summary = await _complete_prompt(PromptRequest(prompt=prompt, max_chars=120))
+    return {
+        "status": "OK",
+        "data": {
+            "summary": summary,
+            "sentiment": "中性",
+            "key_amounts": [],
+            "key_topics": [],
+            "entities": [],
+        },
+    }
+
+
+@app.post("/api/nlp-technical-analysis")
+async def nlp_technical_analysis(payload: dict):
+    close = float(payload.get("last_close") or 0)
+    low = float(payload.get("recent_low") or close)
+    high = float(payload.get("recent_high") or close)
+    momentum = float(payload.get("momentum_pct") or 0)
+    trend = "uptrend" if momentum > 5 else "downtrend" if momentum < -5 else "sideways"
+    prompt = (
+        "你是 A 股技术分析员。请用不超过 160 字中文解释下列指标，不承诺收益。\n"
+        f"代码：{payload.get('stock_code')}；收盘：{close}；区间低点：{low}；"
+        f"区间高点：{high}；动量：{momentum}%；RSI：{payload.get('last_rsi')}；"
+        f"量比：{payload.get('vol_ratio')}。"
+    )
+    summary = await _complete_prompt(PromptRequest(prompt=prompt, max_chars=160))
+    return {
+        "status": "OK",
+        "data": {
+            "trend": trend,
+            "support_levels": [low] if low > 0 else [],
+            "resistance_levels": [high] if high > 0 else [],
+            "buy_zone": [round(low * 0.99, 3), round(low * 1.01, 3)] if low > 0 else [],
+            "sell_zone": [round(high * 0.99, 3), round(high * 1.01, 3)] if high > 0 else [],
+            "summary": summary,
+            "confidence": 60,
+        },
+    }
+
+
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "message": "TradingAgents API is running"}
+    config = build_runtime_config()
+    provider = str(config.get("llm_provider") or "").lower()
+    credential_name = {
+        "volcengine": "ARK_API_KEY",
+        "ark": "ARK_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GOOGLE_API_KEY",
+    }.get(provider)
+    credential_ready = bool(os.getenv(credential_name or ""))
+    internal_api_ready = bool(os.getenv("INTERNAL_API_KEY"))
+    database_ready = engine is not None
+    ready = credential_ready and internal_api_ready and database_ready
+    return {
+        "status": "ok" if ready else "degraded",
+        "ready": ready,
+        "runtime": "vendored",
+        "provider": provider,
+        "model": config.get("quick_think_llm"),
+        "credential_ready": credential_ready,
+        "internal_api_ready": internal_api_ready,
+        "database_ready": database_ready,
+    }
+
+def main():
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    main()

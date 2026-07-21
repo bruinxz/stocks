@@ -6,6 +6,8 @@ import {
   GlobalOutlined,
   HistoryOutlined,
   LineChartOutlined,
+  PieChartOutlined,
+  RobotOutlined,
   StockOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
@@ -23,6 +25,8 @@ const TAB_ITEMS: { key: TabKey; label: string; hint: string; icon: React.ReactNo
   { key: 'us', label: '美股优选', hint: '全球催化', icon: <GlobalOutlined /> },
   { key: 'jpkr', label: '日韩市场', hint: '亚洲窗口', icon: <LineChartOutlined /> },
   { key: 'multi', label: '高倍潜力', hint: '长线发现', icon: <ThunderboltOutlined /> },
+  { key: 'portfolio', label: '我的持仓', hint: '账户仓位', icon: <PieChartOutlined /> },
+  { key: 'ai', label: 'AI分析', hint: '多智能体会审', icon: <RobotOutlined /> },
   { key: 'backtest', label: '回测证据', hint: '历史验证', icon: <ExperimentOutlined /> },
   { key: 'daily', label: '每日日报', hint: '研究来信', icon: <FileTextOutlined /> },
   { key: 'history', label: '报告历史', hint: '判断档案', icon: <HistoryOutlined /> },

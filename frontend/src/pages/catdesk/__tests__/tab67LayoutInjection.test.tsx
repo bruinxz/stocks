@@ -28,6 +28,8 @@ jest.mock('../tabs/AShareMorningBrief', () => ({ __esModule: true, default: () =
 jest.mock('../tabs/USStockPicks', () => ({ __esModule: true, default: () => null }));
 jest.mock('../tabs/JPKRMarket', () => ({ __esModule: true, default: () => null }));
 jest.mock('../tabs/HighMultipotential', () => ({ __esModule: true, default: () => null }));
+jest.mock('../tabs/PortfolioOverview', () => ({ __esModule: true, default: () => null }));
+jest.mock('../tabs/AIAnalysisDesk', () => ({ __esModule: true, default: () => null }));
 jest.mock('../tabs/BacktestEvidence', () => ({ __esModule: true, default: () => null }));
 
 import CatDeskLayout from '../CatDeskLayout';
