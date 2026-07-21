@@ -136,11 +136,12 @@ if [[ "$TARGET" == "main" && "${SKIP_DB_BACKUP:-false}" != "true" ]]; then
     BACKUP_DIR=/var/backups/stocks
     OUT=\$BACKUP_DIR/predeploy-\$(date +%Y%m%d%H%M%S).sql.gz
     echo \"backing up to \$OUT...\"
-    if [ -x $CURRENT/scripts/backup-db.sh ]; then
+    if [ -x $CURRENT/scripts/backup-db.sh ] && command -v pg_dump >/dev/null 2>&1; then
       bash $CURRENT/scripts/backup-db.sh
     else
-      echo \"  (no backup-db.sh in current release; doing inline pg_dump)\"
+      echo \"  (host pg_dump unavailable; doing inline container pg_dump)\"
       docker exec stocks-postgres pg_dump -U postgres stock_backtest | gzip > \$OUT
+      test -s \$OUT
     fi
     ls -lh \$BACKUP_DIR | tail -3
   '" || { echo "ERROR: DB backup failed; aborting deploy" >&2; exit 1; }
