@@ -1,0 +1,23 @@
+frontend/src/pages/catdesk/tabs/AShareMorningBrief.tsx
+  s_8c62a586913a66::t_baf7e97ead8eb6 129
+frontend/src/pages/catdesk/tabs/__tests__/recommendationContainers.test.tsx
+  s_8c62a586913a66::t_e071f7e9a508c5 123-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e9bd262cabb5c70f98e5eb6fe8ee821bd6860388",
+  "prompts": {},
+  "sessions": {
+    "s_8c62a586913a66": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f87be-85ef-7ee0-ab18-bbc4c5d47c02",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
