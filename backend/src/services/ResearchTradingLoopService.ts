@@ -241,6 +241,43 @@ export function mergeResearchCandidates(bundle: ResearchBundle): ResearchLoopCan
   });
 }
 
+/**
+ * 两个研究源的原始分数并非同一标尺：早报通常集中在 65–75，高倍潜力的长期
+ * 因子分常在 55–70。若直接全局截 Top 6，高倍潜力会长期只展示、不参与交易。
+ * 双源候选仍绝对优先；其余席位保证每个有合格候选的来源至少占 2 席，再按
+ * 原联合排序补满。双源候选同时计入两个来源的覆盖数。
+ */
+export function selectResearchLoopTargets(
+  bundle: ResearchBundle,
+  max_positions = RESEARCH_LOOP_MAX_POSITIONS
+): ResearchLoopCandidate[] {
+  const limit = Math.max(1, Math.floor(finite(max_positions, RESEARCH_LOOP_MAX_POSITIONS)));
+  const candidates = mergeResearchCandidates(bundle);
+  const selected = new Set<string>();
+  const add = (candidate: ResearchLoopCandidate | undefined) => {
+    if (candidate && selected.size < limit) selected.add(candidate.symbol);
+  };
+
+  for (const candidate of candidates.filter(row => row.sources.length > 1)) add(candidate);
+
+  const minimumPerSource = Math.min(2, Math.floor(limit / 2));
+  for (const source of ['morning_brief', 'multibagger'] as const) {
+    const sourceCandidates = candidates.filter(candidate =>
+      candidate.sources.some(item => item.source === source)
+    );
+    let covered = sourceCandidates.filter(candidate => selected.has(candidate.symbol)).length;
+    for (const candidate of sourceCandidates) {
+      if (covered >= minimumPerSource || selected.size >= limit) break;
+      if (selected.has(candidate.symbol)) continue;
+      add(candidate);
+      covered += 1;
+    }
+  }
+
+  for (const candidate of candidates) add(candidate);
+  return candidates.filter(candidate => selected.has(candidate.symbol));
+}
+
 export function buildResearchLoopDecisions(input: {
   bundle: ResearchBundle;
   positions: ResearchLoopPositionRow[];
@@ -251,8 +288,9 @@ export function buildResearchLoopDecisions(input: {
   const maxPositions = input.max_positions || RESEARCH_LOOP_MAX_POSITIONS;
   const hardStopPct = input.hard_stop_pct || RESEARCH_LOOP_HARD_STOP_PCT;
   const candidates = mergeResearchCandidates(input.bundle);
+  const targetCandidates = selectResearchLoopTargets(input.bundle, maxPositions);
   const bySymbol = new Map(candidates.map(candidate => [candidate.symbol, candidate]));
-  const target = new Set(candidates.slice(0, maxPositions).map(candidate => candidate.symbol));
+  const target = new Set(targetCandidates.map(candidate => candidate.symbol));
   const positions = new Map(
     input.positions.map(position => [normalizeSymbol(position.symbol), position])
   );
@@ -311,7 +349,7 @@ export function buildResearchLoopDecisions(input: {
     }
   }
 
-  for (const candidate of candidates.slice(0, maxPositions)) {
+  for (const candidate of targetCandidates) {
     if (positions.has(candidate.symbol) || !target.has(candidate.symbol)) continue;
     decisions.push({
       symbol: candidate.symbol,
@@ -1007,8 +1045,7 @@ export class ResearchTradingLoopService {
         }
         await this.repository.markToMarket(portfolio.id, prices, tradingDay);
         const summary = {
-          target_count: mergeResearchCandidates(bundle).slice(0, RESEARCH_LOOP_MAX_POSITIONS)
-            .length,
+          target_count: selectResearchLoopTargets(bundle, RESEARCH_LOOP_MAX_POSITIONS).length,
           buy_count: outcomes.filter(row => row.action === 'BUY' && row.status === 'executed')
             .length,
           hold_count: outcomes.filter(row => row.action === 'HOLD').length,
@@ -1080,8 +1117,7 @@ export class ResearchTradingLoopService {
           candidate_count: bundle.multibagger.candidates.length,
           fresh: bundle.multibagger.research_day === bundle.expected_research_day,
         },
-        merged_target_count: mergeResearchCandidates(bundle).slice(0, RESEARCH_LOOP_MAX_POSITIONS)
-          .length,
+        merged_target_count: selectResearchLoopTargets(bundle, RESEARCH_LOOP_MAX_POSITIONS).length,
       },
       latest_run: latestRun,
     };

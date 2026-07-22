@@ -7,6 +7,7 @@ import {
   canSellPositionOnTradingDay,
   hasResearchLoopPositionCapacity,
   mergeResearchCandidates,
+  selectResearchLoopTargets,
   type ResearchBundle,
   type ResearchLoopPortfolioRow,
   type ResearchTradingLoopRepository,
@@ -135,6 +136,29 @@ function testBuyHoldSellAndSixPositionCap() {
   const heldTargetCount = decisions.filter(row => row.action === 'HOLD').length;
   const boughtTargetCount = decisions.filter(row => row.action === 'BUY').length;
   assert.equal(heldTargetCount + boughtTargetCount, 5, '硬止损卖出后最多保留六只且不得保留第七名');
+}
+
+function testSourceDiversityWithDifferentScoreScales() {
+  const input = bundle();
+  input.morning.candidates = Array.from({ length: 8 }, (_, index) =>
+    source(`m${index + 1}`, `6001${String(index + 1).padStart(2, '0')}.SH`, 72 - index * 0.7)
+  );
+  input.multibagger.candidates = Array.from({ length: 8 }, (_, index) =>
+    source(`b${index + 1}`, `3001${String(index + 1).padStart(2, '0')}.SZ`, 66 - index * 0.7)
+  );
+  const targets = selectResearchLoopTargets(input);
+  assert.equal(targets.length, 6);
+  assert.equal(
+    targets.filter(candidate => candidate.sources.some(item => item.source === 'multibagger'))
+      .length,
+    2,
+    '评分标尺较低时，高倍潜力仍必须实际进入六仓目标池'
+  );
+  assert.equal(
+    targets.filter(candidate => candidate.sources.some(item => item.source === 'morning_brief'))
+      .length,
+    4
+  );
 }
 
 function testTPlusOne() {
@@ -327,6 +351,7 @@ function testPipelineContracts() {
 async function main() {
   testMergeAndPriority();
   testBuyHoldSellAndSixPositionCap();
+  testSourceDiversityWithDifferentScoreScales();
   testTPlusOne();
   testHardPositionCapacity();
   await testFreshnessAndIdempotency();
