@@ -173,7 +173,22 @@ UPDATE scheduled_tasks
    'PAPER_TRADING_INDUSTRY_CONCENTRATION_CHECK',
    'PAPER_TRADING_DRAWDOWN_BREAKER_CHECK',
    'PAPER_TRADING_PER_STOCK_STOP_LOSS_CHECK',
-   'PAPER_TRADING_DAILY_PLAN'
+   'PAPER_TRADING_DAILY_PLAN',
+   'PAPER_TRADING_ATTRIBUTION_REPORT',
+   'RECOMMENDATION_TRADE_OUTCOME_REFRESH'
  );
+
+-- 历史 stock 日报固定引用已被清空的 portfolio_id，并会与新的全用户通用日报
+-- 重复调度。只退役带旧组合作用域/旧名称的行，保留新版“飞书当日交易日报”。
+UPDATE scheduled_tasks
+   SET is_active = FALSE,
+       last_run_status = 'SKIPPED',
+       updated_at = NOW()
+ WHERE type = 'PAPER_TRADING_DAILY_DIGEST'
+   AND (
+     name <> '飞书当日交易日报'
+     OR parameters ? 'portfolio_id'
+     OR parameters ? 'portfolio_name'
+   );
 
 COMMIT;

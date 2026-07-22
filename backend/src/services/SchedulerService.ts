@@ -53,7 +53,7 @@ import {
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
 } from '../portfolio/internal/PaperTradingDashboardService';
 import moment from 'moment-timezone';
-import { Op } from 'sequelize';
+import { literal, Op } from 'sequelize';
 // US-004 [OPS-004]: scheduler 任务执行计数 / 耗时 metric — 由 _executeTaskLogic
 // 在 success / failed / skipped 三个出口收尾时调用. 不感知 task.id / task.name (避免
 // label cardinality 爆炸); 只按 CRON_REGISTRY 的 task_type 维度统计.
@@ -7367,8 +7367,26 @@ class SchedulerService {
               'PAPER_TRADING_DRAWDOWN_BREAKER_CHECK',
               'PAPER_TRADING_PER_STOCK_STOP_LOSS_CHECK',
               'PAPER_TRADING_DAILY_PLAN',
+              // 旧归因任务在指定历史自治盘不存在时会 ensurePortfolio，可能把迁移
+              // 清掉的旧盘重新创建；旧 outcome 刷新也只认识历史 signal metadata。
+              'PAPER_TRADING_ATTRIBUTION_REPORT',
+              'RECOMMENDATION_TRADE_OUTCOME_REFRESH',
             ],
           },
+        },
+      }
+    );
+
+    await ScheduledTask.update(
+      { is_active: false, last_run_status: 'SKIPPED' },
+      {
+        where: {
+          type: 'PAPER_TRADING_DAILY_DIGEST',
+          [Op.or]: [
+            { name: { [Op.ne]: '飞书当日交易日报' } },
+            literal(`"parameters" ? 'portfolio_id'`),
+            literal(`"parameters" ? 'portfolio_name'`),
+          ],
         },
       }
     );
