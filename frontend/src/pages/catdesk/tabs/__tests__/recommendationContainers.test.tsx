@@ -120,6 +120,9 @@ describe.each(containers)('$name real container recommendation states', testCase
     expect(container.querySelector('[data-testid="empty-state"]')).toBeNull();
     expect(container.querySelector('[data-testid="unavailable-state"]')).toBeNull();
     expect(container.querySelector('[data-testid="error-state"]')).toBeNull();
+    const page = container.querySelector('[data-testid="candidate-table"]')?.parentElement;
+    expect(page?.style.minHeight).toBe('100%');
+    expect(page?.style.height).toBe('');
     expect(fetchMock).toHaveBeenCalledWith(
       `${API_DOMAIN_URL}${testCase.url}`,
       expect.objectContaining({ signal: expect.any(AbortSignal), credentials: 'include' })

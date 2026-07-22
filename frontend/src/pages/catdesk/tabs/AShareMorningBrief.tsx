@@ -126,7 +126,7 @@ export default function AShareMorningBrief() {
     );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: '100%' }}>
       <MorningKpiSlots
         total={filtered.length}
         highConviction={filtered.filter(r => (r.conviction?.final ?? 0) >= 75).length}
