@@ -23,6 +23,7 @@
  *     - 单 user upsertCheckup 失败 try/catch 隔离不阻塞其他 user；
  *     - countUnresolvedAlerts 直接 surface 到 unresolved_alerts_count；
  *     - 多用户：默认 scope = 全用户；user_id 指定单 user；
+ *     - 体检只生成并持久化快照，不进入外部通知链；
  *   - service.getTodayCheckup() 优先返回今日行 / fallback 最新行 / null；
  *   - getConfig / updateConfig 默认值 / normalize 兼容性。
  */
@@ -506,7 +507,7 @@ async function testBuildCheckupMessage() {
   // 0 闭环时不显示 root_cause 行（避免 0% 看起来像 bug）
   assert('0 closed 时不显示 root_cause 行', !baselineHealth.includes('根因覆盖'));
 
-  // include_breakdown=false 时 system_health 即使传也不显示（push 短模式）
+  // include_breakdown=false 时 system_health 即使传也不显示（紧凑视图）
   const shortHealth = buildCheckupMessage({
     date,
     positions_count: 0,
@@ -636,7 +637,7 @@ async function testEvaluateHappyPath() {
   assert('upsert.message contains industry', state.upserts[0].message.includes('行业最大占比'));
 }
 
-async function testNotificationOutboxClosedLoop() {
+async function testSnapshotPersistenceIsNotificationFree() {
   const state = emptyState({
     userIds: [42],
     portfolioHeaders: { 42: { id: 1042, total_value: 100000 } },
@@ -644,41 +645,23 @@ async function testNotificationOutboxClosedLoop() {
     snapshotsByPortfolio: {},
     alertCountByUser: { 42: 0 },
   });
-  const queued: any[] = [];
-  const notifications = {
-    async enqueueAndDeliver(input: any) {
-      queued.push(input);
-      return { success: true, status: 'sent', outbox_id: 88, attempts: 1 };
-    },
-  };
-  const svc = new MorningRiskCheckupService(makeFakeSource(state), notifications as any);
+  const svc = new MorningRiskCheckupService(makeFakeSource(state));
   const result = await svc.runMorningCheckup({
     asOfDate: new Date('2026-06-08T00:30:00.000Z'),
   });
-  assertEqual('morning checkup enqueues one notification', queued.length, 1);
-  assertEqual(
-    'morning checkup exact-date idempotency',
-    queued[0].idempotency_key,
-    'morning-risk-checkup:42:1042:2026-06-08'
-  );
-  assertEqual('morning checkup routes to user audience', queued[0].audience, 'user');
-  assertEqual('morning checkup carries recipient user', queued[0].recipient_user_id, 42);
-  assertEqual(
-    'morning checkup result exposes outbox status',
-    result.per_user[0].notification_status,
-    'sent'
-  );
-  assertEqual(
-    'morning checkup result exposes outbox id',
-    result.per_user[0].notification_outbox_id,
-    88
+  assertEqual('morning checkup persists one snapshot', state.upserts.length, 1);
+  assertEqual('morning checkup result is persisted', result.per_user[0].persisted, true);
+  assert(
+    'morning checkup result has no delivery state',
+    !('notification_status' in result.per_user[0]) &&
+      !('notification_outbox_id' in result.per_user[0])
   );
 
   await svc.runMorningCheckup({
     asOfDate: new Date('2026-06-09T00:30:00.000Z'),
     dry_run: true,
   });
-  assertEqual('morning checkup dry_run does not enqueue', queued.length, 1);
+  assertEqual('morning checkup dry_run does not persist', state.upserts.length, 1);
 }
 
 async function testEvaluateEmptyPortfolio() {
@@ -850,13 +833,7 @@ async function testEvaluateOneUserMultiplePortfolios() {
       2042: [{ date: '2026-06-01', total_value: 200000 }],
     },
   });
-  const queued: any[] = [];
-  const svc = new MorningRiskCheckupService(makeFakeSource(state), {
-    async enqueueAndDeliver(input: any) {
-      queued.push(input);
-      return { status: 'sent', outbox_id: queued.length };
-    },
-  } as any);
+  const svc = new MorningRiskCheckupService(makeFakeSource(state));
   const result = await svc.runMorningCheckup({
     asOfDate: new Date('2026-06-08T00:30:00.000Z'),
   });
@@ -867,11 +844,8 @@ async function testEvaluateOneUserMultiplePortfolios() {
     result.per_user.map(row => row.current_total_value),
     [100000, 200000]
   );
-  assertEqual(
-    'multi-account notification keys contain portfolio id',
-    queued.map(row => row.idempotency_key),
-    ['morning-risk-checkup:42:1042:2026-06-08', 'morning-risk-checkup:42:2042:2026-06-08']
-  );
+  assert('first snapshot identifies its portfolio', result.per_user[0].message.includes('主盘'));
+  assert('second snapshot identifies its portfolio', result.per_user[1].message.includes('空盘'));
 }
 
 async function testEvaluateSingleUserScope() {
@@ -997,7 +971,7 @@ async function main() {
   await testBuildTopIndustries();
 
   await testEvaluateHappyPath();
-  await testNotificationOutboxClosedLoop();
+  await testSnapshotPersistenceIsNotificationFree();
   await testEvaluateEmptyPortfolio();
   await testEvaluateNewAccountWithinWeek();
   await testEvaluateDryRun();

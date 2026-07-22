@@ -174,10 +174,11 @@ function main() {
 
   const morningCheckup = read('backend/src/portfolio/risk/MorningRiskCheckupService.ts');
   assert(
-    'morning risk checkup is connected to unified outbox',
-    morningCheckup.includes("kind: 'morning_risk_checkup'") &&
-      morningCheckup.includes('notifications.enqueueAndDeliver') &&
-      morningCheckup.includes("ledger_scope: 'portfolio'")
+    'morning risk checkup remains a non-interruptive snapshot',
+    morningCheckup.includes('this.source.upsertCheckup') &&
+      !morningCheckup.includes('enqueueAndDeliver') &&
+      !morningCheckup.includes("kind: 'morning_risk_checkup'") &&
+      !morningCheckup.includes("msg_type: 'text'")
   );
 
   const paperAutomation = read('backend/src/portfolio/internal/PaperTradingAutomationService.ts');
@@ -214,21 +215,29 @@ function main() {
     assert(`obsolete source deleted: ${removed}`, !existsSync(join(root, removed)));
   }
 
-  const directFeishuSources = [
-    'backend/src/live-trading/services/LiveAuditAlertService.ts',
-    'backend/src/services/CriticalAnnouncementPushService.ts',
-    'backend/src/services/attribution/DailyAttributionFeishuPushService.ts',
-    'backend/src/services/RiskAlertService.ts',
-    'backend/src/scripts/audit-task-parameters-dry-run.ts',
-    'backend/src/services/FeishuBotWebhookService.ts',
-    'backend/src/portfolio/risk/MorningRiskCheckupService.ts',
+  const notificationAwareSources = [
+    { file: 'backend/src/live-trading/services/LiveAuditAlertService.ts', uses_outbox: true },
+    { file: 'backend/src/services/CriticalAnnouncementPushService.ts', uses_outbox: true },
+    {
+      file: 'backend/src/services/attribution/DailyAttributionFeishuPushService.ts',
+      uses_outbox: true,
+    },
+    { file: 'backend/src/services/RiskAlertService.ts', uses_outbox: true },
+    { file: 'backend/src/scripts/audit-task-parameters-dry-run.ts', uses_outbox: true },
+    { file: 'backend/src/services/FeishuBotWebhookService.ts', uses_outbox: true },
+    {
+      file: 'backend/src/portfolio/risk/MorningRiskCheckupService.ts',
+      uses_outbox: false,
+    },
   ];
-  for (const file of directFeishuSources) {
+  for (const { file, uses_outbox } of notificationAwareSources) {
     const source = read(file);
     assert(`${file} has no direct axios webhook send`, !/axios\.post\s*\(/.test(source));
+    const referencesOutbox =
+      source.includes('feishuNotificationService') || source.includes('FeishuNotificationService');
     assert(
-      `${file} uses unified outbox`,
-      source.includes('feishuNotificationService') || source.includes('FeishuNotificationService')
+      `${file} ${uses_outbox ? 'uses' : 'does not use'} unified outbox`,
+      referencesOutbox === uses_outbox
     );
   }
 

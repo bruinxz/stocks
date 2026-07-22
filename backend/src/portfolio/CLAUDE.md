@@ -663,11 +663,12 @@ all produce `RiskAlert` rows when "something bad happened"). MorningRiskCheckup
 runs *every morning 8:30* (cron) and **folds the current portfolio panorama
 into a single readable markdown line** for the user to consume *before the
 open*. It is **not a new alert** — it is a daily aggregation of *existing*
-risk alerts + positional exposure + drawdown that ships to feishu / email
-via the durable Feishu notification outbox and the configured email channel.
+risk alerts + positional exposure + drawdown that remains in the product for
+on-demand inspection. It does **not** enter the external notification outbox;
+trigger-style `RiskAlert` events own the interactive-card notification path.
 
-Six dimensions per AC, persisted to `morning_risk_checkups` (`(user_id, date)`
-UNIQUE — UPSERT semantics):
+Six dimensions per AC, persisted to `morning_risk_checkups`
+(`(user_id, portfolio_id, date)` UNIQUE — UPSERT semantics):
 
   1. **`positions_count`** — open positions (quantity > 0).
   2. **`max_single_pct`** + `max_single_symbol` — biggest single-stock
@@ -717,17 +718,14 @@ weekly recap, US-091 monthly review, ...) should follow:
   `MorningRiskCheckupResult` still returned with `error: <msg>` + `persisted:
   false`. Same fail-OPEN philosophy as US-052 writeAlert: never let a DB
   outage hide the calculation from caller (UI dashboard / preview consumer).
-- **UPSERT semantics on `(user_id, date)`**: same user same day always
-  overwrites (admin re-runs the morning task / ops re-scans). `dispatch_status`
-  is NOT touched on update — US-080 owns its lifecycle, so a sent-and-then-
-  re-computed row stays `'sent'` (the user already saw the morning report;
-  the re-compute is silent).
-- **`dispatch_status` three-state**: `'pending'` (calculated, awaiting US-080
-  push) / `'sent'` (US-080 successfully pushed) / `'failed'` (US-080 tried but
-  failed). MorningRiskCheckupService **never** pushes — it only writes
-  `'pending'` on insert. **Decoupling compute from delivery** so US-080's
-  channel logic (feishu rate limits / email retries / wechat) is independent
-  of the calc pipeline.
+- **UPSERT semantics on `(user_id, portfolio_id, date)`**: the same portfolio
+  on the same day always overwrites (admin re-runs the morning task / ops
+  re-scans), while separate ledgers remain independent.
+- **Snapshot is not a notification**: MorningRiskCheckupService never writes
+  the external outbox and exposes no delivery status. Daily state summaries
+  live in the dashboard; only newly triggered, actionable `RiskAlert` events
+  may interrupt the user through an interactive card. This prevents empty or
+  healthy portfolios from producing one message per ledger every morning.
 - **`dry_run=true` returns full result without persisting** — supports UI
   preview pattern (same as US-048 / US-052 / US-053). `persisted=false` in
   dry_run; `result.checked_users` still increments (caller wants to know how
@@ -738,18 +736,17 @@ weekly recap, US-091 monthly review, ...) should follow:
   call (positions only, no parallel ops).
 - **Top-N breakdown in JSONB**: `breakdown.top_positions` (top 3 by mv pct) +
   `breakdown.top_industries` (top 3 by aggregated pct) materialize for UI
-  charts without re-fetching all positions. The render budget for the morning
-  push is ~10 lines of text — top 3 each fits comfortably.
+  charts without re-fetching all positions. The compact dashboard rendering
+  budget is ~10 lines of text — top 3 each fits comfortably.
 - **HTTP route order rule** (US-015 lesson reinforced): `GET /morning-checkup/today`
   must be registered **before** `GET /morning-checkup` (the bare config GET) —
   Express matches top-down, so the more-specific path goes first. The base
   config route would NOT have caught `/today` (no param), but adding a
   `:date` route later would silently shadow `/today` if not careful. The
   jsdoc on the route file says so explicitly.
-- **Scheduler integration**: `PAPER_TRADING_MORNING_CHECKUP` runs the checkup,
-  persists the snapshot, and enqueues the user/date-idempotent Feishu summary.
-  Delivery, retry, suppression, and dead-letter recovery are handled by the
-  shared notification outbox instead of the risk job itself.
+- **Scheduler integration**: `PAPER_TRADING_MORNING_CHECKUP` runs the checkup
+  and persists one snapshot per portfolio. It deliberately has no notification
+  side effect; actionable guard events use the separate `RiskAlert` pipeline.
 - **HTTP surfaces**:
   - `GET /api/risk/morning-checkup/today` — UI fetches today's row (or latest
     fallback) for the "今日体检" dashboard widget.
