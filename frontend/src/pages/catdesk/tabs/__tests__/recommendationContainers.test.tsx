@@ -30,6 +30,12 @@ jest.mock('../morning/MorningBriefTable', () => ({
     <div data-testid="candidate-table">{data.map(item => item.symbol).join(',')}</div>
   ),
 }));
+jest.mock('../../shared/useResearchTradingLoop', () => ({
+  useResearchTradingLoop: () => ({ data: null }),
+}));
+jest.mock('../../shared/useStockNameHydration', () => ({
+  useStockNameHydration: (rows: unknown[]) => rows,
+}));
 
 const originalFetch = globalThis.fetch;
 

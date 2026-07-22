@@ -352,6 +352,16 @@ APPLY_GLOBAL_TECH_DAILY_QUOTE_MIGRATION=1 NODE_ENV=production \
   node dist/scripts/apply-global-tech-daily-quotes-migration.js
 EOF
 
+echo "▶ [6/9] Apply and verify the research trading-loop migration..."
+ssh_deploy "bash -s" <<EOF
+set -euo pipefail
+CURRENT='$CURRENT'
+cd "\$CURRENT/backend"
+test -f .env
+APPLY_RESEARCH_TRADING_LOOP_MIGRATION=1 NODE_ENV=production \
+  node dist/scripts/apply-research-trading-loop-migration.js
+EOF
+
 # ---------------------------------------------------------------------------
 # Restart systemd
 # ---------------------------------------------------------------------------

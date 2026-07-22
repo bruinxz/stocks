@@ -42,6 +42,7 @@ interface MultibaggerLedgerRow {
   conclusion: string;
   rating: string | null;
   strategy_version: string;
+  research_day: string | null;
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -384,9 +385,11 @@ export class PortfolioLedgerService {
     const portfolioAlerts = riskAlertRows.filter(
       row => normalizedPortfolioId(row.metadata) === portfolio_id
     );
-    const portfolioNotifications = notificationRows.filter(
-      row => normalizedPortfolioId(row.metadata) === portfolio_id
-    );
+    const portfolioNotifications = notificationRows.filter(row => {
+      if (normalizedPortfolioId(row.metadata) !== portfolio_id) return false;
+      const scenario = String(objectValue(row.metadata).scenario || '');
+      return !row.kind.includes('morning') && !scenario.includes('morning_checkup');
+    });
     const accountCorrectionNotifications = notificationRows
       .filter(
         row =>
@@ -449,9 +452,7 @@ export class PortfolioLedgerService {
     const multibaggerHead = [...multibaggerRows].sort(
       (a, b) => new Date(b.as_of_utc).getTime() - new Date(a.as_of_utc).getTime()
     )[0];
-    const multibaggerDay = multibaggerHead
-      ? getShanghaiDate(new Date(multibaggerHead.as_of_utc))
-      : null;
+    const multibaggerDay = multibaggerHead?.research_day || null;
     const multibaggerFreshness = classifyResearchFreshness(multibaggerDay, expectedResearchDay);
 
     let position_value = 0;
@@ -519,7 +520,10 @@ export class PortfolioLedgerService {
         timeline.push({
           id: `signal:${signal.id}`,
           type: 'signal',
-          title: `推荐信号 · ${signal.source_type}`,
+          title:
+            signal.source_type === 'research_loop'
+              ? `联合决策 · ${String(signal.action || signal.normalized_decision).toUpperCase()}`
+              : `推荐信号 · ${signal.source_type}`,
           detail: signal.rationale || signal.decision || null,
           occurred_at: iso(signal.created_at) || `${signal.signal_date}T00:00:00.000Z`,
           status: signal.normalized_decision,
@@ -665,10 +669,7 @@ export class PortfolioLedgerService {
               snapshot_id: multibaggerItem.snapshot_id,
               as_of: iso(multibaggerItem.as_of_utc),
               available_at: iso(multibaggerItem.available_at_utc),
-              ...classifyResearchFreshness(
-                getShanghaiDate(new Date(multibaggerItem.as_of_utc)),
-                expectedResearchDay
-              ),
+              ...classifyResearchFreshness(multibaggerItem.research_day, expectedResearchDay),
               stage: multibaggerItem.stage,
               conclusion: multibaggerItem.conclusion,
               rating: multibaggerItem.rating,
@@ -708,12 +709,6 @@ export class PortfolioLedgerService {
         row => row.kind.includes('correction') || Boolean(objectValue(row.metadata).correction_id)
       )
       .sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
-    const morningNotifications = portfolioNotifications.filter(
-      row =>
-        row.kind.includes('morning') ||
-        String(objectValue(row.metadata).scenario || '').includes('morning_checkup')
-    );
-
     return {
       portfolio: {
         id: portfolio.id,
@@ -762,6 +757,7 @@ export class PortfolioLedgerService {
         ? {
             as_of: iso(multibaggerHead.as_of_utc),
             available_at: iso(multibaggerHead.available_at_utc),
+            research_day: multibaggerHead.research_day,
             market_scope: 'cn_a',
             strategy_version: multibaggerHead.strategy_version,
             ...multibaggerFreshness,
@@ -772,9 +768,6 @@ export class PortfolioLedgerService {
       portfolio_notifications: portfolioNotifications.map(mapNotification),
       account_correction_notifications: accountCorrectionNotifications.map(mapNotification),
       portfolio_corrections: portfolioCorrections.map(mapCorrection),
-      latest_morning_notification: morningNotifications.length
-        ? mapNotification(morningNotifications[0])
-        : null,
       latest_correction_notification: correctionNotifications.length
         ? mapNotification(correctionNotifications[0])
         : null,
@@ -785,20 +778,34 @@ export class PortfolioLedgerService {
   private async loadLatestMultibaggerRows(now: Date): Promise<MultibaggerLedgerRow[]> {
     try {
       return await sequelize.query<MultibaggerLedgerRow>(
-        `SELECT DISTINCT ON (market_scope, exchange, ticker)
-                multibagger_candidate_snapshot_id AS snapshot_id,
-                ticker,
-                as_of_utc,
-                available_at_utc,
-                stage,
-                conclusion,
-                rating,
-                strategy_version
-           FROM multibagger_candidate_snapshot
-          WHERE market_scope = 'cn_a'
-            AND available_at_utc <= :now
-          ORDER BY market_scope, exchange, ticker,
-                   as_of_utc DESC, available_at_utc DESC, created_at DESC, strategy_version DESC`,
+        `WITH latest_batch AS (
+           SELECT MAX(as_of_utc) AS as_of_utc
+             FROM multibagger_candidate_snapshot
+            WHERE market_scope = 'cn_a' AND available_at_utc <= :now
+         )
+         SELECT candidate.multibagger_candidate_snapshot_id AS snapshot_id,
+                candidate.ticker,
+                candidate.as_of_utc,
+                candidate.available_at_utc,
+                candidate.stage,
+                candidate.conclusion,
+                candidate.rating,
+                candidate.strategy_version,
+                regexp_replace(source.source_version, '^live-', '') AS research_day
+           FROM multibagger_candidate_snapshot candidate
+           JOIN latest_batch batch ON batch.as_of_utc = candidate.as_of_utc
+           LEFT JOIN LATERAL (
+             SELECT fact.source_version
+               FROM multibagger_universe fact
+              WHERE fact.market_scope = candidate.market_scope
+                AND fact.exchange = candidate.exchange
+                AND fact.ticker = candidate.ticker
+                AND candidate.source_fact_hashes ? fact.fact_hash
+              ORDER BY fact.available_at_utc DESC, fact.created_at DESC
+              LIMIT 1
+           ) source ON TRUE
+          WHERE candidate.market_scope = 'cn_a'
+          ORDER BY candidate.ticker`,
         { replacements: { now }, type: QueryTypes.SELECT }
       );
     } catch {

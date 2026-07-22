@@ -16,6 +16,8 @@ import { MultibaggerTable } from './MultibaggerTable';
 import { buildMultibaggerSections } from './MultibaggerSidebarSections';
 import { DataListToolbar } from '../../shared/DataListToolbar';
 import { useStockNameHydration } from '../../shared/useStockNameHydration';
+import { useResearchTradingLoop } from '../../shared/useResearchTradingLoop';
+import { ResearchLoopStatusStrip } from '../../shared/ResearchLoopStatusStrip';
 
 const STAGE_OPTIONS: Array<{ value: MultibaggerStage; label: string; ariaLabel: string }> = [
   { value: 'seed', label: '种子', ariaLabel: '种子阶段' },
@@ -59,6 +61,7 @@ export default function HighMultipotential() {
 
   const selectedMarket = market;
   const { data, loading, error } = useMultibaggerData(stages, conclusions, selectedMarket);
+  const { data: loopDashboard } = useResearchTradingLoop();
   const { data: detailData } = useMultibaggerDetail(selectedSymbol);
   const namedRows = useStockNameHydration(
     data?.rows ?? [],
@@ -120,6 +123,7 @@ export default function HighMultipotential() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
+      <ResearchLoopStatusStrip dashboard={loopDashboard} focus="multibagger" />
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <FilterChip<MultibaggerStage>
           options={STAGE_OPTIONS}
@@ -159,6 +163,13 @@ export default function HighMultipotential() {
           rows={visibleRows}
           loading={loading}
           error={error}
+          loopDecisions={
+            loopDashboard?.research.morning.fresh &&
+            loopDashboard.research.multibagger.fresh &&
+            loopDashboard.latest_run?.is_current
+              ? loopDashboard.latest_run.decisions
+              : []
+          }
           onRowClick={handleRowClick}
         />
       )}

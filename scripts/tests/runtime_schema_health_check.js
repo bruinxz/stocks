@@ -31,6 +31,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'paper_trading_positions',
   'paper_trading_trades',
   'paper_trading_snapshots',
+  'research_trading_loop_runs',
+  'research_trading_loop_decisions',
   'risk_alerts',
   'trading_journals',
   'portfolio_simulations',
@@ -67,6 +69,8 @@ const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'realtime_quotes',
   'paper_trading_portfolios',
   'paper_trading_trades',
+  'research_trading_loop_runs',
+  'research_trading_loop_decisions',
   'task_parameter_audit_logs',
 ];
 

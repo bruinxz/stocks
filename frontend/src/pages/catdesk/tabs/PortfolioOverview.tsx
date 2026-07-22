@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Select, Tag } from 'antd';
+import { Button, Tag } from 'antd';
 import {
   BellOutlined,
   CheckCircleOutlined,
@@ -21,6 +21,8 @@ import {
 import { EmptyState } from '../shared/EmptyState';
 import { ErrorState } from '../shared/ErrorState';
 import { LoadingState } from '../shared/LoadingState';
+import { useResearchTradingLoop } from '../shared/useResearchTradingLoop';
+import { ResearchLoopStatusStrip } from '../shared/ResearchLoopStatusStrip';
 
 const money = (value: number) =>
   Number(value || 0).toLocaleString('zh-CN', {
@@ -42,6 +44,7 @@ const dateTime = (value: string | null | undefined) => {
 };
 
 const SOURCE_LABEL: Record<string, string> = {
+  research_loop: '早报 + 高倍联合决策',
   recommendation_snapshot: 'A 股早报规范推荐',
   tradingagents: 'TradingAgents 会审',
   quant_recommendation: '历史量化推荐',
@@ -50,6 +53,7 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 const ORIGIN_LABEL: Record<string, string> = {
+  research_loop: '早报 + 高倍联合成交',
   manual: '手动建仓',
   rebalance: '组合再平衡',
   auto_buy_from_signals: '自动跟单',
@@ -97,7 +101,7 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
     <div className="catdesk-ledger-detail">
       <div className="catdesk-ledger-detail__grid">
         <article>
-          <span>成交与推荐</span>
+          <span>研究决策与成交</span>
           {row.entry_trades.length ? (
             row.entry_trades.map(trade => (
               <p key={trade.id}>
@@ -154,7 +158,7 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
         </article>
 
         <article>
-          <span>通知与更正</span>
+          <span>风险与审计</span>
           <p>
             {row.alerts.length} 条相关告警，{row.alerts.filter(item => !item.is_read).length} 条未读
           </p>
@@ -174,9 +178,7 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
           row.timeline.map(item => (
             <li
               key={item.id}
-              className={
-                item.invalidated ? 'is-invalidated' : item.corrected ? 'is-corrected' : ''
-              }
+              className={item.invalidated ? 'is-invalidated' : item.corrected ? 'is-corrected' : ''}
             >
               <i>{TIMELINE_ICON[item.type]}</i>
               <div>
@@ -202,12 +204,8 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
 }
 
 export default function PortfolioOverview() {
-  const {
-    selectedPortfolioId,
-    setSelectedPortfolioId,
-    portfolios,
-    loading: portfolioLoading,
-  } = usePortfolio();
+  const { selectedPortfolioId, loading: portfolioLoading } = usePortfolio();
+  const { data: loopDashboard } = useResearchTradingLoop();
   const [data, setData] = useState<PortfolioLedger | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -248,7 +246,7 @@ export default function PortfolioOverview() {
   }, [data]);
 
   if (loading)
-    return <LoadingState title="正在核对持仓账" description="对齐账户、行情、推荐与通知链…" />;
+    return <LoadingState title="正在核对持仓账" description="对齐研究、决策、成交与持仓链…" />;
   if (error) return <ErrorState message={error} />;
   if (!data) return <EmptyState title="还没有可查看的模拟盘" />;
 
@@ -258,24 +256,16 @@ export default function PortfolioOverview() {
     <section className="catdesk-portfolio catdesk-ledger">
       <div className="catdesk-ledger__account-bar">
         <div className="catdesk-ledger__selector">
-          <span>正在核对</span>
-          <Select
-            aria-label="选择模拟盘"
-            value={selectedPortfolioId}
-            onChange={setSelectedPortfolioId}
-            loading={portfolioLoading}
-            options={portfolios.map(item => ({
-              value: item.id,
-              label: `${item.name} · ${item.position_count ?? item.positions_count ?? 0} 持仓`,
-            }))}
-          />
+          <span>唯一模拟账户</span>
+          <strong>{data.portfolio.name}</strong>
+          <small>早报与高倍潜力共同驱动，不再切换历史策略盘</small>
         </div>
         <div className="catdesk-ledger__account-state">
           <Tag color={data.portfolio.is_active ? 'green' : 'default'}>
             {data.portfolio.is_active ? '账户运行中' : '账户已停用'}
           </Tag>
           <Tag color={data.portfolio.auto_trade_enabled ? 'purple' : 'default'}>
-            自动跟单 {data.portfolio.auto_trade_enabled ? '开启' : '关闭'}
+            研究闭环执行 {data.portfolio.auto_trade_enabled ? '开启' : '关闭'}
           </Tag>
           {data.unread_alerts_count ? (
             <Tag color="red">{data.unread_alerts_count} 条未读风控告警</Tag>
@@ -285,6 +275,43 @@ export default function PortfolioOverview() {
           </Button>
         </div>
       </div>
+
+      <ResearchLoopStatusStrip dashboard={loopDashboard} focus="portfolio" />
+
+      {loopDashboard?.research.morning.fresh &&
+      loopDashboard.research.multibagger.fresh &&
+      loopDashboard.latest_run?.is_current &&
+      loopDashboard.latest_run.decisions.length ? (
+        <div className="catdesk-loop-decisions" aria-label="今日研究闭环决策">
+          {loopDashboard.latest_run.decisions.map(decision => (
+            <article key={decision.id} data-action={decision.action.toLowerCase()}>
+              <Tag
+                color={
+                  decision.action === 'BUY' ? 'red' : decision.action === 'SELL' ? 'blue' : 'green'
+                }
+              >
+                {{ BUY: '买入', HOLD: '持有', SELL: '卖出' }[decision.action]}
+              </Tag>
+              <strong>{decision.name}</strong>
+              <small>{decision.symbol}</small>
+              <p>{decision.reason}</p>
+              <span>
+                {decision.combined_score === null
+                  ? '—'
+                  : `联合分 ${Number(decision.combined_score).toFixed(1)}`}
+                {decision.target_weight_pct
+                  ? ` · 目标 ${Number(decision.target_weight_pct).toFixed(0)}%`
+                  : ''}
+                {decision.status === 'executed'
+                  ? ' · 已成交'
+                  : decision.status === 'held'
+                    ? ' · 继续持有'
+                    : ` · ${decision.status}`}
+              </span>
+            </article>
+          ))}
+        </div>
+      ) : null}
 
       <div className="catdesk-ledger__quote-note" data-stale={String(valuation.has_stale_quotes)}>
         <ClockCircleOutlined />
@@ -304,23 +331,6 @@ export default function PortfolioOverview() {
             <span>
               {data.portfolio_corrections.length + data.account_correction_notifications.length}{' '}
               条更正已纳入当前账户，请以本页重算结果和更正通知为准
-            </span>
-          </div>
-        </div>
-      ) : null}
-
-      {data.latest_morning_notification ? (
-        <div className="catdesk-ledger__notice">
-          <BellOutlined />
-          <div>
-            <strong>{data.latest_morning_notification.title}</strong>
-            <span>
-              最近晨检通知
-              {data.latest_morning_notification.invalidated
-                ? '已作废，请以更正通知为准'
-                : data.latest_morning_notification.corrected
-                  ? '已更正'
-                  : `状态：${data.latest_morning_notification.status}`}
             </span>
           </div>
         </div>
@@ -386,7 +396,7 @@ export default function PortfolioOverview() {
                 <th>市值 / 浮盈亏</th>
                 <th>来源链</th>
                 <th>研究交集</th>
-                <th>风控与通知</th>
+                <th>风控与审计</th>
                 <th aria-label="操作" />
               </tr>
             </thead>
@@ -489,7 +499,7 @@ export default function PortfolioOverview() {
                     <tr className="catdesk-ledger__expand-row">
                       <td colSpan={8}>
                         <details>
-                          <summary>展开成交 → 推荐 → 通知 → 更正完整链路</summary>
+                          <summary>展开研究 → 决策 → 成交 → 持仓审计链</summary>
                           <PositionDetail row={row} />
                         </details>
                       </td>

@@ -326,6 +326,14 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description: '日级模拟盘计划生成',
   },
   {
+    type: 'RESEARCH_TRADING_LOOP',
+    category: 'paper_trading',
+    owner: 'paper',
+    intraday: true,
+    recommendedCron: '35,50 9 * * 1-5',
+    description: 'A股早报 + 高倍潜力联合决策并驱动唯一研究闭环模拟盘；09:50 幂等补跑',
+  },
+  {
     type: 'PAPER_TRADING_DAILY_SNAPSHOT',
     category: 'paper_trading',
     owner: 'paper',

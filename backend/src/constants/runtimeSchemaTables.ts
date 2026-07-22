@@ -15,6 +15,8 @@ export const RUNTIME_SCHEMA_TABLES = [
   'paper_trading_positions',
   'paper_trading_trades',
   'paper_trading_snapshots',
+  'research_trading_loop_runs',
+  'research_trading_loop_decisions',
   'paper_trading_order_intents',
   'paper_trading_order_intent_outcomes',
   'paper_trading_canary_review_snapshots',
@@ -66,6 +68,8 @@ export const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'realtime_quotes',
   'paper_trading_portfolios',
   'paper_trading_trades',
+  'research_trading_loop_runs',
+  'research_trading_loop_decisions',
   'paper_trading_order_intents',
   'paper_trading_order_intent_outcomes',
   'paper_trading_canary_review_snapshots',
@@ -119,6 +123,18 @@ export const RUNTIME_SCHEMA_REQUIRED_COLUMNS: Record<
   paper_trading_order_intents: {
     critical: true,
     columns: ['portfolio_id', 'symbol', 'side', 'status', 'intent_date', 'metadata'],
+  },
+  paper_trading_portfolios: {
+    critical: true,
+    columns: ['user_id', 'portfolio_type', 'current_cash', 'total_value', 'is_active'],
+  },
+  research_trading_loop_runs: {
+    critical: true,
+    columns: ['user_id', 'portfolio_id', 'trading_day', 'research_day', 'status', 'summary'],
+  },
+  research_trading_loop_decisions: {
+    critical: true,
+    columns: ['run_id', 'portfolio_id', 'symbol', 'action', 'status', 'sources', 'reason'],
   },
   paper_trading_order_intent_outcomes: {
     critical: true,

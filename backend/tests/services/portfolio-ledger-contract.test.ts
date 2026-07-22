@@ -152,8 +152,9 @@ assert(
     !ledger.includes('portfoliosBySymbol')
 );
 assert(
-  'multibagger matching selects the latest eligible row per ticker',
-  ledger.includes('DISTINCT ON (market_scope, exchange, ticker)') &&
+  'multibagger matching selects only the latest complete batch',
+  ledger.includes('WITH latest_batch AS') &&
+    ledger.includes('MAX(as_of_utc) AS as_of_utc') &&
     ledger.includes('available_at_utc <= :now')
 );
 assert(

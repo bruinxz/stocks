@@ -72,6 +72,15 @@ export class PaperTradingPortfolio extends Model {
   declare total_value: number;
 
   @Column({
+    type: DataType.STRING(32),
+    allowNull: false,
+    defaultValue: 'research_loop',
+    field: 'portfolio_type',
+    comment: '当前产品唯一用途：research_loop 研究闭环模拟盘',
+  })
+  declare portfolio_type: string;
+
+  @Column({
     type: DataType.BOOLEAN,
     defaultValue: true,
     field: 'is_active',
@@ -93,7 +102,7 @@ export class PaperTradingPortfolio extends Model {
     allowNull: false,
     defaultValue: [],
     field: 'strategy_keys',
-    comment: '该模拟盘绑定的策略 key 列表. 空数组 = 所有 active 策略 (legacy 行为).',
+    comment: '研究闭环保留字段；当前执行器不读取历史策略 key',
   })
   declare strategy_keys: string[];
 
@@ -120,7 +129,7 @@ export class PaperTradingPortfolio extends Model {
     allowNull: false,
     defaultValue: false,
     field: 'auto_trade_enabled',
-    comment: '是否参与 PAPER_TRADING_AUTO_SYNC cron 自动跟单. 默认 false 防误操作; 用户主动开.',
+    comment: '是否参与研究闭环每日模拟执行',
   })
   declare auto_trade_enabled: boolean;
 

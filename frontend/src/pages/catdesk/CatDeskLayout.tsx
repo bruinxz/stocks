@@ -9,7 +9,6 @@ import { LoadingState } from './shared/LoadingState';
 import { CowMascot, type CowMood } from './shared/CowMascot';
 import { createTab67HttpApi, type Tab67Api } from './tabs/daily-report/tab67Api';
 import { PageFreshnessStamp } from './shared/PageFreshnessStamp';
-import GlobalPortfolioSelector from '../../components/layout/GlobalPortfolioSelector';
 import AlertsBell from '../../components/layout/AlertsBell';
 import CriticalAlertModal from '../../components/layout/CriticalAlertModal';
 
@@ -161,7 +160,6 @@ export default function CatDeskLayout({
             </div>
             <div className="catdesk-topbar-meta">
               <div className="catdesk-topbar-tools" aria-label="账户与告警工具">
-                <GlobalPortfolioSelector />
                 <AlertsBell />
                 <CriticalAlertModal />
               </div>
@@ -180,11 +178,11 @@ export default function CatDeskLayout({
             <PageFreshnessStamp activeTab={activeTab} />
           )}
           <div className="catdesk-ribbon" aria-hidden="true">
-            <span>催化</span>
-            <i /> <span>确信</span>
-            <i /> <span>证据</span>
-            <i />
-            <span>复盘</span>
+            <span>早报</span>
+            <i /> <span>高倍</span>
+            <i /> <span>联合决策</span>
+            <i /> <span>模拟成交</span>
+            <i /> <span>持仓复盘</span>
           </div>
           <main className="catdesk-main">
             <Suspense

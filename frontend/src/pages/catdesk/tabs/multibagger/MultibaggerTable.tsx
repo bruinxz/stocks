@@ -5,6 +5,7 @@ import { ScoreCell, ConvictionPill, RiskGateChip } from 'shared/components/Table
 import type { TableColumnDef } from 'shared/components/TableColumn';
 import type { MultibaggerRow } from './types';
 import { MARKET_SCOPE_LABELS, RATING_LABELS } from '../../shared/uiLabels';
+import type { ResearchLoopDecisionView } from 'services/researchTradingLoopService';
 
 const STAGE_LABEL: Record<string, string> = {
   seed: '种子',
@@ -65,7 +66,15 @@ const CATALYST_LABEL: Record<string, string> = {
 
 const DISCLAIMER_TEXT = '仅供参考，非投资建议或下单指令';
 
-function getColumns(): TableColumnDef<MultibaggerRow>[] {
+function loopDecisionFor(
+  symbol: string,
+  decisions: ResearchLoopDecisionView[]
+): ResearchLoopDecisionView | undefined {
+  const code = symbol.slice(-6);
+  return decisions.find(decision => decision.symbol === symbol || decision.symbol.endsWith(code));
+}
+
+function getColumns(loopDecisions: ResearchLoopDecisionView[]): TableColumnDef<MultibaggerRow>[] {
   return [
     {
       key: 'symbol',
@@ -210,6 +219,19 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       },
     },
     {
+      key: 'loop_action',
+      title: '闭环动作',
+      ariaLabel: '研究闭环动作',
+      width: 86,
+      render: (_, row) => {
+        const decision = loopDecisionFor(row.symbol, loopDecisions);
+        if (!decision) return <Tag>观察</Tag>;
+        const label = { BUY: '买入', HOLD: '持有', SELL: '卖出' }[decision.action];
+        const color = { BUY: 'red', HOLD: 'green', SELL: 'blue' }[decision.action];
+        return <Tag color={color}>{label}</Tag>;
+      },
+    },
+    {
       key: 'catalyst_hint',
       title: '催化',
       ariaLabel: '最近催化事件类型',
@@ -231,13 +253,20 @@ type MultibaggerTableProps = {
   loading: boolean;
   error: Error | null;
   onRowClick: (row: MultibaggerRow) => void;
+  loopDecisions?: ResearchLoopDecisionView[];
 };
 
-export function MultibaggerTable({ rows, loading, error, onRowClick }: MultibaggerTableProps) {
+export function MultibaggerTable({
+  rows,
+  loading,
+  error,
+  onRowClick,
+  loopDecisions = [],
+}: MultibaggerTableProps) {
   return (
     <TableColumn<MultibaggerRow>
       rows={rows}
-      columns={getColumns()}
+      columns={getColumns(loopDecisions)}
       rowKey="symbol"
       loading={loading}
       onRowClick={onRowClick}

@@ -34,6 +34,8 @@ export enum AISignalSourceType {
   CASH_MANAGEMENT = 'cash_management',
   /** 当日 A 股早报规范快照投影；source_id 固定为 ai_recommendation_item.item_id。 */
   RECOMMENDATION_SNAPSHOT = 'recommendation_snapshot',
+  /** A股早报 + 高倍潜力联合产生的每日 BUY/HOLD/SELL 闭环决策。 */
+  RESEARCH_LOOP = 'research_loop',
 }
 
 export enum AISignalDecision {

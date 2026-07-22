@@ -122,6 +122,7 @@ export interface PortfolioLedgerPosition {
     lag_days: number | null;
     reason: string | null;
     strategy_version: string | null;
+    research_day?: string | null;
     stage?: string;
     conclusion?: string;
     rating?: string | null;
@@ -198,6 +199,7 @@ export interface PortfolioLedger {
     available_at: string | null;
     market_scope: string;
     strategy_version: string;
+    research_day: string | null;
     freshness: 'fresh' | 'delayed' | 'missing';
     lag_days: number | null;
     reason: string | null;
@@ -207,7 +209,6 @@ export interface PortfolioLedger {
   portfolio_notifications: PortfolioLedgerPosition['notifications'];
   account_correction_notifications: PortfolioLedgerPosition['notifications'];
   portfolio_corrections: PortfolioLedgerPosition['corrections'];
-  latest_morning_notification: PortfolioLedgerPosition['notifications'][number] | null;
   latest_correction_notification: PortfolioLedgerPosition['notifications'][number] | null;
   positions: PortfolioLedgerPosition[];
 }

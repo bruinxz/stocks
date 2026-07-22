@@ -516,6 +516,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=8)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate the production query and preview the daily batch without writing facts.",
+    )
     args = parser.parse_args()
     if args.limit < 1 or args.limit > 20:
         raise SystemExit("--limit must be between 1 and 20")
@@ -527,6 +532,26 @@ def main() -> int:
     as_of = _stable_as_of(database_url, rows)
     records = tuple(_source_record(row, as_of) for row in rows)
     envelopes = tuple(_text_envelope(row) for row in rows)
+    if args.dry_run:
+        print(
+            json.dumps(
+                {
+                    "as_of": as_of.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "dry_run": True,
+                    "research_day": rows[0]["trading_day"].isoformat(),
+                    "candidate_count": len(rows),
+                    "tickers": [row["stock_code"] for row in rows],
+                    "source_versions": sorted(
+                        {record.source_version for record in records}
+                    ),
+                    "would_write_universe": len(records),
+                    "would_write_text_hits": len(envelopes),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return 0
     source_result, hit_result = asyncio.run(
         _write_sources(values, records, envelopes, as_of)
     )

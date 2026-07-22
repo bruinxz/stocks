@@ -31,6 +31,7 @@ export type MultibaggerRow = CandidateListEntry & {
   strategy_version: string;
   classification_policy_version: string;
   classification_reason_codes: string[];
+  research_day?: string | null;
   latest_catalyst?: NonNullable<CandidateListEntry['latest_catalyst']> & {
     available_at_utc: string;
     source_ref: string;

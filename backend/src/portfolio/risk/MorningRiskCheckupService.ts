@@ -3,7 +3,7 @@
  *
  * **每日开盘前风险体检报告** — 每天 8:30 触发，输出 6 维度持仓体检快照
  * （持仓数 / 单股最大占比 / 行业最大占比 / 当前回撤 / 本周净值变化 /
- * 未触发告警数）→ 持久化到 MorningRiskCheckup 表，并通过统一飞书 outbox 推送。
+ * 未触发告警数）→ 持久化到 MorningRiskCheckup 表，供站内体检页面按需查看。
  *
  * 与 US-047/US-048/US-049/US-050/US-051/US-052/US-053 互补的**第 8 类风控形态** ——
  *   - 前 7 类都是 *触发型* 风控（pre-trade / 持有期 / 收盘后 / event-driven 实时扫描），
@@ -16,7 +16,7 @@
  *   1. 在 backend/src/portfolio/risk/ 新建 MorningRiskCheckupService.ts；
  *   2. 每天 8:30 触发（SchedulerService 注册）；
  *   3. 输出：持仓数、单股最大占比、行业最大占比、当前回撤、本周净值变化、未触发告警数；
- *   4. 结果保存到 MorningRiskCheckup 模型 + 推送（依赖 US-080）；
+ *   4. 结果保存到 MorningRiskCheckup 模型，真正的风险事件由 RiskAlert 卡片通知；
  *   5. 新增 endpoint：GET /api/risk/morning-checkup/today；
  *   6. 新增单元测试 + typecheck pass + tests pass。
  *
@@ -47,8 +47,8 @@
  *   - **fail-OPEN**：单用户计算失败 → 写一行 error=msg 不阻塞 batch（同 US-052/US-053
  *     per-user try/catch isolate 模式）；
  *   - **dry_run=true** 跳过 DB 写入但仍返回完整 checkup 结构（UI dashboard 预演用）；
- *   - 通知以 `morning-risk-checkup:<user_id>:<date>` 为幂等键写统一 outbox；
- *     业务快照表不再复制交付状态；
+ *   - **快照不通知**：体检是状态聚合而非新事件，不写飞书 outbox；风险事件由
+ *     RiskAlert 自己的卡片链路负责，避免每天按组合重复打扰用户；
  *   - **as_of_date 默认本地交易日** — 不依赖 trade-calendar，简单用 ISO date string，
  *     8:30 触发时 toISOString().slice(0, 10) 已是当日；
  *   - **行业 / 单股占比阈值** — *不在本 service 配置*：是否"超标"由 US-052 alert_pct 决定；
@@ -73,17 +73,13 @@ import {
   UNKNOWN_INDUSTRY_SENTINEL,
 } from './IndustryConcentrationGuard';
 import { computePeakValue, computeDrawdownPct } from './DrawdownCircuitBreaker';
-import {
-  FeishuNotificationService,
-  feishuNotificationService,
-} from '../../services/FeishuNotificationService';
 
 // ---------------------------------------------------------------------------
 //  Config
 // ---------------------------------------------------------------------------
 
 export interface MorningRiskCheckupConfig {
-  /** 是否启用（false = 跳过整个 service / 不写体检表 / 不推送）。 */
+  /** 是否启用（false = 跳过整个 service / 不写体检表）。 */
   enabled: boolean;
   /**
    * 本周净值变化 baseline 回看天数（默认 7 = 1 自然周）。
@@ -96,7 +92,7 @@ export interface MorningRiskCheckupConfig {
   drawdown_lookback_days: number;
   /**
    * 是否在 message 里包含 breakdown 明细（per-symbol top 3 / per-industry top 3）。
-   * 关闭可让推送通道（飞书 / 邮件）保持极简文本，开启可让长 message 适合 Web UI。
+   * 关闭可让紧凑型 UI 保持极简文本，开启可让详情视图展示完整信息。
    */
   include_breakdown_in_message: boolean;
 }
@@ -148,8 +144,6 @@ export interface MorningRiskCheckupResult {
   persisted: boolean;
   /** Error message when calc threw (null when success). */
   error?: string;
-  notification_status?: string;
-  notification_outbox_id?: number;
 }
 
 /**
@@ -363,7 +357,7 @@ export function buildCheckupMessage(input: {
       lines.push(`⚠️ 请打开"风控告警"查看未读告警详情。`);
     }
 
-    // Phase 2+/4+/5+ 系统健康 — 只在 include_breakdown 时附加，避免推送内容爆炸
+    // Phase 2+/4+/5+ 系统健康 — 只在 include_breakdown 时附加，避免紧凑视图内容爆炸
     if (input.system_health) {
       const sh = input.system_health;
       lines.push(''); // 空行分隔
@@ -440,7 +434,7 @@ export interface MorningRiskCheckupDataSource {
   ): Promise<SystemHealthSnapshot | null>;
   /**
    * Persist one MorningRiskCheckup row (UPSERT on (user_id, portfolio_id, date)).
-   * 通知交付状态不写本表，由 feishu_notification_outbox 单独维护。
+   * 这里只维护业务快照；快照不是通知，不产生交付状态。
    */
   upsertCheckup(input: {
     user_id: number;
@@ -762,21 +756,9 @@ export interface RunMorningCheckupOptions {
 }
 
 export class MorningRiskCheckupService {
-  private source: MorningRiskCheckupDataSource;
-  private notifications: Pick<FeishuNotificationService, 'enqueueAndDeliver'> | null;
-
   constructor(
-    source: MorningRiskCheckupDataSource = PRODUCTION_MORNING_RISK_CHECKUP_DATA_SOURCE,
-    notifications?: Pick<FeishuNotificationService, 'enqueueAndDeliver'> | null
-  ) {
-    this.source = source;
-    this.notifications =
-      notifications === undefined
-        ? source === PRODUCTION_MORNING_RISK_CHECKUP_DATA_SOURCE
-          ? feishuNotificationService
-          : null
-        : notifications;
-  }
+    private readonly source: MorningRiskCheckupDataSource = PRODUCTION_MORNING_RISK_CHECKUP_DATA_SOURCE
+  ) {}
 
   /**
    * 每天 8:30 触发批量评估所有用户的开盘前体检报告。
@@ -784,7 +766,7 @@ export class MorningRiskCheckupService {
    * - 单 user 失败 try/catch 隔离（同 US-047/US-048/US-049/US-051/US-052/US-053）；
    * - disabled 用户跳过整个评估（returns enabled=false 不写体检表）；
    * - dry_run=true 跳过 DB 写入但仍返回完整 checkup 结构（UI 预演用）；
-   * - 持久化成功后写统一飞书 outbox；dry_run 不产生通知；
+   * - 体检是可查询快照，不写通知 outbox；需打断用户的风险事件走 RiskAlert 卡片；
    *
    * SchedulerService 用 task type 'PAPER_TRADING_MORNING_CHECKUP' cron 调用本方法。
    */
@@ -995,40 +977,6 @@ export class MorningRiskCheckupService {
           error: null,
         });
         checkup.persisted = true;
-        if (this.notifications) {
-          try {
-            const delivery = await this.notifications.enqueueAndDeliver({
-              idempotency_key: `morning-risk-checkup:${user_id}:${header.id}:${date}`,
-              topic_key: `morning-risk-checkup:${user_id}:${header.id}`,
-              audience: 'user',
-              recipient_user_id: user_id,
-              kind: 'morning_risk_checkup',
-              severity: 'INFO',
-              title: `🌅 ${date} ${header.name} · 开盘前风险体检`,
-              payload: {
-                msg_type: 'text',
-                content: { text: message },
-              },
-              correlation_id: `morning_risk_checkup:${user_id}:${header.id}:${date}`,
-              metadata: {
-                ledger_scope: 'portfolio',
-                user_id,
-                portfolio_id: header.id,
-                portfolio_name: header.name,
-                date,
-              },
-            });
-            checkup.notification_status = delivery.status;
-            checkup.notification_outbox_id = delivery.outbox_id;
-          } catch (notificationError: any) {
-            checkup.notification_status = 'enqueue_failed';
-            logger.warn(
-              `MorningRiskCheckupService notification user=${user_id}: ${
-                notificationError?.message || notificationError
-              }`
-            );
-          }
-        }
       } catch (err) {
         // Persistence failure is logged but does NOT mask the in-memory result —
         // caller still receives a complete checkup (parity with US-052 writeAlert

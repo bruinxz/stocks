@@ -49,6 +49,7 @@ function normalizeCandidate(row: any): any {
     strategy_version: row.strategy_version,
     classification_policy_version: row.classification_policy_version,
     classification_reason_codes: parseJson(row.classification_reason_codes),
+    research_day: row.research_day || null,
   };
 }
 
@@ -98,23 +99,17 @@ export class MultibaggerController {
       }
 
       const rows = await sequelize.query<any>(
-        `WITH latest_candidates AS (
-           SELECT DISTINCT ON (
-                    snapshot.market_scope,
-                    snapshot.exchange,
-                    snapshot.ticker
-                  )
-                  snapshot.*
-           FROM multibagger_candidate_snapshot snapshot
-           WHERE snapshot.available_at_utc <= NOW()
-           ORDER BY
-             snapshot.market_scope,
-             snapshot.exchange,
-             snapshot.ticker,
-             snapshot.as_of_utc DESC,
-             snapshot.available_at_utc DESC,
-             snapshot.created_at DESC,
-             snapshot.strategy_version DESC
+        `WITH latest_batches AS (
+           SELECT market_scope, MAX(as_of_utc) AS as_of_utc
+             FROM multibagger_candidate_snapshot
+            WHERE available_at_utc <= NOW()
+            GROUP BY market_scope
+         ), latest_candidates AS (
+           SELECT snapshot.*
+             FROM multibagger_candidate_snapshot snapshot
+             JOIN latest_batches batch
+               ON batch.market_scope = snapshot.market_scope
+              AND batch.as_of_utc = snapshot.as_of_utc
          )
          SELECT candidate.ticker AS symbol,
                 COALESCE(source_fact.name, candidate.ticker) AS name,
@@ -146,13 +141,15 @@ export class MultibaggerController {
                 ) AS available_at_utc,
                 candidate.strategy_version,
                 candidate.classification_policy_version,
-                candidate.classification_reason_codes
+                candidate.classification_reason_codes,
+                regexp_replace(source_fact.source_version, '^live-', '') AS research_day
          FROM latest_candidates candidate
          LEFT JOIN LATERAL (
            SELECT COALESCE(
                     source.fundamental_snapshot->>'name',
                     source.features->>'name'
-                  ) AS name
+                  ) AS name,
+                  source.source_version
            FROM multibagger_universe source
            WHERE source.market_scope = candidate.market_scope
              AND source.exchange = candidate.exchange
@@ -210,24 +207,18 @@ export class MultibaggerController {
       const { symbol } = req.params;
 
       const rows = await sequelize.query<any>(
-        `WITH latest_candidates AS (
-           SELECT DISTINCT ON (
-                    snapshot.market_scope,
-                    snapshot.exchange,
-                    snapshot.ticker
-                  )
-                  snapshot.*
-           FROM multibagger_candidate_snapshot snapshot
-           WHERE snapshot.ticker = :symbol
-             AND snapshot.available_at_utc <= NOW()
-           ORDER BY
-             snapshot.market_scope,
-             snapshot.exchange,
-             snapshot.ticker,
-             snapshot.as_of_utc DESC,
-             snapshot.available_at_utc DESC,
-             snapshot.created_at DESC,
-             snapshot.strategy_version DESC
+        `WITH latest_batches AS (
+           SELECT market_scope, MAX(as_of_utc) AS as_of_utc
+             FROM multibagger_candidate_snapshot
+            WHERE available_at_utc <= NOW()
+            GROUP BY market_scope
+         ), latest_candidates AS (
+           SELECT snapshot.*
+             FROM multibagger_candidate_snapshot snapshot
+             JOIN latest_batches batch
+               ON batch.market_scope = snapshot.market_scope
+              AND batch.as_of_utc = snapshot.as_of_utc
+            WHERE snapshot.ticker = :symbol
          )
          SELECT candidate.ticker AS symbol,
                 COALESCE(source_fact.name, candidate.ticker) AS name,
@@ -259,13 +250,15 @@ export class MultibaggerController {
                 ) AS available_at_utc,
                 candidate.strategy_version,
                 candidate.classification_policy_version,
-                candidate.classification_reason_codes
+                candidate.classification_reason_codes,
+                regexp_replace(source_fact.source_version, '^live-', '') AS research_day
          FROM latest_candidates candidate
          LEFT JOIN LATERAL (
            SELECT COALESCE(
                     source.fundamental_snapshot->>'name',
                     source.features->>'name'
-                  ) AS name
+                  ) AS name,
+                  source.source_version
            FROM multibagger_universe source
            WHERE source.market_scope = candidate.market_scope
              AND source.exchange = candidate.exchange

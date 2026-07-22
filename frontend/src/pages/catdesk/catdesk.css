@@ -1499,23 +1499,147 @@
 }
 
 .catdesk-ledger__selector {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 12px;
 }
 
 .catdesk-ledger__selector > span {
+  grid-row: 1 / span 2;
+  align-self: center;
   color: var(--cd-text-secondary);
   font-size: 12px;
   letter-spacing: 0.12em;
 }
 
-.catdesk-ledger__selector .ant-select {
-  min-width: 290px;
+.catdesk-ledger__selector strong {
+  color: var(--cd-ink);
+  font-family: 'Iowan Old Style', 'Noto Serif SC', serif;
+  font-size: 17px;
+}
+
+.catdesk-ledger__selector small {
+  color: var(--cd-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .catdesk-ledger__account-state {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.catdesk-loop-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 13px 15px;
+  border: 1px solid var(--cd-border);
+  border-radius: 14px;
+  background:
+    linear-gradient(110deg, color-mix(in srgb, var(--cd-sun) 14%, transparent), transparent 44%),
+    color-mix(in srgb, var(--cd-paper) 94%, white);
+  box-shadow: 3px 4px 0 color-mix(in srgb, var(--cd-ink) 7%, transparent);
+}
+
+.catdesk-loop-strip__flow {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.catdesk-loop-strip__flow > span {
+  min-width: 0;
+  padding: 7px 9px;
+  border-radius: 9px;
+}
+
+.catdesk-loop-strip__flow > span.is-focus {
+  outline: 1px solid color-mix(in srgb, var(--cd-accent) 42%, transparent);
+  background: color-mix(in srgb, var(--cd-accent) 9%, var(--cd-paper));
+}
+
+.catdesk-loop-strip__flow b,
+.catdesk-loop-strip__flow small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catdesk-loop-strip__flow b {
+  color: var(--cd-ink);
+  font-size: 12px;
+}
+
+.catdesk-loop-strip__flow small {
+  margin-top: 3px;
+  color: var(--cd-text-secondary);
+  font: 700 9px/1.3 var(--cd-font-mono);
+}
+
+.catdesk-loop-strip__flow > i {
+  flex: 0 0 auto;
+  color: var(--cd-accent);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.catdesk-loop-strip > .ant-tag {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.catdesk-loop-decisions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.catdesk-loop-decisions article {
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid var(--cd-border);
+  border-left: 3px solid var(--cd-mint);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--cd-paper) 94%, white);
+}
+
+.catdesk-loop-decisions article[data-action='buy'] {
+  border-left-color: var(--cd-coral);
+}
+
+.catdesk-loop-decisions article[data-action='sell'] {
+  border-left-color: var(--cd-ink);
+}
+
+.catdesk-loop-decisions article > strong,
+.catdesk-loop-decisions article > small,
+.catdesk-loop-decisions article > span {
+  display: block;
+}
+
+.catdesk-loop-decisions article > strong {
+  margin-top: 7px;
+  color: var(--cd-ink);
+}
+
+.catdesk-loop-decisions article > small,
+.catdesk-loop-decisions article > span {
+  color: var(--cd-text-secondary);
+  font: 700 10px/1.5 var(--cd-font-mono);
+}
+
+.catdesk-loop-decisions article p {
+  min-height: 3em;
+  margin: 9px 0;
+  color: var(--cd-text-primary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .catdesk-ledger__quote-note {
@@ -1776,17 +1900,42 @@
   .catdesk-ledger-detail__grid {
     grid-template-columns: 1fr;
   }
-}
 
-@media (max-width: 640px) {
-  .catdesk-ledger__selector {
+  .catdesk-loop-strip {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .catdesk-ledger__selector .ant-select {
-    width: 100%;
-    min-width: 0;
+  .catdesk-loop-decisions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .catdesk-ledger__selector {
+    grid-template-columns: 1fr;
+  }
+
+  .catdesk-ledger__selector > span {
+    grid-row: auto;
+  }
+
+  .catdesk-loop-strip__flow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .catdesk-loop-strip__flow > span:nth-of-type(3),
+  .catdesk-loop-strip__flow > span:nth-of-type(4) {
+    grid-column: auto;
+  }
+
+  .catdesk-loop-strip__flow > i:nth-of-type(2) {
+    display: none;
+  }
+
+  .catdesk-loop-decisions {
+    grid-template-columns: 1fr;
   }
 
   .catdesk-ledger__research-strip {

@@ -11,7 +11,65 @@ jest.mock('../../../../contexts/PortfolioContext', () => ({
     selectedPortfolioId: 65,
     setSelectedPortfolioId: () => undefined,
     loading: false,
-    portfolios: [{ id: 65, name: '综合策略主盘', position_count: 1 }],
+    portfolios: [{ id: 65, name: '研究闭环模拟盘', position_count: 1 }],
+  }),
+}));
+
+jest.mock('../../shared/useResearchTradingLoop', () => ({
+  useResearchTradingLoop: () => ({
+    data: {
+      research: {
+        expected_research_day: '2026-07-21',
+        morning: {
+          snapshot_id: 'snap',
+          research_day: '2026-07-21',
+          as_of: '2026-07-22T01:03:00Z',
+          candidate_count: 8,
+          fresh: true,
+        },
+        multibagger: {
+          research_day: '2026-07-21',
+          as_of: '2026-07-22T01:04:00Z',
+          candidate_count: 8,
+          fresh: true,
+        },
+        merged_target_count: 6,
+      },
+      latest_run: {
+        id: 9,
+        portfolio_id: 65,
+        portfolio_name: '研究闭环模拟盘',
+        trading_day: '2026-07-22',
+        research_day: '2026-07-21',
+        status: 'completed',
+        is_current: true,
+        target_count: 3,
+        buy_count: 1,
+        hold_count: 1,
+        sell_count: 1,
+        skipped_count: 0,
+        total_value: 205000,
+        current_cash: 192680,
+        completed_at: '2026-07-22T01:36:00Z',
+        decisions: [
+          {
+            id: 1,
+            symbol: 'sh.600483',
+            name: '福能股份',
+            action: 'HOLD',
+            status: 'held',
+            combined_score: 82,
+            target_weight_pct: 12,
+            reference_price: 11.2,
+            quantity: 1100,
+            sources: [],
+            reason: '两个研究源继续支持，保持持仓',
+            trade_id: null,
+            created_at: '2026-07-22T01:35:00Z',
+          },
+        ],
+      },
+    },
   }),
 }));
 
@@ -83,7 +141,7 @@ describe('CatDesk portfolio and AI entries', () => {
     mockGetPortfolio.mockResolvedValue({
       portfolio: {
         id: 65,
-        name: '综合策略主盘',
+        name: '研究闭环模拟盘',
         is_active: true,
         auto_trade_enabled: true,
         strategy_keys: [],
@@ -264,15 +322,18 @@ describe('CatDesk portfolio and AI entries', () => {
     });
 
     expect(mockGetPortfolio).toHaveBeenCalledWith(65);
-    expect(container.textContent).toContain('综合策略主盘');
+    expect(container.textContent).toContain('研究闭环模拟盘');
+    expect(container.textContent).toContain('唯一模拟账户');
+    expect(container.querySelector('[aria-label="选择模拟盘"]')).toBeNull();
+    expect(container.textContent).toContain('研究日 2026-07-21 已对齐');
+    expect(container.textContent).toContain('继续持有');
     expect(container.textContent).toContain('¥205,000.00');
     expect(container.textContent).toContain('福能股份');
     expect(container.textContent).toContain('1,100 股');
     expect(container.textContent).toContain('组合再平衡');
     expect(container.textContent).toContain('研究已过期');
     expect(container.textContent).toContain('更正 · 福能股份误卖已撤销');
-    expect(container.textContent).toContain('模拟盘晨间体检');
-    expect(container.textContent).toContain('已作废，请以更正通知为准');
+    expect(container.textContent).not.toContain('最近晨检通知');
     expect(container.textContent).toContain('已作废 · 自主卖出 · 福能股份');
     expect(container.textContent).not.toContain('账户级告警与通知');
 
