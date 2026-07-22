@@ -318,6 +318,21 @@ def main() -> int:
                 command.append("--dry-run")
             results.append(_run(f"refresh_recommendation_{market_scope}", command, 600))
 
+        # 高倍潜力必须与早报共享同一日更水位。旧实现从未在任何 cron 中调用该
+        # materializer，页面只能反复读取最后一次人工灌入的历史批次。
+        multibagger_args = [
+            "scripts/ops/populate_live_multibagger.py",
+            "--env-file",
+            str(args.env_file),
+            "--limit",
+            str(max(args.limit, 8)),
+        ]
+        if args.dry_run:
+            multibagger_args.append("--dry-run")
+        results.append(
+            _run("refresh_multibagger_cn_a", multibagger_args, 600)
+        )
+
     failed = [item for item in results if not item.get("ok")]
     summary = {
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),

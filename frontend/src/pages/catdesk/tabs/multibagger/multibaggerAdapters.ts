@@ -474,7 +474,7 @@ function parseCandidate(value: unknown, path: string): MultibaggerRow {
       'classification_policy_version',
       'classification_reason_codes',
     ],
-    [],
+    ['research_day'],
     path
   );
   const symbol = strictString(raw.symbol, `${path}.symbol`);
@@ -588,6 +588,10 @@ function parseCandidate(value: unknown, path: string): MultibaggerRow {
       `${path}.classification_policy_version`
     ),
     classification_reason_codes: reasonCodes,
+    research_day:
+      raw.research_day === null || raw.research_day === undefined
+        ? null
+        : strictString(raw.research_day, `${path}.research_day`),
   };
 }
 

@@ -61,6 +61,7 @@ import { recordSchedulerTaskRun } from '../metrics/PrometheusRegistry';
 import { skipRetiredScheduledTask } from './scheduler/retiredScheduledTask';
 import { cronNotificationLifecycleService } from './CronNotificationLifecycleService';
 import { feishuNotificationService } from './FeishuNotificationService';
+import { researchTradingLoopService } from './ResearchTradingLoopService';
 
 // Persisted rows from releases that predate structural task retirement. These
 // are deliberately not part of CRON_REGISTRY and can only self-deactivate.
@@ -1697,6 +1698,34 @@ class SchedulerService {
 
         logger.info(
           `信号质量日报完成。信号 ${result.overview.total_signals}，完成样本 ${result.overview.completed_samples}，质量分 ${result.overview.quality_score}`
+        );
+      } else if (task.type === 'RESEARCH_TRADING_LOOP') {
+        const result = await researchTradingLoopService.run({
+          user_id: parameters.user_id ? Number(parameters.user_id) : undefined,
+        });
+        const users = Array.isArray((result as any).users) ? (result as any).users : [];
+        const failed = users.filter((row: any) => row.status === 'failed').length;
+        const completed = users.filter((row: any) => row.status === 'completed').length;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: users.length,
+          completed_items: completed,
+          failed_items: failed,
+          status: failed > 0 ? 'FAILED' : 'COMPLETED',
+          completed_at: new Date(),
+          error_message:
+            (result as any).status === 'skipped'
+              ? `研究数据未到齐：早报=${(result as any).morning_research_day || 'missing'}，高倍=${
+                  (result as any).multibagger_research_day || 'missing'
+                }`
+              : failed > 0
+              ? `${failed} 个用户闭环执行失败`
+              : null,
+          result_summary: result as any,
+        });
+        logger.info(
+          `[RESEARCH_TRADING_LOOP] status=${(result as any).status} research_day=${
+            (result as any).research_day || (result as any).expected_research_day || '-'
+          } users=${users.length}`
         );
       } else if (task.type === 'PAPER_TRADING_AUTO_SYNC') {
         // 修复 HIGH #24 (2026-06-16): all_portfolios 模式 — 之前 AUTO_SYNC 只对
@@ -6144,6 +6173,16 @@ class SchedulerService {
         },
       },
       {
+        name: '早报高倍持仓研究闭环',
+        type: 'RESEARCH_TRADING_LOOP',
+        cron_expression: '35 9 * * 1-5',
+        is_active: true,
+        parameters: {
+          require_trading_day: true,
+          record_type: '早报高倍持仓研究闭环',
+        },
+      },
+      {
         name: '推荐绩效后验刷新',
         type: 'SIGNAL_PERFORMANCE_REFRESH',
         cron_expression: '20 15 * * 1-5',
@@ -7305,6 +7344,28 @@ class SchedulerService {
         logger.info(`Default scheduled task created: ${taskData.name}`);
       }
     }
+
+    // 研究闭环上线后，旧多组合自动跟单与历史风控链永久退役。放在 seed 循环
+    // 之后，保证全新数据库也不会被旧 defaultTasks 重新激活。
+    await ScheduledTask.update(
+      { is_active: false, last_run_status: 'SKIPPED' },
+      {
+        where: {
+          type: {
+            [Op.in]: [
+              'PAPER_TRADING_AUTO_SYNC',
+              'PAPER_TRADING_RISK_CHECK',
+              'PAPER_TRADING_TRAILING_STOP_UPDATE',
+              'PAPER_TRADING_TRAILING_STOP_CHECK',
+              'PAPER_TRADING_INDUSTRY_CONCENTRATION_CHECK',
+              'PAPER_TRADING_DRAWDOWN_BREAKER_CHECK',
+              'PAPER_TRADING_PER_STOCK_STOP_LOSS_CHECK',
+              'PAPER_TRADING_DAILY_PLAN',
+            ],
+          },
+        },
+      }
+    );
   }
 
   async createTask(data: any, auditContext: any = {}) {

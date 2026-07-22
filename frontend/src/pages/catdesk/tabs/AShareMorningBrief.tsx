@@ -19,6 +19,8 @@ import {
   loadRecommendationCandidateFeed,
   type RecommendationCandidateLoadResult,
 } from './recommendationCandidates';
+import { useResearchTradingLoop } from '../shared/useResearchTradingLoop';
+import { ResearchLoopStatusStrip } from '../shared/ResearchLoopStatusStrip';
 
 interface MorningFilters {
   sector: string | null;
@@ -56,6 +58,7 @@ export default function AShareMorningBrief() {
     []
   );
   const data = loadResult?.kind === 'ready' ? loadResult.feed : null;
+  const { data: loopDashboard } = useResearchTradingLoop();
   const namedCandidates = useStockNameHydration(data?.candidates ?? []);
 
   const filtered = useMemo(() => {
@@ -124,6 +127,7 @@ export default function AShareMorningBrief() {
         }
         updatedAt={data.kpi.updated_at}
       />
+      <ResearchLoopStatusStrip dashboard={loopDashboard} focus="morning" />
       <MorningFilterBar
         sector={filters.sector}
         catalystKind={filters.catalystKind}
@@ -147,6 +151,13 @@ export default function AShareMorningBrief() {
       <MorningBriefTable
         data={filtered}
         loading={false}
+        loopDecisions={
+          loopDashboard?.research.morning.fresh &&
+          loopDashboard.research.multibagger.fresh &&
+          loopDashboard.latest_run?.is_current
+            ? loopDashboard.latest_run.decisions
+            : []
+        }
         onRowClick={r => handleRowSelect(r)}
         selectedSymbol={selectedRow?.symbol ?? null}
       />

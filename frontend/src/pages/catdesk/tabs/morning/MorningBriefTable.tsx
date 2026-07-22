@@ -2,6 +2,7 @@ import { Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { CandidateListEntry, CatalystKind } from '../c1Types';
 import { CATALYST_LABELS, RATING_LABELS } from '../../shared/uiLabels';
+import type { ResearchLoopDecisionView } from 'services/researchTradingLoopService';
 
 const CATALYST_KIND_COLOR: Record<CatalystKind, string> = {
   earnings: 'blue',
@@ -26,9 +27,27 @@ interface Props {
   loading?: boolean;
   onRowClick: (row: CandidateListEntry) => void;
   selectedSymbol: string | null;
+  loopDecisions?: ResearchLoopDecisionView[];
 }
 
-export function MorningBriefTable({ data, loading, onRowClick, selectedSymbol }: Props) {
+function loopDecisionFor(
+  symbol: string,
+  decisions: ResearchLoopDecisionView[]
+): ResearchLoopDecisionView | undefined {
+  const code = symbol.slice(-6);
+  return decisions.find(decision => decision.symbol === symbol || decision.symbol.endsWith(code));
+}
+
+const ACTION_LABEL = { BUY: '买入', HOLD: '持有', SELL: '卖出' } as const;
+const ACTION_COLOR = { BUY: 'red', HOLD: 'green', SELL: 'blue' } as const;
+
+export function MorningBriefTable({
+  data,
+  loading,
+  onRowClick,
+  selectedSymbol,
+  loopDecisions = [],
+}: Props) {
   const columns: ColumnsType<CandidateListEntry> = [
     {
       title: '代码',
@@ -96,23 +115,17 @@ export function MorningBriefTable({ data, loading, onRowClick, selectedSymbol }:
       },
     },
     {
-      title: '操作',
+      title: '闭环动作',
       key: 'action',
-      width: 60,
-      render: () => (
-        <button
-          type="button"
-          style={{
-            color: 'var(--cd-accent)',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            padding: 0,
-          }}
-        >
-          详情
-        </button>
-      ),
+      width: 100,
+      render: (_, row) => {
+        const decision = loopDecisionFor(row.symbol, loopDecisions);
+        return decision ? (
+          <Tag color={ACTION_COLOR[decision.action]}>{ACTION_LABEL[decision.action]}</Tag>
+        ) : (
+          <Tag>观察</Tag>
+        );
+      },
     },
   ];
 
