@@ -343,6 +343,14 @@ function testPipelineContracts() {
     /type: 'PAPER_TRADING_DAILY_DIGEST'[\s\S]{0,400}parameters[^\n]*portfolio_id/
   );
   assert.match(
+    schedulerRetirementBlock,
+    /is_active: true[\s\S]{0,240}name: '飞书当日交易日报'[\s\S]{0,240}NOT \(\"parameters\" \? 'portfolio_id'\)/
+  );
+  assert.match(
+    migrationRetirementBlock,
+    /SET is_active = TRUE[\s\S]{0,240}name = '飞书当日交易日报'[\s\S]{0,240}NOT \(parameters \? 'portfolio_id'\)/
+  );
+  assert.match(
     deployment,
     /APPLY_RESEARCH_TRADING_LOOP_MIGRATION=1[\s\S]{0,120}apply-research-trading-loop-migration\.js/
   );

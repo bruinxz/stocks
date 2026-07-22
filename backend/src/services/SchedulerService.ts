@@ -7390,6 +7390,23 @@ class SchedulerService {
         },
       }
     );
+
+    // 研究闭环只保留一条面向用户的常规通知：交易日收盘后的通用日报。
+    // findOrCreate 不会覆盖历史库中 is_active=false 的同名行，所以这里显式恢复；
+    // 否则旧 portfolio-scoped 日报被退役后，生产会进入“没有任何闭环日报”的状态。
+    await ScheduledTask.update(
+      { is_active: true },
+      {
+        where: {
+          type: 'PAPER_TRADING_DAILY_DIGEST',
+          name: '飞书当日交易日报',
+          [Op.and]: [
+            literal(`NOT ("parameters" ? 'portfolio_id')`),
+            literal(`NOT ("parameters" ? 'portfolio_name')`),
+          ],
+        },
+      }
+    );
   }
 
   async createTask(data: any, auditContext: any = {}) {

@@ -191,4 +191,14 @@ UPDATE scheduled_tasks
      OR parameters ? 'portfolio_name'
    );
 
+-- 闭环保留的唯一常规用户通知：不绑定历史组合的全用户交易日报。
+-- 历史环境里这条任务可能曾被人工停用；本次彻底重构明确恢复它。
+UPDATE scheduled_tasks
+   SET is_active = TRUE,
+       updated_at = NOW()
+ WHERE type = 'PAPER_TRADING_DAILY_DIGEST'
+   AND name = '飞书当日交易日报'
+   AND NOT (parameters ? 'portfolio_id')
+   AND NOT (parameters ? 'portfolio_name');
+
 COMMIT;
