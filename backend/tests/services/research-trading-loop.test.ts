@@ -311,6 +311,14 @@ function testPipelineContracts() {
     );
   }
   assert.match(
+    migrationRetirementBlock,
+    /type = 'PAPER_TRADING_DAILY_DIGEST'[\s\S]{0,300}parameters \? 'portfolio_id'/
+  );
+  assert.match(
+    schedulerRetirementBlock,
+    /type: 'PAPER_TRADING_DAILY_DIGEST'[\s\S]{0,400}parameters[^\n]*portfolio_id/
+  );
+  assert.match(
     deployment,
     /APPLY_RESEARCH_TRADING_LOOP_MIGRATION=1[\s\S]{0,120}apply-research-trading-loop-migration\.js/
   );

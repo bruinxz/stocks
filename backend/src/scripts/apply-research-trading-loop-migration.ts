@@ -30,17 +30,26 @@ async function assertResearchTradingLoopSchema(): Promise<void> {
        (SELECT COUNT(*)::int FROM runtime_data_migrations
          WHERE migration_key = '2026-07-22-research-trading-loop-reset-v1') AS marker_count,
        (SELECT COUNT(*)::int FROM scheduled_tasks
-         WHERE is_active = TRUE AND type IN (
-           'PAPER_TRADING_AUTO_SYNC',
-           'PAPER_TRADING_RISK_CHECK',
-           'PAPER_TRADING_TRAILING_STOP_UPDATE',
-           'PAPER_TRADING_TRAILING_STOP_CHECK',
-           'PAPER_TRADING_INDUSTRY_CONCENTRATION_CHECK',
-           'PAPER_TRADING_DRAWDOWN_BREAKER_CHECK',
-           'PAPER_TRADING_PER_STOCK_STOP_LOSS_CHECK',
-           'PAPER_TRADING_DAILY_PLAN',
-           'PAPER_TRADING_ATTRIBUTION_REPORT',
-           'RECOMMENDATION_TRADE_OUTCOME_REFRESH'
+         WHERE is_active = TRUE AND (
+           type IN (
+             'PAPER_TRADING_AUTO_SYNC',
+             'PAPER_TRADING_RISK_CHECK',
+             'PAPER_TRADING_TRAILING_STOP_UPDATE',
+             'PAPER_TRADING_TRAILING_STOP_CHECK',
+             'PAPER_TRADING_INDUSTRY_CONCENTRATION_CHECK',
+             'PAPER_TRADING_DRAWDOWN_BREAKER_CHECK',
+             'PAPER_TRADING_PER_STOCK_STOP_LOSS_CHECK',
+             'PAPER_TRADING_DAILY_PLAN',
+             'PAPER_TRADING_ATTRIBUTION_REPORT',
+             'RECOMMENDATION_TRADE_OUTCOME_REFRESH'
+           ) OR (
+             type = 'PAPER_TRADING_DAILY_DIGEST'
+             AND (
+               name <> '飞书当日交易日报'
+               OR parameters ? 'portfolio_id'
+               OR parameters ? 'portfolio_name'
+             )
+           )
          )) AS legacy_active_task_count`,
     { type: QueryTypes.SELECT }
   );
