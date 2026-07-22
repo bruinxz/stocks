@@ -12,11 +12,9 @@
  *     - normalizeNotificationConfig（缺失 / 部分字段 / 非法 boolean / 非法 string / 嵌套 null）
  *     - shouldSendForUser（4 路径：未启用 / digest 关 / 缺 URL / 通过；env fallback）
  *     - pickTopTrades（空 / 反向过滤 / 按 amount 降序 / tie-break stable / cap）
- *     - pickTopCandidates（ETF 轮动候选 / 缺 strategy 跳过 / cap / score 降序 + tie-break / NaN score 在末位）
  *     - computePnLSummary（prev 缺失 fallback initial_capital / pct 计算 / prev<=0 时 null）
  *     - buildPnLLine（正/负/0 / pct null / sign 前缀）
  *     - formatTradeLine（BUY / SELL with realized_pnl）
- *     - formatCandidateLine（ETF 轮动 label / score 缺失 / reason 截断）
  *     - formatMoney（千分位 / 小数 / 负数 / 0 / NaN）
  *     - formatPercent（正/负/0/NaN）
  *     - buildDigestId（YYYYMMDD 拆分 / rand4 padding）
@@ -32,9 +30,7 @@
  *     - dry_run=true → status='sent' 但 sent=false skip_reason='dry_run' webhook 未调用；
  *     - listEligibleUsers throw → 顶层 catch → 返回空 per_user；
  *     - 多个 user：A 成功 + B 失败 → per_user 各自独立 status 不串扰；
- *     - per_strategy_limit override 透传给 loadTomorrowCandidates；
  *     - per_direction_trade_limit cap 生效；
- *     - candidates load 失败 → 仍发送（candidates 空）。
  */
 
 import {
@@ -42,18 +38,15 @@ import {
   DailyTradingDigestDataSource,
   NotificationChannelsConfig,
   DigestTradeRow,
-  DigestCandidateRow,
   DigestPayload,
   DIGEST_STATUS,
   DEFAULT_NOTIFICATION_CONFIG,
   normalizeNotificationConfig,
   shouldSendForUser,
   pickTopTrades,
-  pickTopCandidates,
   computePnLSummary,
   buildPnLLine,
   formatTradeLine,
-  formatCandidateLine,
   formatMoney,
   formatPercent,
   buildDigestId,
@@ -111,10 +104,6 @@ interface FakeState {
   >;
   /** portfolio_id → recent snapshots（DESC by date） */
   snapshots?: Record<number, Array<{ date: string; total_value: number }>>;
-  /** 候选 list */
-  candidates?: DigestCandidateRow[];
-  /** loadTomorrowCandidates throw 模拟 */
-  candidatesShouldThrow?: boolean;
   /** listEligibleUsers throw 模拟 */
   listShouldThrow?: boolean;
   /** loadPortfolioSummary throw 模拟（user_id 粒度） */
@@ -167,10 +156,6 @@ function makeFakeDataSource(state: FakeState): {
         throw new Error('mock loadRecentSnapshots throw');
       }
       return (state.snapshots?.[portfolio_id] || []).slice();
-    },
-    async loadTomorrowCandidates(_opts) {
-      if (state.candidatesShouldThrow) throw new Error('mock loadTomorrowCandidates throw');
-      return (state.candidates || []).slice();
     },
     async sendFeishuCard(payload, webhook_url) {
       if (state.sendShouldThrow) throw new Error('mock sendFeishuCard throw');
@@ -337,44 +322,6 @@ function testPickTopTrades(): void {
 }
 
 // ---------------------------------------------------------------------------
-// pickTopCandidates
-// ---------------------------------------------------------------------------
-
-function testPickTopCandidates(): void {
-  assertEqual('empty', pickTopCandidates([], 5), []);
-
-  const cands: DigestCandidateRow[] = [
-    { strategy: 'etf_rotation', symbol: 'ETF-1', score: 90 },
-    { strategy: 'etf_rotation', symbol: 'ETF-2', score: 80 },
-    { strategy: 'etf_rotation', symbol: 'ETF-3', score: 70 },
-    { strategy: 'etf_rotation', symbol: 'ETF-B-NaN', score: NaN },
-    { strategy: 'etf_rotation', symbol: 'ETF-A-NoScore' },
-    { strategy: 'etf_rotation', symbol: 'ETF-tie', score: 90 },
-  ];
-
-  const all = pickTopCandidates(cands, 10);
-  const etfSymbols = all.map(c => c.symbol);
-  assertEqual('ETF tie-break ETF-1 before ETF-tie', etfSymbols.slice(0, 2), ['ETF-1', 'ETF-tie']);
-  assertEqual('ETF finite scores descend', etfSymbols.slice(2, 4), ['ETF-2', 'ETF-3']);
-  assertEqual('ETF missing/NaN scores sort last by symbol', etfSymbols.slice(4), [
-    'ETF-A-NoScore',
-    'ETF-B-NaN',
-  ]);
-
-  const limited = pickTopCandidates(cands, 1);
-  assertEqual('cap 1 for ETF rotation', limited.map(c => c.symbol), ['ETF-1']);
-
-  const badCands: DigestCandidateRow[] = [
-    { strategy: '' as any, symbol: 'X', score: 1 },
-    { strategy: 'etf_rotation', symbol: '', score: 1 },
-    { strategy: 'etf_rotation', symbol: 'GOOD', score: 1 },
-  ];
-  const filtered = pickTopCandidates(badCands, 5);
-  assertEqual('filtered invalid rows', filtered.length, 1);
-  assertEqual('filtered keeps GOOD', filtered[0].symbol, 'GOOD');
-}
-
-// ---------------------------------------------------------------------------
 // computePnLSummary
 // ---------------------------------------------------------------------------
 
@@ -525,40 +472,6 @@ function testFormatTradeLine(): void {
 }
 
 // ---------------------------------------------------------------------------
-// formatCandidateLine
-// ---------------------------------------------------------------------------
-
-function testFormatCandidateLine(): void {
-  const etf = formatCandidateLine({
-    strategy: 'etf_rotation',
-    symbol: '159995',
-    name: '芯片ETF华夏',
-    score: 91.2,
-  });
-  assert('ETF rotation label', etf.includes('[ETF轮动]'));
-  assert('ETF rotation score', etf.includes('分 91.2'));
-
-  const noScore = formatCandidateLine({
-    strategy: 'etf_rotation',
-    symbol: '512290',
-    score: null,
-    reason: '高质量低波',
-  });
-  assert('ETF rotation no score', !noScore.includes('分'));
-  assert('ETF rotation reason', noScore.includes('— 高质量低波'));
-
-  const u = formatCandidateLine({ strategy: 'unknown' as any, symbol: 'X' });
-  assert('unknown label', u.includes('[unknown]'));
-
-  const long = formatCandidateLine({
-    strategy: 'etf_rotation',
-    symbol: 'X',
-    reason: '一'.repeat(100),
-  });
-  assert('long reason truncated', long.length < 80);
-}
-
-// ---------------------------------------------------------------------------
 // formatMoney / formatPercent
 // ---------------------------------------------------------------------------
 
@@ -623,9 +536,6 @@ function testBuildDigestCard(): void {
     trades_today_sell: [],
     trades_today_buy_count: 1,
     trades_today_sell_count: 0,
-    candidates_tomorrow: [
-      { strategy: 'etf_rotation', symbol: '159995', name: '芯片ETF华夏', score: 91.2 },
-    ],
   };
   const card = buildDigestCard(payload);
 
@@ -643,8 +553,8 @@ function testBuildDigestCard(): void {
   assert('BUY count 1 笔', allMd.includes('今日新增买入 1 笔'));
   assert('SELL count 0 笔', allMd.includes('今日新增卖出 0 笔'));
   assert('SELL empty placeholder', allMd.includes('暂无新增卖出'));
-  assert('candidates section', allMd.includes('明日候选'));
-  assert('candidate row', allMd.includes('159995') && allMd.includes('芯片ETF华夏'));
+  assert('legacy candidate section removed', !allMd.includes('明日候选'));
+  assert('legacy ETF rotation removed', !allMd.includes('ETF轮动'));
   assert('footer note', allMd.includes('lym') && allMd.includes('2026-06-08'));
 
   const lossCard = buildDigestCard({
@@ -669,10 +579,6 @@ function testBuildDigestCard(): void {
   const emptyMd = JSON.stringify(emptyTrades.card.elements);
   assert('empty buy placeholder', emptyMd.includes('暂无新增买入'));
   assert('empty sell placeholder', emptyMd.includes('暂无新增卖出'));
-
-  const noCand = buildDigestCard({ ...payload, candidates_tomorrow: [] });
-  const noCandMd = JSON.stringify(noCand.card.elements);
-  assert('empty candidates placeholder', noCandMd.includes('今日策略无候选'));
 
   const truncated = buildDigestCard({
     ...payload,
@@ -722,10 +628,6 @@ async function testSendDigestsHappyPath(): Promise<void> {
       ],
     },
     snapshots: { 100: [{ date: '2026-06-07', total_value: 205000 }] },
-    candidates: [
-      { strategy: 'etf_rotation', symbol: '159995', name: '芯片ETF华夏', score: 91.2 },
-      { strategy: 'etf_rotation', symbol: '512290', name: '生物医药ETF国联', score: 88.5 },
-    ],
     sendResult: { success: true, data: { code: 0 } },
   });
   const svc = new DailyTradingDigestService(ds);
@@ -741,7 +643,6 @@ async function testSendDigestsHappyPath(): Promise<void> {
   assert('payload exists', !!u.payload);
   assertEqual('payload trade_buy_count', u.payload!.trades_today_buy_count, 1);
   assertEqual('payload trade_sell_count', u.payload!.trades_today_sell_count, 1);
-  assertEqual('payload candidates count', u.payload!.candidates_tomorrow.length, 2);
   assertEqual('payload pnl_today', u.payload!.pnl.pnl_today, 5000);
   assertEqual('sentLog count 1', state.sentLog!.length, 1);
   assertEqual('sentLog url', state.sentLog![0].webhook_url, 'https://hooks.example.com/webhook-A');
@@ -883,35 +784,6 @@ async function testSendDigestsMultipleUsersIsolated(): Promise<void> {
   assertEqual('user 3 skipped', byId.get(3)!.status, DIGEST_STATUS.SKIPPED);
 }
 
-async function testSendDigestsPerStrategyLimitPropagates(): Promise<void> {
-  const { ds } = makeFakeDataSource({
-    users: [{ user_id: 42, username: 'lym', config: makeBaseConfig() }],
-    portfolios: { 42: makePortfolioPair({ user_id: 42, portfolio_id: 100 }) },
-    candidates: Array.from({ length: 8 }, (_, i) => ({
-      strategy: 'etf_rotation' as const,
-      symbol: `S${i.toString().padStart(2, '0')}`,
-      score: 100 - i,
-    })),
-  });
-  const svc = new DailyTradingDigestService(ds);
-  const r = await svc.sendDigests({ trade_date: '2026-06-08', per_strategy_limit: 3 });
-  const u = r.per_user[0];
-  assertEqual('candidates capped', u.payload!.candidates_tomorrow.length, 3);
-}
-
-async function testSendDigestsCandidatesFailureNonBlocking(): Promise<void> {
-  const { ds } = makeFakeDataSource({
-    users: [{ user_id: 42, username: 'lym', config: makeBaseConfig() }],
-    portfolios: { 42: makePortfolioPair({ user_id: 42, portfolio_id: 100 }) },
-    candidatesShouldThrow: true,
-  });
-  const svc = new DailyTradingDigestService(ds);
-  const r = await svc.sendDigests({ trade_date: '2026-06-08' });
-  assertEqual('sent despite no candidates', r.sent_count, 1);
-  const u = r.per_user[0];
-  assertEqual('candidates empty fallback', u.payload!.candidates_tomorrow.length, 0);
-}
-
 async function testSendDigestsPerDirectionTradeLimit(): Promise<void> {
   const { ds } = makeFakeDataSource({
     users: [{ user_id: 42, username: 'lym', config: makeBaseConfig() }],
@@ -989,11 +861,9 @@ async function main(): Promise<void> {
   testNormalizeNotificationConfig();
   testShouldSendForUser();
   testPickTopTrades();
-  testPickTopCandidates();
   testComputePnLSummary();
   testBuildPnLLine();
   testFormatTradeLine();
-  testFormatCandidateLine();
   testFormatMoney();
   testFormatPercent();
   testBuildDigestId();
@@ -1008,8 +878,6 @@ async function main(): Promise<void> {
   await testSendDigestsDryRun();
   await testSendDigestsListThrowsTopLevel();
   await testSendDigestsMultipleUsersIsolated();
-  await testSendDigestsPerStrategyLimitPropagates();
-  await testSendDigestsCandidatesFailureNonBlocking();
   await testSendDigestsPerDirectionTradeLimit();
   await testSendDigestsSnapshotsFailureNonBlocking();
   await testSendDigestsTradesFailureNonBlocking();

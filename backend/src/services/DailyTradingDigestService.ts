@@ -5,7 +5,6 @@
  *   1. 账户当日盈亏（绝对 + 百分比，对比昨日 snapshot）
  *   2. 新增 N 笔买入（前 3 只详情）
  *   3. 新增 M 笔卖出（前 3 只详情）
- *   4. 明日 3 个策略（MultiFactorAlpha / DragonHead / EarningsSurprise）候选 top 5
  *
  * 然后通过 FeishuBotWebhookService.sendDailyDigestCard() 发送 interactive card 到
  * 该用户的 webhook URL（存在 `User.risk_config.notification_channels.feishu.webhook_url`）。
@@ -13,7 +12,7 @@
  * 设计遵循 US-055 引入的 6 项 AI/通知 service checklist（progress.txt 已记录）：
  *  (1) DataSource 接口注入（DailyTradingDigestDataSource + Default impl + PRODUCTION singleton）
  *  (2) 7+ 个 export 纯函数（normalizeNotificationConfig / pickTopTrades / buildPnLLine /
- *      formatCandidateLine / buildDigestCard / pickTopCandidates / formatPercent / formatMoney /
+ *      buildDigestCard / formatPercent / formatMoney /
  *      shouldSendForUser / buildDigestId / computePnLSummary）
  *  (3) plain-object 返回类型（DigestForUserResult、SendDigestsResult、sent: boolean 字段）
  *  (4) status='partial'/'failed'/'sent' 仍正常返回让 caller 看到——AI/Feishu 调用昂贵
@@ -34,7 +33,6 @@ import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
 import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
-import { Stock } from '../models/Stock';
 import { feishuBotWebhookService, FeishuBotWebhookSendResult } from './FeishuBotWebhookService';
 import { AUTONOMOUS_PORTFOLIO_NAME } from '../portfolio/internal/PaperTradingPortfolioFamilies';
 
@@ -52,9 +50,7 @@ export const DIGEST_STATUS = Object.freeze({
 export type DigestStatus = (typeof DIGEST_STATUS)[keyof typeof DIGEST_STATUS];
 
 export const DEFAULT_TOP_TRADES = 3;
-export const DEFAULT_TOP_CANDIDATES = 5;
 export const MAX_TOP_TRADES = 10;
-export const MAX_TOP_CANDIDATES = 20;
 
 /**
  * 通知 channel 配置（feishu / email / wechat / sms）— 当前 US-063 只用 feishu.daily_digest。
@@ -156,19 +152,6 @@ export interface DigestTradeRow {
   realized_pnl?: number | null;
 }
 
-export interface DigestCandidateRow {
-  symbol: string;
-  name?: string | null;
-  /** 'etf_rotation' — 信号优先重构 批5: 主线唯一为 ETF 因子轮动 */
-  strategy: 'etf_rotation';
-  /** 排序分 (ETF 四因子 total_score) */
-  score?: number | null;
-  /** 一句话原因摘要 */
-  reason?: string | null;
-  /** ETF 目标权重 (0..0.15) */
-  target_weight?: number | null;
-}
-
 export interface DigestPnLSummary {
   /** 当前总资产 */
   total_value: number;
@@ -195,7 +178,6 @@ export interface DigestPayload {
   trades_today_sell: DigestTradeRow[];
   trades_today_buy_count: number;
   trades_today_sell_count: number;
-  candidates_tomorrow: DigestCandidateRow[];
 }
 
 export interface DigestForUserResult {
@@ -233,8 +215,6 @@ export interface SendDigestsOptions {
   trade_date?: string;
   /** 不实际推送，只返回 payload，用于预演 */
   dry_run?: boolean;
-  /** 每策略候选 cap，缺省 5（AC 要求） */
-  per_strategy_limit?: number;
   /** 每方向 trade cap，缺省 3（AC 要求） */
   per_direction_trade_limit?: number;
 }
@@ -263,11 +243,6 @@ export interface DailyTradingDigestDataSource {
     portfolio_id: number,
     limit: number
   ): Promise<Array<{ date: string; total_value: number }>>;
-  /** 取明日 3 个策略候选（top per_strategy_limit）— 真实生产用 todaySignalsService.getTodaySignals() */
-  loadTomorrowCandidates(options: {
-    trade_date: string;
-    per_strategy_limit: number;
-  }): Promise<DigestCandidateRow[]>;
   /** 调用 FeishuBotWebhookService.sendDailyDigestCard(payload, webhook_url) */
   sendFeishuCard(payload: DigestPayload, webhook_url: string): Promise<FeishuBotWebhookSendResult>;
 }
@@ -386,44 +361,6 @@ export function pickTopTrades(
 }
 
 /**
- * 从混合 candidates（多策略）按 strategy 分桶后各取 top-N。
- * 输入是已聚合好的 list（DataSource.loadTomorrowCandidates 输出），本函数做安全 cap + 排序。
- */
-export function pickTopCandidates(
-  rows: DigestCandidateRow[],
-  per_strategy_limit: number
-): DigestCandidateRow[] {
-  if (!Array.isArray(rows) || rows.length === 0) return [];
-  const cap = clampInt(per_strategy_limit, DEFAULT_TOP_CANDIDATES, 1, MAX_TOP_CANDIDATES);
-  const buckets = new Map<string, DigestCandidateRow[]>();
-  for (const row of rows) {
-    if (!row?.strategy || !row?.symbol) continue;
-    const arr = buckets.get(row.strategy) || [];
-    arr.push(row);
-    buckets.set(row.strategy, arr);
-  }
-  // 按 score 降序 stable tie-break by symbol asc
-  // 注意：必须显式 null/undefined check 防 `Number(null) === 0` 把 null 算成 0 排进有效分（CLAUDE.md US-031）
-  const out: DigestCandidateRow[] = [];
-  for (const [, arr] of buckets) {
-    arr.sort((a, b) => {
-      const sa =
-        a.score !== null && a.score !== undefined && Number.isFinite(Number(a.score))
-          ? Number(a.score)
-          : -Infinity;
-      const sb =
-        b.score !== null && b.score !== undefined && Number.isFinite(Number(b.score))
-          ? Number(b.score)
-          : -Infinity;
-      if (sb !== sa) return sb - sa;
-      return (a.symbol || '').localeCompare(b.symbol || '');
-    });
-    out.push(...arr.slice(0, cap));
-  }
-  return out;
-}
-
-/**
  * 计算 PnL summary：基于当前 portfolio 与最近 snapshot。
  * 无 snapshot 时（首日 / 新户）用 initial_capital 作为 prev 兜底。
  */
@@ -478,20 +415,6 @@ export function formatTradeLine(row: DigestTradeRow): string {
       ? ` 盈亏 ${(row.realized_pnl as number) > 0 ? '+' : ''}${formatMoney(row.realized_pnl)}`
       : '';
   return `${row.symbol} ${name} ${tag} ${qty} ${price} ${amount}${pnl}`;
-}
-
-/**
- * 一行候选："[多因子] 600519 贵州茅台 综合分 91.2 — 高质量+低波"
- */
-export function formatCandidateLine(row: DigestCandidateRow): string {
-  const label = row.strategy === 'etf_rotation' ? '[ETF轮动]' : `[${row.strategy}]`;
-  const name = row.name ? `${row.symbol} ${row.name}` : row.symbol;
-  // 注意：必须显式 null/undefined check 防 `Number(null) === 0` JS 大坑（CLAUDE.md US-031）
-  const hasScore =
-    row.score !== null && row.score !== undefined && Number.isFinite(Number(row.score));
-  const score = hasScore ? ` 分 ${Number(row.score).toFixed(1)}` : '';
-  const reason = row.reason ? ` — ${safeText(row.reason, 28)}` : '';
-  return `${label} ${name}${score}${reason}`;
 }
 
 /**
@@ -601,23 +524,7 @@ export function buildDigestCard(payload: DigestPayload): {
   }
   elements.push({ tag: 'hr' });
 
-  // Section 4: Tomorrow candidates
-  elements.push({
-    tag: 'div',
-    text: { tag: 'lark_md', content: `**明日候选（3 策略 × Top 5）**` },
-  });
-  if (payload.candidates_tomorrow.length > 0) {
-    for (const c of payload.candidates_tomorrow) {
-      elements.push({
-        tag: 'div',
-        text: { tag: 'lark_md', content: `• ${formatCandidateLine(c)}` },
-      });
-    }
-  } else {
-    elements.push({ tag: 'div', text: { tag: 'lark_md', content: '_今日策略无候选_' } });
-  }
-
-  // Section 5: 宏观环境 (从 payload.macro_snapshot 取 — caller 提前拉好)
+  // Section 4: 宏观环境 (从 payload.macro_snapshot 取 — caller 提前拉好)
   if ((payload as any).macro_snapshot) {
     const snap = (payload as any).macro_snapshot;
     elements.push({ tag: 'hr' });
@@ -835,82 +742,6 @@ export class DefaultDailyTradingDigestDataSource implements DailyTradingDigestDa
     return rows.map(r => ({ date: r.date, total_value: Number(r.total_value) }));
   }
 
-  async loadTomorrowCandidates(options: {
-    trade_date: string;
-    per_strategy_limit: number;
-  }): Promise<DigestCandidateRow[]> {
-    // Lazy require 避免 cycle：DailyTradingDigestService → TodaySignalsService → strategies
-    let signals: any;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { todaySignalsService } = require('./TodaySignalsService');
-      signals = await todaySignalsService.getTodaySignals({
-        trade_date: options.trade_date,
-      });
-    } catch (err: any) {
-      logger.warn(
-        `[DailyTradingDigest] loadTomorrowCandidates 失败 trade_date=${options.trade_date}: ${
-          err?.message || err
-        }`
-      );
-      return [];
-    }
-
-    const out: DigestCandidateRow[] = [];
-    // ETF 因子轮动 — 取 BUY/HOLD (target_weight > 0) 作为明日候选, 按 total_score 排序
-    const etfSignals: any[] = Array.isArray(signals?.etf_rotation?.signals)
-      ? signals.etf_rotation.signals
-      : [];
-    const picks = etfSignals
-      .filter(s => s?.action === 'buy' || s?.action === 'hold' || Number(s?.target_weight) > 0)
-      .sort((a, b) => Number(b?.score ?? 0) - Number(a?.score ?? 0));
-    for (const s of picks.slice(0, options.per_strategy_limit)) {
-      out.push({
-        strategy: 'etf_rotation',
-        symbol: String(s.etf_code || s.symbol || '').trim(),
-        name: s.name || null,
-        score: Number.isFinite(Number(s.score)) ? Number(s.score) : null,
-        reason: Array.isArray(s.reasons) && s.reasons.length ? String(s.reasons[0]) : null,
-        target_weight: Number.isFinite(Number(s.target_weight)) ? Number(s.target_weight) : null,
-      });
-    }
-    // 兜底：strategy 没填 name 时按 stock_code 批量回查 Stock 表填回去
-    const missingNameCodes = out.filter(r => !r.name && r.symbol).map(r => r.symbol);
-    if (missingNameCodes.length > 0) {
-      try {
-        const stockRows: any[] = await Stock.findAll({
-          attributes: ['symbol', 'name'],
-          // Stock.symbol 形如 'sh.600519'，stock_code 是 '600519'
-          where: {
-            [Op.or]: [
-              { symbol: { [Op.in]: missingNameCodes } },
-              ...missingNameCodes.map(c => ({
-                symbol: { [Op.like]: `%.${c}` },
-              })),
-            ],
-          },
-          raw: true,
-        });
-        const nameMap = new Map<string, string>();
-        for (const r of stockRows) {
-          const symbol: string = r.symbol;
-          // 去前缀 sh./sz./bj. 当 code 用
-          const pureCode = symbol.includes('.') ? symbol.split('.').pop() || symbol : symbol;
-          if (r.name) nameMap.set(pureCode, r.name);
-        }
-        for (const row of out) {
-          if (!row.name && nameMap.has(row.symbol)) {
-            row.name = nameMap.get(row.symbol) || null;
-          }
-        }
-      } catch (err: any) {
-        logger.debug(`[DailyTradingDigest] 回查 Stock 名称失败: ${err?.message || err}`);
-      }
-    }
-
-    return out.filter(r => !!r.symbol);
-  }
-
   async sendFeishuCard(payload: DigestPayload, webhook_url: string) {
     return feishuBotWebhookService.sendDailyDigestCard(payload, webhook_url, {
       buildCard: buildDigestCard,
@@ -941,12 +772,6 @@ export class DailyTradingDigestService {
   async sendDigests(options: SendDigestsOptions = {}): Promise<SendDigestsResult> {
     const tradeDate = options.trade_date || nowShanghaiDate();
     const dryRun = options.dry_run === true;
-    const perStrategyLimit = clampInt(
-      options.per_strategy_limit,
-      DEFAULT_TOP_CANDIDATES,
-      1,
-      MAX_TOP_CANDIDATES
-    );
     const perDirectionTradeLimit = clampInt(
       options.per_direction_trade_limit,
       DEFAULT_TOP_TRADES,
@@ -971,22 +796,6 @@ export class DailyTradingDigestService {
       };
     }
 
-    // 候选只算一次，所有 user 共享（明日候选不因 user 而异）
-    let candidates: DigestCandidateRow[] = [];
-    try {
-      const raw = await this.dataSource.loadTomorrowCandidates({
-        trade_date: tradeDate,
-        per_strategy_limit: perStrategyLimit,
-      });
-      candidates = pickTopCandidates(raw, perStrategyLimit);
-    } catch (err: any) {
-      logger.warn(
-        `[DailyTradingDigest] loadTomorrowCandidates 失败 trade_date=${tradeDate}: ${
-          err?.message || err
-        }`
-      );
-    }
-
     const hasFallbackEnv = !!(
       process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK
     );
@@ -1002,7 +811,6 @@ export class DailyTradingDigestService {
           user_id: user.user_id,
           username: user.username,
           config: user.config,
-          candidates,
           trade_date: tradeDate,
           dry_run: dryRun,
           per_direction_trade_limit: perDirectionTradeLimit,
@@ -1050,7 +858,6 @@ export class DailyTradingDigestService {
     user_id: number;
     username: string;
     config: NotificationChannelsConfig;
-    candidates: DigestCandidateRow[];
     trade_date: string;
     dry_run: boolean;
     per_direction_trade_limit: number;
@@ -1060,7 +867,6 @@ export class DailyTradingDigestService {
       user_id,
       username,
       config,
-      candidates,
       trade_date,
       dry_run,
       per_direction_trade_limit,
@@ -1174,7 +980,6 @@ export class DailyTradingDigestService {
       trades_today_sell: sells,
       trades_today_buy_count: buyCount,
       trades_today_sell_count: sellCount,
-      candidates_tomorrow: candidates,
     };
 
     // 加宏观环境 snapshot（fail-safe: 拉不到不影响日报）

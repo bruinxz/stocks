@@ -3055,9 +3055,9 @@ class SchedulerService {
         );
       } else if (task.type === 'PAPER_TRADING_DAILY_DIGEST') {
         // US-063 — 每日收盘后 (默认 15:30) 给所有 notification_channels.feishu.daily_digest=true
-        // 的用户发飞书 interactive card 日报（PnL / 新增 BUY/SELL / 明日候选）。
+        // 的用户发飞书 interactive card 日报（研究闭环 PnL / 新增 BUY/SELL）。
         // `user_id` 可选；不传 = 扫所有 is_active=true 用户。`dry_run`=true 让 ops 预演 payload
-        // 不真发 webhook。`per_strategy_limit` 控制明日候选 cap（默认 5）。
+        // 不真发 webhook。历史多策略“明日候选”已随研究闭环上线彻底删除。
         const targetUserId = parameters.user_id || parameters.userId;
         const dryRun =
           parameters.dry_run !== undefined
@@ -3065,12 +3065,6 @@ class SchedulerService {
             : parameters.dryRun !== undefined
             ? Boolean(parameters.dryRun)
             : false;
-        const perStrategyLimit =
-          parameters.per_strategy_limit !== undefined
-            ? Number(parameters.per_strategy_limit)
-            : parameters.perStrategyLimit !== undefined
-            ? Number(parameters.perStrategyLimit)
-            : undefined;
         const perDirectionTradeLimit =
           parameters.per_direction_trade_limit !== undefined
             ? Number(parameters.per_direction_trade_limit)
@@ -3081,7 +3075,6 @@ class SchedulerService {
           user_id: targetUserId ? Number(targetUserId) : undefined,
           trade_date: parameters.trade_date || parameters.tradeDate,
           dry_run: dryRun,
-          per_strategy_limit: perStrategyLimit,
           per_direction_trade_limit: perDirectionTradeLimit,
         });
         await this.safeUpdateExecutionLog(executionLog, {
@@ -6385,7 +6378,6 @@ class SchedulerService {
         is_active: true,
         parameters: {
           dry_run: false,
-          per_strategy_limit: 5,
           per_direction_trade_limit: 3,
         },
       },
@@ -7406,6 +7398,17 @@ class SchedulerService {
           ],
         },
       }
+    );
+
+    // 旧日报把 ETF 轮动包装成“3 策略明日候选”；研究闭环上线后该输入已删除，
+    // 同步清理存量任务参数，避免运维界面继续暗示这条历史策略仍然生效。
+    await ScheduledTask.update(
+      {
+        parameters: literal(
+          `COALESCE("parameters", '{}'::jsonb) - 'per_strategy_limit' - 'perStrategyLimit'`
+        ) as any,
+      },
+      { where: { type: 'PAPER_TRADING_DAILY_DIGEST' } }
     );
   }
 

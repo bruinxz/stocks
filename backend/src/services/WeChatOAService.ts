@@ -263,7 +263,7 @@ export function buildWeChatMessageId(
  *   keyword1    — 当日盈亏 (e.g. "+1,234.56 (+0.85%)")
  *   keyword2    — 买入笔数（"2 笔"）
  *   keyword3    — 卖出笔数（"1 笔"）
- *   keyword4    — 候选数（"15"）
+ *   keyword4    — 闭环成交数
  *   remark      — 备注（"点击查看完整日报"）
  *
  * 颜色：盈利绿 / 亏损红 / 平 灰，与 buildDigestCard 一致语义。
@@ -285,7 +285,7 @@ export function buildDailyDigestSubscribeData(payload: DigestPayload): WeChatSub
     keyword2: { value: `${payload.trades_today_buy_count} 笔`, color: '#333333' },
     keyword3: { value: `${payload.trades_today_sell_count} 笔`, color: '#333333' },
     keyword4: {
-      value: `${payload.candidates_tomorrow.length} 只候选`,
+      value: `${payload.trades_today_buy_count + payload.trades_today_sell_count} 笔闭环成交`,
       color: '#333333',
     },
     remark: {

@@ -12,7 +12,7 @@ import { buildMorningSections } from './morning/detail/buildMorningSections';
 import { DetailSidebar } from 'shared/components/DetailSidebar';
 import type { CandidateListEntry, CatalystKind } from './c1Types';
 import { DataListToolbar } from '../shared/DataListToolbar';
-import { useStockNameHydration } from '../shared/useStockNameHydration';
+import { useStockNameHydrationState } from '../shared/useStockNameHydration';
 import { CONVICTION_MED_MIN } from '../types';
 import { matchesMorningCatalyst } from './morning/morningFilters';
 import {
@@ -59,7 +59,9 @@ export default function AShareMorningBrief() {
   );
   const data = loadResult?.kind === 'ready' ? loadResult.feed : null;
   const { data: loopDashboard } = useResearchTradingLoop();
-  const namedCandidates = useStockNameHydration(data?.candidates ?? []);
+  const { rows: namedCandidates, loading: namesLoading } = useStockNameHydrationState(
+    data?.candidates ?? []
+  );
 
   const filtered = useMemo(() => {
     let rows = namedCandidates;
@@ -114,6 +116,14 @@ export default function AShareMorningBrief() {
     return <UnavailableState message="推荐服务当前不可用，请稍后重试" />;
   if (!data?.candidates?.length)
     return <EmptyState title="当前尚未生成 A 股推荐快照" variant="simple" />;
+  if (namesLoading)
+    return (
+      <LoadingState
+        title="正在匹配股票名称"
+        description="候选代码已就绪，正在核对证券目录…"
+        mood="working"
+      />
+    );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>

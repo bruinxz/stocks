@@ -347,6 +347,10 @@ function testPipelineContracts() {
     /is_active: true[\s\S]{0,240}name: '飞书当日交易日报'[\s\S]{0,240}NOT \(\"parameters\" \? 'portfolio_id'\)/
   );
   assert.match(
+    schedulerRetirementBlock,
+    /PAPER_TRADING_DAILY_DIGEST'[\s\S]{0,500}per_strategy_limit'[\s\S]{0,120}perStrategyLimit'/
+  );
+  assert.match(
     migrationRetirementBlock,
     /SET is_active = TRUE[\s\S]{0,240}name = '飞书当日交易日报'[\s\S]{0,240}NOT \(parameters \? 'portfolio_id'\)/
   );
