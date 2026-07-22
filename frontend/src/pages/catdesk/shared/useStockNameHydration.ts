@@ -10,6 +10,12 @@ type NamedSymbol = {
 const stockNameCache = new Map<string, string>();
 const ALWAYS_HYDRATE = () => true;
 
+export interface StockNameHydrationState<T> {
+  rows: T[];
+  /** 首次名称目录查询完成前保持 true，调用方可避免先渲染代码再替换成名称。 */
+  loading: boolean;
+}
+
 function stockCode(symbol: string): string {
   const match = symbol.match(/\d{6}/);
   return match?.[0] ?? symbol;
@@ -31,11 +37,12 @@ function needsHydration(row: NamedSymbol): boolean {
   return !row.name || row.name === row.symbol || row.name === stockCode(row.symbol);
 }
 
-export function useStockNameHydration<T extends NamedSymbol>(
+export function useStockNameHydrationState<T extends NamedSymbol>(
   rows: T[],
   shouldHydrate: (row: T) => boolean = ALWAYS_HYDRATE
-): T[] {
-  const [names, setNames] = useState<Record<string, string>>({});
+): StockNameHydrationState<T> {
+  // null 表示已查过但目录中没有名称；这样失败时会稳定回退代码，不会无限重试/闪烁。
+  const [lookups, setLookups] = useState<Record<string, string | null>>({});
   const missingSymbols = useMemo(
     () =>
       Array.from(
@@ -45,13 +52,23 @@ export function useStockNameHydration<T extends NamedSymbol>(
       ),
     [rows, shouldHydrate]
   );
+  const pendingSymbols = useMemo(
+    () =>
+      missingSymbols.filter(
+        symbol =>
+          !stockNameCache.has(symbol) &&
+          !Object.prototype.hasOwnProperty.call(lookups, symbol)
+      ),
+    [lookups, missingSymbols]
+  );
 
   useEffect(() => {
+    if (!pendingSymbols.length) return;
     let cancelled = false;
     const load = async () => {
-      const found: Record<string, string> = {};
+      const found: Record<string, string | null> = {};
       await Promise.all(
-        missingSymbols.map(async symbol => {
+        pendingSymbols.map(async symbol => {
           const cached = stockNameCache.get(symbol);
           if (cached) {
             found[symbol] = cached;
@@ -72,14 +89,17 @@ export function useStockNameHydration<T extends NamedSymbol>(
             if (exact?.name) {
               stockNameCache.set(symbol, exact.name);
               found[symbol] = exact.name;
+            } else {
+              found[symbol] = null;
             }
           } catch {
             // Keep the contract ticker visible when the stock directory is unavailable.
+            found[symbol] = null;
           }
         })
       );
-      if (!cancelled && Object.keys(found).length) {
-        setNames(current => {
+      if (!cancelled) {
+        setLookups(current => {
           const changed = Object.entries(found).some(([symbol, name]) => current[symbol] !== name);
           return changed ? { ...current, ...found } : current;
         });
@@ -89,10 +109,23 @@ export function useStockNameHydration<T extends NamedSymbol>(
     return () => {
       cancelled = true;
     };
-  }, [missingSymbols]);
+  }, [pendingSymbols]);
 
-  return useMemo(
-    () => rows.map(row => (names[row.symbol] ? { ...row, name: names[row.symbol] } : row)),
-    [names, rows]
+  const hydratedRows = useMemo(
+    () =>
+      rows.map(row => {
+        const name = stockNameCache.get(row.symbol) || lookups[row.symbol];
+        return name ? { ...row, name } : row;
+      }),
+    [lookups, rows]
   );
+
+  return { rows: hydratedRows, loading: pendingSymbols.length > 0 };
+}
+
+export function useStockNameHydration<T extends NamedSymbol>(
+  rows: T[],
+  shouldHydrate: (row: T) => boolean = ALWAYS_HYDRATE
+): T[] {
+  return useStockNameHydrationState(rows, shouldHydrate).rows;
 }

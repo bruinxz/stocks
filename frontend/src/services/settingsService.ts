@@ -82,14 +82,6 @@ export interface DigestTradeRow {
   realized_pnl?: number | null;
 }
 
-export interface DigestCandidateRow {
-  symbol: string;
-  name?: string | null;
-  strategy: 'multi_factor' | 'dragon_head' | 'earnings_surprise' | string;
-  score?: number | null;
-  reason?: string | null;
-}
-
 export interface DigestPnLSummary {
   total_value: number;
   prev_total_value: number;
@@ -108,7 +100,6 @@ export interface DigestPayload {
   trades_today_sell: DigestTradeRow[];
   trades_today_buy_count: number;
   trades_today_sell_count: number;
-  candidates_tomorrow: DigestCandidateRow[];
 }
 
 export type DigestStatus = 'sent' | 'skipped' | 'failed' | 'partial';

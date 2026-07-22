@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, jest as mockJest, test } from '@jest/globals';
 import type { MockedFunction } from 'jest-mock';
 import api from 'services/api';
-import { useStockNameHydration } from '../useStockNameHydration';
+import { useStockNameHydration, useStockNameHydrationState } from '../useStockNameHydration';
 
 mockJest.mock('services/api', () => ({
   __esModule: true,
@@ -27,6 +27,15 @@ function Harness() {
       <span data-testid="selected-catalyst">{catalyst}</span>
       <span data-testid="stock-name">{rows[0].name}</span>
     </div>
+  );
+}
+
+function StableFirstPaintHarness() {
+  const { rows, loading } = useStockNameHydrationState([{ symbol: '600000', name: '600000' }]);
+  return loading ? (
+    <span data-testid="stock-name-loading">loading</span>
+  ) : (
+    <span data-testid="stable-stock-name">{rows[0].name}</span>
   );
 }
 
@@ -81,5 +90,31 @@ describe('useStockNameHydration', () => {
     }
 
     expect(apiGet).toHaveBeenCalledTimes(1);
+  });
+
+  test('名称目录返回前不把证券代码当成名称首屏渲染', async () => {
+    let resolveLookup: ((value: any) => void) | undefined;
+    apiGet.mockImplementationOnce(
+      () => new Promise(resolve => (resolveLookup = resolve)) as ReturnType<typeof api.get>
+    );
+
+    await act(async () => {
+      root.render(<StableFirstPaintHarness />);
+    });
+
+    expect(container.querySelector('[data-testid="stock-name-loading"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="stable-stock-name"]')).toBeNull();
+
+    await act(async () => {
+      resolveLookup?.({
+        data: { data: { stocks: [{ symbol: 'sh.600000', name: '浦发银行' }] } },
+      });
+      await settle();
+    });
+
+    expect(container.querySelector('[data-testid="stock-name-loading"]')).toBeNull();
+    expect(container.querySelector('[data-testid="stable-stock-name"]')?.textContent).toBe(
+      '浦发银行'
+    );
   });
 });

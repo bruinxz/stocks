@@ -693,7 +693,6 @@ export class SettingsController {
             trades_today_sell: [],
             trades_today_buy_count: 0,
             trades_today_sell_count: 0,
-            candidates_tomorrow: [],
           },
         });
       }

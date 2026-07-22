@@ -794,55 +794,6 @@ const DigestPreviewModal: React.FC<DigestPreviewModalProps> = ({ open, result, o
             )}
           </Card>
 
-          <Card size="small" title={`明日候选（3 策略 × Top 5）`}>
-            {payload.candidates_tomorrow.length > 0 ? (
-              <Table
-                size="small"
-                rowKey={(r, i) => `${r.strategy}-${r.symbol}-${i}`}
-                pagination={false}
-                dataSource={payload.candidates_tomorrow}
-                columns={[
-                  {
-                    title: '策略',
-                    dataIndex: 'strategy',
-                    width: 120,
-                    render: (v: string) =>
-                      v === 'multi_factor' ? (
-                        <Tag color="blue">多因子</Tag>
-                      ) : v === 'dragon_head' ? (
-                        <Tag color="red">龙头</Tag>
-                      ) : v === 'earnings_surprise' ? (
-                        <Tag color="orange">业绩</Tag>
-                      ) : (
-                        <Tag>{v}</Tag>
-                      ),
-                  },
-                  { title: '代码', dataIndex: 'symbol', width: 100 },
-                  {
-                    title: '名称',
-                    dataIndex: 'name',
-                    width: 120,
-                    render: (v?: string | null) => v || '—',
-                  },
-                  {
-                    title: '分数',
-                    dataIndex: 'score',
-                    width: 100,
-                    render: (v?: number | null) =>
-                      v === null || v === undefined ? '—' : Number(v).toFixed(2),
-                  },
-                  {
-                    title: '理由',
-                    dataIndex: 'reason',
-                    render: (v?: string | null) => v || '—',
-                  },
-                ]}
-              />
-            ) : (
-              <Empty description="明日策略暂无候选" />
-            )}
-          </Card>
-
           <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>
             预览不发送 webhook；点 &quot;立即推送一条日报&quot; 按钮才真实推送。Digest ID:{' '}
             <Text code>{result.digest_id}</Text>

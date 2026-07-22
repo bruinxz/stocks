@@ -35,6 +35,7 @@ jest.mock('../../shared/useResearchTradingLoop', () => ({
 }));
 jest.mock('../../shared/useStockNameHydration', () => ({
   useStockNameHydration: (rows: unknown[]) => rows,
+  useStockNameHydrationState: (rows: unknown[]) => ({ rows, loading: false }),
 }));
 
 const originalFetch = globalThis.fetch;

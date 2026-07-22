@@ -255,7 +255,6 @@ function makeDigestPayload(overrides: Partial<DigestPayload> = {}): DigestPayloa
     trades_today_sell: [],
     trades_today_buy_count: 0,
     trades_today_sell_count: 0,
-    candidates_tomorrow: [],
     ...overrides,
   };
 }
@@ -559,10 +558,6 @@ const dataWin = buildDailyDigestSubscribeData(
     },
     trades_today_buy_count: 2,
     trades_today_sell_count: 1,
-    candidates_tomorrow: [
-      { symbol: '600519', strategy: 'multi_factor' },
-      { symbol: '300750', strategy: 'dragon_head' },
-    ] as any,
   })
 );
 assert('first 含 trade_date', dataWin.first.value.includes('2026-06-08'));
@@ -571,7 +566,7 @@ assert('keyword1 含 %', dataWin.keyword1.value.includes('%'));
 assertEqual('keyword1 盈利绿色', dataWin.keyword1.color, '#3f8600');
 assertEqual('keyword2 买入笔数', dataWin.keyword2.value, '2 笔');
 assertEqual('keyword3 卖出笔数', dataWin.keyword3.value, '1 笔');
-assertEqual('keyword4 候选数', dataWin.keyword4.value, '2 只候选');
+assertEqual('keyword4 闭环成交数', dataWin.keyword4.value, '3 笔闭环成交');
 
 const dataLoss = buildDailyDigestSubscribeData(
   makeDigestPayload({
