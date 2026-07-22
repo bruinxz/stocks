@@ -154,6 +154,13 @@ export function canSellPositionOnTradingDay(created_at: Date, trading_day: strin
   return getEast8DateString(created_at) < trading_day;
 }
 
+export function hasResearchLoopPositionCapacity(
+  current_position_count: number,
+  max_positions = RESEARCH_LOOP_MAX_POSITIONS
+): boolean {
+  return Math.max(0, Math.floor(finite(current_position_count))) < Math.max(1, max_positions);
+}
+
 function record(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, any>)
@@ -528,6 +535,10 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
              multibagger_as_of = EXCLUDED.multibagger_as_of,
              started_at = NOW(), completed_at = NULL, updated_at = NOW()
        WHERE research_trading_loop_runs.status IN ('failed', 'skipped')
+          OR (
+            research_trading_loop_runs.status = 'running'
+            AND research_trading_loop_runs.updated_at < NOW() - INTERVAL '30 minutes'
+          )
        RETURNING id, user_id, portfolio_id, trading_day, research_day, status`,
       {
         replacements: {
@@ -704,6 +715,23 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
       lock: transaction.LOCK.UPDATE,
     });
     if (existing?.quantity > 0) return { status: 'held', quantity: existing.quantity };
+    // SELL 决策可能因为 T+1 或缺少新鲜报价而跳过。BUY 必须在同一事务里重新
+    // 读取实际持仓数，不能假设前面的计划卖出已经成功，否则会突破六仓硬上限。
+    const activePositions = await PaperTradingPosition.findAll({
+      attributes: ['id'],
+      where: { portfolio_id: portfolio.id, quantity: { [Op.gt]: 0 } },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!hasResearchLoopPositionCapacity(activePositions.length)) {
+      return {
+        status: 'skipped',
+        metadata: {
+          skip_reason: 'max_positions_reached',
+          max_positions: RESEARCH_LOOP_MAX_POSITIONS,
+        },
+      };
+    }
     const price = input.price.price;
     const executePrice = price * 1.001;
     const targetAmount =

@@ -5,6 +5,7 @@ import {
   ResearchTradingLoopService,
   buildResearchLoopDecisions,
   canSellPositionOnTradingDay,
+  hasResearchLoopPositionCapacity,
   mergeResearchCandidates,
   type ResearchBundle,
   type ResearchLoopPortfolioRow,
@@ -149,6 +150,12 @@ function testTPlusOne() {
   );
 }
 
+function testHardPositionCapacity() {
+  assert.equal(hasResearchLoopPositionCapacity(5), true);
+  assert.equal(hasResearchLoopPositionCapacity(6), false);
+  assert.equal(hasResearchLoopPositionCapacity(7), false);
+}
+
 class FakeRepository implements ResearchTradingLoopRepository {
   ensure_count = 0;
   claim_count = 0;
@@ -270,8 +277,14 @@ function testPipelineContracts() {
   );
   assert.match(
     scheduler,
-    /type: 'RESEARCH_TRADING_LOOP'[\s\S]{0,160}cron_expression: '35 9 \* \* 1-5'/
+    /type: 'RESEARCH_TRADING_LOOP'[\s\S]{0,160}cron_expression: '35,50 9 \* \* 1-5'/
   );
+  const loopService = fs.readFileSync(
+    path.join(root, 'backend/src/services/ResearchTradingLoopService.ts'),
+    'utf8'
+  );
+  assert.match(loopService, /hasResearchLoopPositionCapacity\(activePositions\.length\)/);
+  assert.match(loopService, /status = 'running'[\s\S]{0,180}INTERVAL '30 minutes'/);
   assert.match(
     globalSync,
     /refresh_multibagger_cn_a[\s\S]{0,200}populate_live_multibagger\.py|populate_live_multibagger\.py[\s\S]{0,300}refresh_multibagger_cn_a/
@@ -292,6 +305,7 @@ async function main() {
   testMergeAndPriority();
   testBuyHoldSellAndSixPositionCap();
   testTPlusOne();
+  testHardPositionCapacity();
   await testFreshnessAndIdempotency();
   testPipelineContracts();
   console.log('research trading loop tests passed');

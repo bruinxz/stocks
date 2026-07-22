@@ -6175,7 +6175,7 @@ class SchedulerService {
       {
         name: '早报高倍持仓研究闭环',
         type: 'RESEARCH_TRADING_LOOP',
-        cron_expression: '35 9 * * 1-5',
+        cron_expression: '35,50 9 * * 1-5',
         is_active: true,
         parameters: {
           require_trading_day: true,
@@ -7057,6 +7057,12 @@ class SchedulerService {
         if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
           patch.parameters = nextParams;
         }
+      }
+
+      if (taskData.type === 'RESEARCH_TRADING_LOOP') {
+        // 09:35 首跑；若 09:00 研究物化尚未完成，09:50 再幂等补跑。已成功的
+        // (user_id, trading_day) 由 research_trading_loop_runs 唯一键直接去重。
+        patch.cron_expression = taskData.cron_expression;
       }
 
       if (taskData.name === 'Agent尾盘建议收益追踪') {
