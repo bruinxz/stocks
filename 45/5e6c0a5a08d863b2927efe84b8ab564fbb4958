@@ -1,0 +1,27 @@
+backend/src/constants/cronRegistry.ts
+  s_8c62a586913a66::t_52dabbed7564a8 333-334
+backend/src/services/ResearchTradingLoopService.ts
+  s_8c62a586913a66::t_393851a5b559dc 157-163,538-541,718-734
+backend/src/services/SchedulerService.ts
+  s_8c62a586913a66::t_a5ca1cc1669354 6178,7062-7067
+backend/tests/services/research-trading-loop.test.ts
+  s_8c62a586913a66::t_17ad66740702db 8,153-158,280-284,286-287,308
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "455e6c0a5a08d863b2927efe84b8ab564fbb4958",
+  "prompts": {},
+  "sessions": {
+    "s_8c62a586913a66": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f87be-85ef-7ee0-ab18-bbc4c5d47c02",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
