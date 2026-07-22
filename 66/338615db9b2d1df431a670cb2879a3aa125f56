@@ -1,0 +1,25 @@
+backend/scripts/migrations/2026-07-22-research-trading-loop.sql
+  s_8c62a586913a66::t_a6296808cabad3 194-203
+backend/src/services/SchedulerService.ts
+  s_8c62a586913a66::t_dd9b22ee5a8192 7393-7409
+backend/tests/services/research-trading-loop.test.ts
+  s_8c62a586913a66::t_8dafe283569657 345-352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "66338615db9b2d1df431a670cb2879a3aa125f56",
+  "prompts": {},
+  "sessions": {
+    "s_8c62a586913a66": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f87be-85ef-7ee0-ab18-bbc4c5d47c02",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
