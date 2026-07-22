@@ -1,0 +1,37 @@
+backend/src/services/DailyTradingDigestService.ts
+  s_8c62a586913a66::t_da1f61ca6ac0a0 15,527
+backend/src/services/SchedulerService.ts
+  s_8c62a586913a66::t_2e55005fc4d3cd 3058,3060,7402-7412
+backend/src/services/WeChatOAService.ts
+  s_8c62a586913a66::t_8501ccbdaec718 266,288
+backend/tests/services/daily-trading-digest-service.test.ts
+  s_8c62a586913a66::t_9b82aa8ce546c9 556-557
+backend/tests/services/research-trading-loop.test.ts
+  s_8c62a586913a66::t_6b4d17073521bc 349-352
+backend/tests/services/wechat-oa-service.test.ts
+  s_8c62a586913a66::t_bdafafccdfd466 569
+frontend/src/pages/catdesk/shared/__tests__/useStockNameHydration.test.tsx
+  s_8c62a586913a66::t_d7491e2e532cad 6,33-41,94-119
+frontend/src/pages/catdesk/tabs/AShareMorningBrief.tsx
+  s_8c62a586913a66::t_f49a136c2232e5 15,62-64,119-126
+frontend/src/pages/catdesk/tabs/__tests__/recommendationContainers.test.tsx
+  s_8c62a586913a66::t_9ab16516163021 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9d4b542ad1ea01bb5910573494f670078f9cf921",
+  "prompts": {},
+  "sessions": {
+    "s_8c62a586913a66": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f87be-85ef-7ee0-ab18-bbc4c5d47c02",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
