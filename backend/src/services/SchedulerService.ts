@@ -7367,6 +7367,10 @@ class SchedulerService {
               'PAPER_TRADING_DRAWDOWN_BREAKER_CHECK',
               'PAPER_TRADING_PER_STOCK_STOP_LOSS_CHECK',
               'PAPER_TRADING_DAILY_PLAN',
+              // 旧归因任务在指定历史自治盘不存在时会 ensurePortfolio，可能把迁移
+              // 清掉的旧盘重新创建；旧 outcome 刷新也只认识历史 signal metadata。
+              'PAPER_TRADING_ATTRIBUTION_REPORT',
+              'RECOMMENDATION_TRADE_OUTCOME_REFRESH',
             ],
           },
         },

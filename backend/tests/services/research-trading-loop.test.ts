@@ -295,6 +295,21 @@ function testPipelineContracts() {
     /runtime_data_migrations[\s\S]{0,4000}TRUNCATE TABLE paper_trading_portfolios/
   );
   assert.match(migration, /uq_research_loop_active_portfolio_per_user/);
+  const migrationRetirementBlock = migration.slice(migration.indexOf('-- 旧自动跟单'));
+  const schedulerRetirementBlock = scheduler.slice(scheduler.indexOf('// 研究闭环上线后'));
+  for (const retiredType of [
+    'PAPER_TRADING_ATTRIBUTION_REPORT',
+    'RECOMMENDATION_TRADE_OUTCOME_REFRESH',
+  ]) {
+    assert(
+      migrationRetirementBlock.includes(`'${retiredType}'`),
+      `${retiredType} 必须由一次性迁移停用，防止旧盘复活`
+    );
+    assert(
+      schedulerRetirementBlock.includes(`'${retiredType}'`),
+      `${retiredType} 必须在每次启动后保持停用`
+    );
+  }
   assert.match(
     deployment,
     /APPLY_RESEARCH_TRADING_LOOP_MIGRATION=1[\s\S]{0,120}apply-research-trading-loop-migration\.js/
