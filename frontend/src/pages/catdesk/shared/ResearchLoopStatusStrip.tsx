@@ -91,6 +91,24 @@ export function ResearchLoopStatusStrip({ dashboard, error, focus }: Props) {
           <small>{run ? `${run.trading_day} · #${run.id}` : '今日尚未生成交易记录'}</small>
         </span>
       </div>
+      {fresh && research.targets.length ? (
+        <div className="catdesk-loop-targets" aria-label="今日联合目标池">
+          <strong>今日目标池</strong>
+          {research.targets.map(target => (
+            <span key={target.symbol}>
+              <b>{target.name}</b>
+              <small>
+                {target.symbol} · {target.target_weight_pct}% ·{' '}
+                {target.sources.length > 1
+                  ? '双源'
+                  : target.sources[0] === 'morning_brief'
+                    ? '早报'
+                    : '高倍'}
+              </small>
+            </span>
+          ))}
+        </div>
+      ) : null}
       {fresh ? (
         <Tag icon={<CheckCircleOutlined />} color="green">
           研究日 {research.expected_research_day} 已对齐

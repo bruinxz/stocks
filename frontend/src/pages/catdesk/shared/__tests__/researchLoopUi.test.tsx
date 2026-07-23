@@ -25,6 +25,15 @@ function dashboard(fresh = true): ResearchTradingLoopDashboard {
         fresh,
       },
       merged_target_count: 6,
+      targets: [
+        {
+          symbol: 'sh.600001',
+          name: '目标股票',
+          combined_score: 82,
+          target_weight_pct: 12,
+          sources: ['morning_brief', 'multibagger'],
+        },
+      ],
     },
     execution: {
       trading_day: '2026-07-22',
@@ -89,6 +98,9 @@ describe('research loop shared UI', () => {
       expect(container.textContent).toContain('研究闭环盘');
       expect(container.textContent).toContain('研究日 2026-07-21 已对齐');
       expect(container.textContent).toContain('买 2 · 持 3 · 卖 1');
+      expect(container.textContent).toContain('今日目标池');
+      expect(container.textContent).toContain('目标股票');
+      expect(container.textContent).toContain('12% · 双源');
     }
   );
 

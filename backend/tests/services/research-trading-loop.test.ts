@@ -373,6 +373,15 @@ async function testDashboardExecutionState() {
   assert.equal(preopen.execution.status, 'scheduled');
   assert.equal(preopen.execution.next_attempt_label, '今日 09:35');
   assert.match(preopen.execution.message, /不会|行情齐全/);
+  assert.deepEqual(preopen.research.targets, [
+    {
+      symbol: 'sh.600001',
+      name: '股票SH',
+      combined_score: 80,
+      target_weight_pct: 9,
+      sources: ['morning_brief'],
+    },
+  ]);
   assert.equal(preopenRepo.portfolio_load_count, 0, '盘前状态不应伪装成行情就绪检查');
 
   const quoteWaitingRepo = new FakeRepository();

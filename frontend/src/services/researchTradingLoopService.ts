@@ -53,6 +53,13 @@ export interface ResearchTradingLoopDashboard {
       fresh: boolean;
     };
     merged_target_count: number;
+    targets: Array<{
+      symbol: string;
+      name: string;
+      combined_score: number;
+      target_weight_pct: number;
+      sources: Array<'morning_brief' | 'multibagger'>;
+    }>;
   };
   execution: {
     trading_day: string;

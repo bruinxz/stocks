@@ -1306,6 +1306,7 @@ export class ResearchTradingLoopService {
   async getDashboard(user_id: number, now = new Date()) {
     await this.repository.assertReady();
     const bundle = await this.repository.loadResearchBundle(now);
+    const targets = selectResearchLoopTargets(bundle, RESEARCH_LOOP_MAX_POSITIONS);
     const dashboard = await this.repository.loadDashboard(user_id);
     const latestRun = dashboard
       ? {
@@ -1337,7 +1338,14 @@ export class ResearchTradingLoopService {
           candidate_count: bundle.multibagger.candidates.length,
           fresh: bundle.multibagger.research_day === bundle.expected_research_day,
         },
-        merged_target_count: selectResearchLoopTargets(bundle, RESEARCH_LOOP_MAX_POSITIONS).length,
+        merged_target_count: targets.length,
+        targets: targets.map(target => ({
+          symbol: target.symbol,
+          name: target.name,
+          combined_score: target.combined_score,
+          target_weight_pct: target.target_weight_pct,
+          sources: target.sources.map(source => source.source),
+        })),
       },
       execution,
       latest_run: latestRun,
