@@ -1,0 +1,23 @@
+backend/src/api/controllers/StockController.ts
+  s_ec1e6492779c20::t_fcc3c34f138794 7,106,110-120,132-134
+backend/src/data/services/DataSyncService.ts
+  s_ec1e6492779c20::t_80528bc64fe048 59-79,456-457,581-594,657-658,667
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e50e913e8d686b528593de3b7bbf44a8597ae925",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
