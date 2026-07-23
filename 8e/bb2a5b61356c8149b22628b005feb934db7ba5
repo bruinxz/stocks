@@ -1,0 +1,31 @@
+backend/scripts/migrations/2026-06-20-black-swan-events.sql
+  s_ec1e6492779c20::t_5eebf19d9d9e63 25,36,38-39,80-82,84-88,115
+backend/src/models/BlackSwanEvent.ts
+  s_ec1e6492779c20::t_dd6eeef9c7a774 29,32,86,184
+backend/src/services/SchedulerService.ts
+  s_ec1e6492779c20::t_6779b4ee245f9b 4425,4487,4555,4625
+backend/tests/models/black-swan-event.test.ts
+  s_ec1e6492779c20::t_c4863dfd929f6a 17,415-416,418-419
+backend/tests/services/black-swan-runtime-schema-contract.test.ts
+  s_ec1e6492779c20::t_2fc20fe7b455ac 1-58
+scripts/deployment/runtime_schema_migration.js
+  s_ec1e6492779c20::t_9d9c7fe84435dc 24-25,73-74,98-111,233-235
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8ebb2a5b61356c8149b22628b005feb934db7ba5",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
