@@ -45,7 +45,7 @@ export function BacktestEvidenceBlockers({ status }: { status: BacktestEvidenceS
 
       <footer>
         <strong>放行条件</strong>
-        <span>补齐证券生命周期、六维历史截面和事实可用时间后，再生成 27 个可追溯检查点。</span>
+        <span>补齐上列仍缺失的历史证据后，再生成 27 个可追溯检查点。</span>
       </footer>
     </section>
   );

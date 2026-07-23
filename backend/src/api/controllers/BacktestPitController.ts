@@ -22,6 +22,7 @@ interface BacktestEvidenceStatus {
 }
 
 interface CnAEvidenceReadinessRow {
+  snapshot_count: number | string;
   stock_count: number | string;
   listing_date_count: number | string;
   historical_member_count: number | string;
@@ -35,26 +36,71 @@ function numeric(value: number | string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-async function loadEmptyEvidenceStatus(
+function trustedPitPredicate(alias: string, marketScope: string): string {
+  const base = `${alias}.is_survivorship_biased = FALSE
+    AND NOT EXISTS (
+      SELECT 1
+        FROM jsonb_each_text(${alias}.source_versions) source
+       WHERE LOWER(source.value) ~ '(fixture|synthetic|mock|seed)'
+    )`;
+  if (marketScope !== 'cn_a') return base;
+  return `${base}
+    AND ${alias}.source_versions->>'calendar' LIKE 'production-daily-bars-calendar@%'
+    AND ${alias}.source_versions->>'membership' = 'stock-master-listing-history@1.0.0'
+    AND ${alias}.source_versions->>'prices' = 'daily-bars-close-execution@2.0.0'
+    AND ${alias}.source_versions->>'ranking' = 'six-factor-prior-session@2.0.0'
+    AND ${alias}.source_versions->>'cost_model' = 'commission5-slippage5@1.0.0'`;
+}
+
+async function loadEvidenceStatus(
+  strategy: string,
   marketScope: string
 ): Promise<BacktestEvidenceStatus> {
+  const trustedPredicate = trustedPitPredicate('bps', marketScope);
   if (marketScope !== 'cn_a') {
+    const [row] = await sequelize.query<{ snapshot_count: number | string }>(
+      `SELECT COUNT(*)::int AS snapshot_count
+         FROM backtest_pit_snapshot bps
+        WHERE bps.strategy = :strategy
+          AND bps.market_scope = :market_scope
+          AND ${trustedPredicate}`,
+      { replacements: { strategy, market_scope: marketScope }, type: QueryTypes.SELECT }
+    );
+    const snapshotCount = numeric(row?.snapshot_count);
+    const enoughSnapshots = snapshotCount >= REQUIRED_PIT_CHECKPOINTS;
     return {
-      state: 'blocked',
-      snapshot_count: 0,
+      state: enoughSnapshots ? 'ready' : 'blocked',
+      snapshot_count: snapshotCount,
       required_checkpoint_count: REQUIRED_PIT_CHECKPOINTS,
-      blockers: [
-        {
-          code: 'market_history_not_connected',
-          title: '该市场的历史时点证据源尚未接入',
-          detail: '当前没有可核验的历史成分、因子可用时间与持仓快照，因此不展示收益曲线。',
-        },
-      ],
+      blockers: enoughSnapshots
+        ? []
+        : [
+            snapshotCount === 0
+              ? {
+                  code: 'market_history_not_connected',
+                  title: '该市场的历史时点证据源尚未接入',
+                  detail: '当前没有可核验的历史成分、因子可用时间与持仓快照，因此不展示收益曲线。',
+                }
+              : {
+                  code: 'pit_replay_not_materialized',
+                  title: '历史时点快照尚未完整生成',
+                  detail: `需要 ${REQUIRED_PIT_CHECKPOINTS} 个检查点，当前只有 ${snapshotCount} 个，暂不展示不完整收益曲线。`,
+                  observed: snapshotCount,
+                  required: REQUIRED_PIT_CHECKPOINTS,
+                  unit: '个快照',
+                },
+          ],
     };
   }
 
   const [row] = await sequelize.query<CnAEvidenceReadinessRow>(
-    `WITH stock_master AS (
+    `WITH pit_snapshots AS (
+       SELECT COUNT(*)::int AS snapshot_count
+         FROM backtest_pit_snapshot bps
+        WHERE bps.strategy = :strategy
+          AND bps.market_scope = :market_scope
+          AND ${trustedPredicate}
+     ), stock_master AS (
        SELECT COUNT(*)::int AS stock_count,
               COUNT(listing_date)::int AS listing_date_count,
               COUNT(*) FILTER (
@@ -68,25 +114,37 @@ async function loadEmptyEvidenceStatus(
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name IN ('quality', 'quality_high')
                   AND fs.raw_value IS NOT NULL
+                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
               )::int AS q_coverage,
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name IN ('growth', 'earnings_surprise', 'analyst_consensus')
                   AND fs.raw_value IS NOT NULL
+                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
               )::int AS g_coverage,
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name = 'value' AND fs.raw_value IS NOT NULL
+                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
               )::int AS v_coverage,
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name IN ('momentum', 'money_flow', 'northbound')
                   AND fs.raw_value IS NOT NULL
+                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
               )::int AS m_coverage,
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name IN ('gradual_breakout', 'industry_momentum')
                   AND fs.raw_value IS NOT NULL
+                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
               )::int AS t_coverage,
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name IN ('low_vol', 'liquidity')
                   AND fs.raw_value IS NOT NULL
+                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
               )::int AS r_coverage
          FROM factor_scores fs
         GROUP BY fs.trade_date
@@ -110,16 +168,24 @@ async function loadEmptyEvidenceStatus(
           )
           AND column_name = 'available_at_utc'
      )
-     SELECT stock_master.stock_count,
+     SELECT pit_snapshots.snapshot_count,
+            stock_master.stock_count,
             stock_master.listing_date_count,
             stock_master.historical_member_count,
             factor_history.factor_day_count,
             factor_history.complete_factor_day_count,
             availability.available_at_table_count
-       FROM stock_master CROSS JOIN factor_history CROSS JOIN availability`,
-    { type: QueryTypes.SELECT }
+       FROM pit_snapshots
+       CROSS JOIN stock_master
+       CROSS JOIN factor_history
+       CROSS JOIN availability`,
+    {
+      replacements: { strategy, market_scope: marketScope },
+      type: QueryTypes.SELECT,
+    }
   );
 
+  const snapshotCount = numeric(row?.snapshot_count);
   const stockCount = numeric(row?.stock_count);
   const listingDateCount = numeric(row?.listing_date_count);
   const completeFactorDayCount = numeric(row?.complete_factor_day_count);
@@ -152,27 +218,28 @@ async function loadEmptyEvidenceStatus(
     blockers.push({
       code: 'fact_availability_unproven',
       title: '历史事实的可用时间尚未留痕',
-      detail: '因子、财务与估值事实尚未全部记录 available_at_utc，无法证明回放只使用了当时已经公开的数据。',
+      detail:
+        '因子、财务与估值事实尚未全部记录 available_at_utc，无法证明回放只使用了当时已经公开的数据。',
       observed: availableAtTableCount,
       required: 3,
       unit: '张事实表',
     });
   }
 
-  if (!blockers.length) {
+  if (snapshotCount < REQUIRED_PIT_CHECKPOINTS) {
     blockers.push({
       code: 'pit_replay_not_materialized',
-      title: '历史时点快照尚未生成',
-      detail: '基础证据已具备，但 27 个检查点尚未写入持仓与净值快照。',
-      observed: 0,
+      title: '历史时点快照尚未完整生成',
+      detail: `需要 ${REQUIRED_PIT_CHECKPOINTS} 个检查点，当前只有 ${snapshotCount} 个；即使已有部分快照，也不展示不完整收益曲线。`,
+      observed: snapshotCount,
       required: REQUIRED_PIT_CHECKPOINTS,
       unit: '个快照',
     });
   }
 
   return {
-    state: 'blocked',
-    snapshot_count: 0,
+    state: blockers.length ? 'blocked' : 'ready',
+    snapshot_count: snapshotCount,
     required_checkpoint_count: REQUIRED_PIT_CHECKPOINTS,
     blockers,
   };
@@ -227,7 +294,9 @@ export class BacktestPitController {
       const from = req.query.from as string | undefined;
       const to = req.query.to as string | undefined;
 
-      let whereClause = 'bps.strategy = :strategy AND bps.market_scope = :market_scope';
+      let whereClause = `bps.strategy = :strategy
+        AND bps.market_scope = :market_scope
+        AND ${trustedPitPredicate('bps', marketScope)}`;
       const replacements: Record<string, any> = {
         strategy,
         market_scope: marketScope,
@@ -265,29 +334,25 @@ export class BacktestPitController {
         { replacements, type: QueryTypes.SELECT }
       );
 
-      const evidenceStatus: BacktestEvidenceStatus = snapshots.length
-        ? {
-            state: 'ready',
-            snapshot_count: snapshots.length,
-            required_checkpoint_count: REQUIRED_PIT_CHECKPOINTS,
-            blockers: [],
-          }
-        : await loadEmptyEvidenceStatus(marketScope);
+      const evidenceStatus = await loadEvidenceStatus(strategy, marketScope);
 
       res.json({
         strategy,
         market_scope: marketScope,
         evidence_status: evidenceStatus,
-        snapshots: snapshots.map(snapshot => ({
-          ...snapshot,
-          net_value: snapshot.net_value == null ? null : Number(snapshot.net_value),
-          drawdown: snapshot.drawdown == null ? null : Number(snapshot.drawdown),
-          cumulative_return:
-            snapshot.cumulative_return == null ? null : Number(snapshot.cumulative_return),
-          sharpe_ratio_6m:
-            snapshot.sharpe_ratio_6m == null ? null : Number(snapshot.sharpe_ratio_6m),
-          win_rate_6m: snapshot.win_rate_6m == null ? null : Number(snapshot.win_rate_6m),
-        })),
+        snapshots:
+          evidenceStatus.state === 'ready'
+            ? snapshots.map(snapshot => ({
+                ...snapshot,
+                net_value: snapshot.net_value == null ? null : Number(snapshot.net_value),
+                drawdown: snapshot.drawdown == null ? null : Number(snapshot.drawdown),
+                cumulative_return:
+                  snapshot.cumulative_return == null ? null : Number(snapshot.cumulative_return),
+                sharpe_ratio_6m:
+                  snapshot.sharpe_ratio_6m == null ? null : Number(snapshot.sharpe_ratio_6m),
+                win_rate_6m: snapshot.win_rate_6m == null ? null : Number(snapshot.win_rate_6m),
+              }))
+            : [],
       });
     } catch (error: any) {
       logger.error(`[BacktestPitController.listSnapshots] ${error?.message || error}`);
@@ -318,6 +383,7 @@ export class BacktestPitController {
          WHERE bps.strategy = :strategy
            AND bps.market_scope = :market_scope
            AND bps.as_of_utc = CAST(:as_of AS timestamptz)
+           AND ${trustedPitPredicate('bps', marketScope)}
          LIMIT 2`,
         {
           replacements: { strategy, market_scope: marketScope, as_of },
@@ -380,6 +446,7 @@ export class BacktestPitController {
          WHERE bps.strategy = :strategy
            AND bps.market_scope = :market_scope
            AND bps.as_of_utc = CAST(:as_of AS timestamptz)
+           AND ${trustedPitPredicate('bps', marketScope)}
          LIMIT 2`,
         {
           replacements: { strategy, market_scope: marketScope, as_of },

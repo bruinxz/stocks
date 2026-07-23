@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build 27 real-calendar A-share PIT checkpoints from production daily bars."""
+"""Build 27 A-share PIT checkpoints with prior-session signals and close execution."""
 
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ from datapipeline.storage.backtest_pit.writer import (
 CHECKPOINT_COUNT = 27
 DEFAULT_WINDOW_DAYS = 183
 WEIGHTS = (Decimal("0.3333333333"), Decimal("0.3333333333"), Decimal("0.3333333334"))
+TRADE_COST_RATE = 0.001  # 5 bps commission + 5 bps slippage per traded notional
 
 SESSIONS_SQL = """
 SELECT time::date AS trading_day
@@ -71,6 +72,34 @@ WITH recent AS (
     MAX(trading_day) AS latest_day
   FROM recent
   GROUP BY stock_id
+), factor_matrix AS (
+  SELECT
+    stock_code,
+    AVG(percentile) FILTER (
+      WHERE factor_name IN ('quality', 'quality_high') AND raw_value IS NOT NULL
+    ) AS quality,
+    AVG(percentile) FILTER (
+      WHERE factor_name IN ('growth', 'earnings_surprise', 'analyst_consensus')
+        AND raw_value IS NOT NULL
+    ) AS growth,
+    AVG(percentile) FILTER (
+      WHERE factor_name = 'value' AND raw_value IS NOT NULL
+    ) AS valuation,
+    AVG(percentile) FILTER (
+      WHERE factor_name IN ('momentum', 'money_flow', 'northbound')
+        AND raw_value IS NOT NULL
+    ) AS momentum,
+    AVG(percentile) FILTER (
+      WHERE factor_name IN ('gradual_breakout', 'industry_momentum')
+        AND raw_value IS NOT NULL
+    ) AS trend,
+    AVG(percentile) FILTER (
+      WHERE factor_name IN ('low_vol', 'liquidity') AND raw_value IS NOT NULL
+    ) AS risk
+  FROM factor_scores
+  WHERE trade_date = %s::date
+    AND available_at_utc <= (%s::date::text || 'T15:00:00Z')::timestamptz
+  GROUP BY stock_code
 )
 SELECT
   stock.symbol,
@@ -84,38 +113,116 @@ SELECT
   stats.latest_day,
   stock.listing_date,
   stock.delisting_date,
+  matrix.quality,
+  matrix.growth,
+  matrix.valuation,
+  matrix.momentum,
+  matrix.trend,
+  matrix.risk,
   (
-    ((stats.current_close / NULLIF(stats.oldest_close, 0)) - 1) * 0.70
-    + LN(COALESCE(stats.average_turnover, 0) + 1) * 0.01
-    - ABS(stats.volatility) * 0.01
+    matrix.quality * 0.20 + matrix.growth * 0.20
+    + matrix.valuation * 0.15 + matrix.momentum * 0.20
+    + matrix.trend * 0.15 + matrix.risk * 0.10
   ) AS rank_score
-FROM stats
-JOIN stocks stock ON stock.id = stats.stock_id
+FROM factor_matrix matrix
+JOIN stocks stock ON RIGHT(stock.symbol, 6) = matrix.stock_code
+JOIN stats ON stats.stock_id = stock.id
 WHERE stats.session_count >= 15
   AND stats.latest_day = %s::date
   AND stock.type = 'stock'
   AND stock.listing_date <= %s::date
   AND (stock.delisting_date IS NULL OR stock.delisting_date > %s::date)
   AND stock.name NOT ILIKE '%%ST%%'
+  AND matrix.quality IS NOT NULL
+  AND matrix.growth IS NOT NULL
+  AND matrix.valuation IS NOT NULL
+  AND matrix.momentum IS NOT NULL
+  AND matrix.trend IS NOT NULL
+  AND matrix.risk IS NOT NULL
 ORDER BY rank_score DESC, stock.symbol ASC
 LIMIT 3
+"""
+
+EVIDENCE_SQL = """
+WITH stock_master AS (
+  SELECT COUNT(*)::int AS stock_count,
+         COUNT(listing_date)::int AS listing_date_count
+    FROM stocks
+   WHERE type = 'stock'
+), factor_day_coverage AS (
+  SELECT fs.trade_date,
+         COUNT(DISTINCT fs.stock_code)::int AS universe_size,
+         COUNT(DISTINCT fs.stock_code) FILTER (
+           WHERE fs.factor_name IN ('quality', 'quality_high') AND fs.raw_value IS NOT NULL
+             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+         )::int AS q_coverage,
+         COUNT(DISTINCT fs.stock_code) FILTER (
+           WHERE fs.factor_name IN ('growth', 'earnings_surprise', 'analyst_consensus')
+             AND fs.raw_value IS NOT NULL
+             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+         )::int AS g_coverage,
+         COUNT(DISTINCT fs.stock_code) FILTER (
+           WHERE fs.factor_name = 'value' AND fs.raw_value IS NOT NULL
+             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+         )::int AS v_coverage,
+         COUNT(DISTINCT fs.stock_code) FILTER (
+           WHERE fs.factor_name IN ('momentum', 'money_flow', 'northbound')
+             AND fs.raw_value IS NOT NULL
+             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+         )::int AS m_coverage,
+         COUNT(DISTINCT fs.stock_code) FILTER (
+           WHERE fs.factor_name IN ('gradual_breakout', 'industry_momentum')
+             AND fs.raw_value IS NOT NULL
+             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+         )::int AS t_coverage,
+         COUNT(DISTINCT fs.stock_code) FILTER (
+           WHERE fs.factor_name IN ('low_vol', 'liquidity') AND fs.raw_value IS NOT NULL
+             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
+                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+         )::int AS r_coverage
+    FROM factor_scores fs
+   GROUP BY fs.trade_date
+), factor_history AS (
+  SELECT COUNT(*) FILTER (
+           WHERE q_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+             AND g_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+             AND v_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+             AND m_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+             AND t_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+             AND r_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+         )::int AS complete_factor_day_count
+    FROM factor_day_coverage
+), availability AS (
+  SELECT COUNT(DISTINCT table_name)::int AS available_at_table_count
+    FROM information_schema.columns
+   WHERE table_schema = 'public'
+     AND table_name IN (
+       'factor_scores', 'stock_fundamental_factors', 'stock_valuation_factors'
+     )
+     AND column_name = 'available_at_utc'
+)
+SELECT stock_master.stock_count,
+       stock_master.listing_date_count,
+       factor_history.complete_factor_day_count,
+       availability.available_at_table_count
+  FROM stock_master CROSS JOIN factor_history CROSS JOIN availability
 """
 
 PRICE_SQL = """
 SELECT RIGHT(stock.symbol, 6) AS ticker, bar.close
 FROM stocks stock
-JOIN LATERAL (
-  SELECT close
-  FROM daily_bars
-  WHERE stock_id = stock.id
-    AND time::date <= %s::date
-    AND is_trading_day = TRUE
-    AND is_suspended = FALSE
-  ORDER BY time DESC
-  LIMIT 1
-) bar ON TRUE
+JOIN daily_bars bar ON bar.stock_id = stock.id
 WHERE RIGHT(stock.symbol, 6) = ANY(%s)
   AND stock.type = 'stock'
+  AND bar.time::date = %s::date
+  AND bar.is_trading_day = TRUE
+  AND bar.is_suspended = FALSE
+  AND bar.close > 0
 """
 
 
@@ -171,10 +278,16 @@ def _hash(value: object) -> str:
 
 
 def _checkpoints(sessions: list[date]) -> list[date]:
-    if len(sessions) < CHECKPOINT_COUNT:
-        raise RuntimeError("production calendar has fewer than 27 valid sessions")
-    indexes = [round(index * (len(sessions) - 1) / (CHECKPOINT_COUNT - 1)) for index in range(CHECKPOINT_COUNT)]
-    output = [sessions[index] for index in indexes]
+    # Every execution checkpoint needs a completed prior session from which the
+    # factor signal was knowable. Never rank on the same close used to execute.
+    eligible = sessions[1:]
+    if len(eligible) < CHECKPOINT_COUNT:
+        raise RuntimeError("production calendar has fewer than 28 valid sessions")
+    indexes = [
+        round(index * (len(eligible) - 1) / (CHECKPOINT_COUNT - 1))
+        for index in range(CHECKPOINT_COUNT)
+    ]
+    output = [eligible[index] for index in indexes]
     if len(set(output)) != CHECKPOINT_COUNT:
         raise RuntimeError("checkpoint sampling produced duplicate sessions")
     return output
@@ -194,6 +307,23 @@ def _read_inputs(
 
     with psycopg.connect(database_url, row_factory=dict_row) as connection:
         with connection.cursor() as cursor:
+            cursor.execute(EVIDENCE_SQL)
+            evidence = cursor.fetchone()
+            if evidence["listing_date_count"] < evidence["stock_count"]:
+                raise RuntimeError(
+                    "PIT evidence blocked: security lifecycle incomplete "
+                    f"{evidence['listing_date_count']}/{evidence['stock_count']}"
+                )
+            if evidence["complete_factor_day_count"] < CHECKPOINT_COUNT:
+                raise RuntimeError(
+                    "PIT evidence blocked: complete six-factor checkpoints "
+                    f"{evidence['complete_factor_day_count']}/{CHECKPOINT_COUNT}"
+                )
+            if evidence["available_at_table_count"] < 3:
+                raise RuntimeError(
+                    "PIT evidence blocked: available_at_utc coverage "
+                    f"{evidence['available_at_table_count']}/3"
+                )
             window_end = requested_end
             if window_end is None:
                 cursor.execute(
@@ -227,49 +357,121 @@ def _read_inputs(
             cursor.execute(SESSIONS_SQL, (window_start, window_end))
             sessions = [row["trading_day"] for row in cursor.fetchall()]
             checkpoints = _checkpoints(sessions)
+            previous_session = {
+                session: sessions[index - 1]
+                for index, session in enumerate(sessions)
+                if index > 0
+            }
             selections = []
+            execution_prices = []
+            previous_tickers: set[str] = set()
             for checkpoint in checkpoints:
+                signal_day = previous_session[checkpoint]
                 cursor.execute(
                     RANK_SQL,
-                    (checkpoint, checkpoint, checkpoint, checkpoint, checkpoint),
+                    (
+                        signal_day,
+                        signal_day,
+                        signal_day,
+                        signal_day,
+                        signal_day,
+                        signal_day,
+                        checkpoint,
+                    ),
                 )
                 rows = list(cursor.fetchall())
                 if len(rows) != 3:
                     raise RuntimeError(f"checkpoint {checkpoint} has fewer than 3 holdings")
+                current_tickers = {
+                    str(row["symbol"]).split(".")[-1]
+                    for row in rows
+                }
+                required_tickers = sorted(current_tickers | previous_tickers)
+                cursor.execute(PRICE_SQL, (required_tickers, checkpoint))
+                prices = {
+                    str(row["ticker"]): row["close"]
+                    for row in cursor.fetchall()
+                }
+                missing_prices = sorted(set(required_tickers) - set(prices))
+                if missing_prices:
+                    raise RuntimeError(
+                        f"checkpoint {checkpoint} has non-executable holdings: "
+                        + ",".join(missing_prices)
+                    )
                 selections.append(rows)
-    return window_start, window_end, sessions, checkpoints, selections
+                execution_prices.append(prices)
+                previous_tickers = current_tickers
+    return (
+        window_start,
+        window_end,
+        sessions,
+        checkpoints,
+        selections,
+        execution_prices,
+    )
 
 
-def _build_facts(sessions, checkpoints, selections, window_start: date, window_end: date):
+def _build_facts(
+    sessions,
+    checkpoints,
+    selections,
+    execution_prices,
+    window_start: date,
+    window_end: date,
+    published_at_utc: datetime,
+):
     snapshots = []
     nav = 1.0
     peak_nav = 1.0
     interval_returns: list[float] = []
     previous_prices: dict[str, float] = {}
+    previous_weights: dict[str, float] = {}
     entry_prices: dict[str, float] = {}
     calendar_hash = _hash([day.isoformat() for day in sessions])
     session_index = {day: index + 1 for index, day in enumerate(sessions)}
 
-    for checkpoint_index, (checkpoint, rows) in enumerate(zip(checkpoints, selections)):
+    for checkpoint_index, (checkpoint, rows, checkpoint_prices) in enumerate(
+        zip(checkpoints, selections, execution_prices)
+    ):
         tickers = [row["symbol"].split(".")[-1] for row in rows]
         prices = {
-            row["symbol"].split(".")[-1]: float(row["current_close"])
-            for row in rows
+            ticker: float(checkpoint_prices[ticker])
+            for ticker in tickers
         }
-        if previous_prices:
-            comparable = [
-                prices[ticker] / previous_prices[ticker] - 1.0
-                for ticker in prices
-                if ticker in previous_prices
-            ]
-            gross_return = statistics.fmean(comparable) if comparable else 0.0
-            changed = len(set(prices) ^ set(previous_prices)) / 3.0
-            interval_return = gross_return - changed * 0.002
-            nav *= 1.0 + interval_return
+        target_weights = {
+            ticker: float(weight)
+            for ticker, weight in zip(tickers, WEIGHTS)
+        }
+        previous_nav = nav
+        if previous_weights:
+            gross_factor = sum(
+                weight
+                * float(checkpoint_prices[ticker])
+                / previous_prices[ticker]
+                for ticker, weight in previous_weights.items()
+            )
+            if not math.isfinite(gross_factor) or gross_factor <= 0:
+                raise RuntimeError(f"checkpoint {checkpoint} produced invalid gross return")
+            pretrade_weights = {
+                ticker: (
+                    weight
+                    * float(checkpoint_prices[ticker])
+                    / previous_prices[ticker]
+                    / gross_factor
+                )
+                for ticker, weight in previous_weights.items()
+            }
+            traded_notional = sum(
+                abs(target_weights.get(ticker, 0.0) - pretrade_weights.get(ticker, 0.0))
+                for ticker in set(target_weights) | set(pretrade_weights)
+            )
+            nav *= gross_factor * (1.0 - traded_notional * TRADE_COST_RATE)
+            interval_return = nav / previous_nav - 1.0
             interval_returns.append(interval_return)
         else:
-            nav *= 0.999
-            interval_returns.append(-0.001)
+            traded_notional = sum(target_weights.values())
+            nav *= 1.0 - traded_notional * TRADE_COST_RATE
+            interval_returns.append(nav / previous_nav - 1.0)
         peak_nav = max(peak_nav, nav)
 
         for ticker in list(entry_prices):
@@ -285,10 +487,18 @@ def _build_facts(sessions, checkpoints, selections, window_start: date, window_e
             source_material = {
                 "ticker": ticker,
                 "checkpoint": checkpoint.isoformat(),
-                "close": str(row["current_close"]),
+                "signal_day": sessions[session_index[checkpoint] - 2].isoformat(),
+                "signal_close": str(row["current_close"]),
+                "execution_close": str(checkpoint_prices[ticker]),
                 "oldest_close": str(row["oldest_close"]),
                 "session_count": row["session_count"],
                 "rank_score": str(row["rank_score"]),
+                "quality": str(row["quality"]),
+                "growth": str(row["growth"]),
+                "valuation": str(row["valuation"]),
+                "momentum": str(row["momentum"]),
+                "trend": str(row["trend"]),
+                "risk": str(row["risk"]),
                 "listing_date": row["listing_date"].isoformat(),
                 "delisting_date": (
                     row["delisting_date"].isoformat()
@@ -302,10 +512,14 @@ def _build_facts(sessions, checkpoints, selections, window_start: date, window_e
                     {"ticker": ticker, "listing_date": source_material["listing_date"], "day": checkpoint.isoformat()}
                 ),
                 "price_fact_hash": _hash(
-                    {"ticker": ticker, "close": source_material["close"], "day": checkpoint.isoformat()}
+                    {
+                        "ticker": ticker,
+                        "close": source_material["execution_close"],
+                        "day": checkpoint.isoformat(),
+                    }
                 ),
                 "score_fact_hash": _hash(source_material),
-                "ranking_method": "20-session momentum+liquidity-volatility",
+                "ranking_method": "six-factor point-in-time weighted score",
             }
             draft = PitHoldingFact(
                 holding_id=_uuid4("pit-holding", "us_preferred", "cn_a", checkpoint.isoformat(), ticker),
@@ -318,7 +532,7 @@ def _build_facts(sessions, checkpoints, selections, window_start: date, window_e
                 is_delisted_at_as_of=False,
                 source_kind="production-daily-bars",
                 source_document_id=f"daily-bars:{ticker}:{checkpoint.isoformat()}",
-                source_version="daily-bars-pit@1.0.0",
+                source_version="daily-bars-close-execution@2.0.0",
                 available_at_utc=as_of,
                 lineage=lineage,
                 fact_hash="0" * 64,
@@ -353,7 +567,7 @@ def _build_facts(sessions, checkpoints, selections, window_start: date, window_e
                 "source": "production stocks + daily_bars",
             },
             "calendar_sessions_hash": calendar_hash,
-            "ranking_method": "20-session momentum+liquidity-volatility",
+            "ranking_method": "six-factor point-in-time weighted score",
             "selected_tickers": tickers,
         }
         snapshot_draft = PitSnapshotFact(
@@ -362,14 +576,14 @@ def _build_facts(sessions, checkpoints, selections, window_start: date, window_e
             market_scope="cn_a",
             as_of_utc=as_of,
             snapshot_day=checkpoint,
-            published_at_utc=as_of + timedelta(minutes=5),
+            published_at_utc=published_at_utc,
             is_survivorship_biased=False,
             is_delisted_at_as_of=False,
             source_versions={
                 "calendar": f"production-daily-bars-calendar@{window_end.isoformat()}",
                 "membership": "stock-master-listing-history@1.0.0",
-                "prices": "daily-bars-pit@1.0.0",
-                "ranking": "momentum-liquidity-risk@1.0.0",
+                "prices": "daily-bars-close-execution@2.0.0",
+                "ranking": "six-factor-prior-session@2.0.0",
                 "cost_model": "commission5-slippage5@1.0.0",
             },
             lineage_closure=lineage_closure,
@@ -382,6 +596,7 @@ def _build_facts(sessions, checkpoints, selections, window_start: date, window_e
         )
         snapshots.append((snapshot, tuple(holdings)))
         previous_prices = prices
+        previous_weights = target_weights
     return snapshots
 
 
@@ -436,17 +651,22 @@ def main() -> int:
     args = parser.parse_args()
     values = _load_env(args.env_file)
     database_url = _database_url(values)
-    window_start, window_end, sessions, checkpoints, selections = _read_inputs(
-        database_url,
-        args.window_start,
-        args.window_end,
-    )
+    (
+        window_start,
+        window_end,
+        sessions,
+        checkpoints,
+        selections,
+        execution_prices,
+    ) = _read_inputs(database_url, args.window_start, args.window_end)
     facts = _build_facts(
         sessions,
         checkpoints,
         selections,
+        execution_prices,
         window_start,
         window_end,
+        datetime.now(timezone.utc),
     )
     if args.dry_run:
         manifests = []

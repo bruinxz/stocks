@@ -472,7 +472,7 @@ assert.match(
 );
 assert.match(
   globalSync,
-  /OPTIONAL_STEPS = \{"refresh_backtest_pit_cn_a"\}/,
+  /OPTIONAL_STEPS = \{"refresh_stock_security_lifecycle", "refresh_backtest_pit_cn_a"\}/,
   'PIT evidence must be explicitly classified as an optional projection'
 );
 assert.match(

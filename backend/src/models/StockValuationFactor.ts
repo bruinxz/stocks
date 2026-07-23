@@ -77,6 +77,14 @@ export class StockValuationFactor extends Model {
   @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {}, field: 'raw_payload' })
   declare raw_payload: Record<string, any>;
 
+  @Column({
+    type: DataType.DATE,
+    allowNull: false,
+    defaultValue: DataType.NOW,
+    field: 'available_at_utc',
+  })
+  declare available_at_utc: Date;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;

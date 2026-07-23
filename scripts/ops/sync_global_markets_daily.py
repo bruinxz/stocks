@@ -31,7 +31,7 @@ REPO_ROOT = (
     if repo_root_override
     else Path(__file__).resolve().parents[2]
 ).resolve()
-OPTIONAL_STEPS = {"refresh_backtest_pit_cn_a"}
+OPTIONAL_STEPS = {"refresh_stock_security_lifecycle", "refresh_backtest_pit_cn_a"}
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -417,6 +417,17 @@ def main() -> int:
             multibagger_args.append("--dry-run")
         results.append(
             _run("refresh_multibagger_cn_a", multibagger_args, 600)
+        )
+
+        lifecycle_args = [
+            "scripts/ops/sync_stock_security_lifecycle.py",
+            "--env-file",
+            str(args.env_file),
+        ]
+        if args.dry_run:
+            lifecycle_args.append("--dry-run")
+        results.append(
+            _run("refresh_stock_security_lifecycle", lifecycle_args, 240)
         )
 
         pit_args = [

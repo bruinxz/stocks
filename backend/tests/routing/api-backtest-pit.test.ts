@@ -102,6 +102,7 @@ async function main(): Promise<void> {
   const calls: QueryCall[] = [];
   let returnEmpty = false;
   let duplicateRows = false;
+  let evidenceSnapshotCount = 27;
   let holdingRows: any[] = [
     { ticker: 'AAPL', weight: '0.15', return_since_entry: '0.12', is_stale: false },
   ];
@@ -109,6 +110,9 @@ async function main(): Promise<void> {
   (sequelize as any).query = async (sql: string, options: any) => {
     calls.push({ sql, replacements: options?.replacements || {} });
     if (returnEmpty) return [];
+    if (sql.includes('COUNT(*)::int AS snapshot_count')) {
+      return [{ snapshot_count: evidenceSnapshotCount }];
+    }
     const requestedAsOf = options?.replacements?.as_of;
     if (requestedAsOf && Date.parse(String(requestedAsOf)) !== Date.parse(AS_OF)) {
       return [];
@@ -168,7 +172,7 @@ async function main(): Promise<void> {
     assert('list does not expose nested metrics', !('metrics' in (list.body.snapshots?.[0] || {})));
     assert('list marks persisted evidence ready', list.body.evidence_status?.state === 'ready');
     assert('ready evidence has no blockers', list.body.evidence_status?.blockers?.length === 0);
-    const listCall = calls.at(-1);
+    const listCall = calls.at(-2);
     assert(
       'list uses parameterized filters',
       listCall?.replacements.strategy === STRATEGY &&
@@ -177,6 +181,43 @@ async function main(): Promise<void> {
         listCall?.replacements.to === '2026-07-10' &&
         listCall?.replacements.limit === 5
     );
+    assert(
+      'list excludes fixture and synthetic provenance',
+      Boolean(
+        listCall?.sql.includes('jsonb_each_text(bps.source_versions)') &&
+          listCall?.sql.includes("'(fixture|synthetic|mock|seed)'")
+      )
+    );
+    const evidenceCall = calls.at(-1);
+    assert(
+      'list verifies the complete persisted checkpoint count',
+      evidenceCall?.replacements.strategy === STRATEGY &&
+        evidenceCall?.replacements.market_scope === MARKET_SCOPE
+    );
+    assert(
+      'readiness counts only trusted provenance',
+      Boolean(evidenceCall?.sql.includes('jsonb_each_text(bps.source_versions)'))
+    );
+
+    evidenceSnapshotCount = 1;
+    const partialList = await authorizedGet(
+      app,
+      `/api/v1/backtest-pit/${STRATEGY}?market_scope=${MARKET_SCOPE}`
+    );
+    assert(
+      'one persisted snapshot does not bypass the 27-checkpoint gate',
+      partialList.body.evidence_status?.state === 'blocked' &&
+        partialList.body.evidence_status?.snapshot_count === 1
+    );
+    assert(
+      'partial persisted replay exposes a stable blocker',
+      partialList.body.evidence_status?.blockers?.[0]?.code === 'pit_replay_not_materialized'
+    );
+    assert(
+      'partial persisted replay never exposes curve points',
+      Array.isArray(partialList.body.snapshots) && partialList.body.snapshots.length === 0
+    );
+    evidenceSnapshotCount = 27;
 
     const detail = await authorizedGet(
       app,

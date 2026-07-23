@@ -104,6 +104,15 @@ export class FactorScore extends Model {
   })
   declare source: string;
 
+  @Column({
+    type: DataType.DATE,
+    allowNull: false,
+    defaultValue: DataType.NOW,
+    field: 'available_at_utc',
+    comment: '该因子事实首次可被系统使用的 UTC 时间',
+  })
+  declare available_at_utc: Date;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;

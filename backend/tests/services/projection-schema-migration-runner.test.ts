@@ -76,7 +76,7 @@ assert.match(
 );
 assert.match(
   globalSync,
-  /OPTIONAL_STEPS = \{"refresh_backtest_pit_cn_a"\}/,
+  /OPTIONAL_STEPS = \{"refresh_stock_security_lifecycle", "refresh_backtest_pit_cn_a"\}/,
   'PIT evidence must be explicitly classified as an optional projection'
 );
 assert.match(
@@ -94,6 +94,41 @@ assert.match(
   /COUNT\(DISTINCT bar\.stock_id\)[\s\S]{0,700}coverage\.covered >= CEIL\(listed\.total \* 0\.80\)/,
   'PIT windows must use the broad-market watermark rather than one updated instrument'
 );
+assert.match(
+  pitMaterializer,
+  /PIT evidence blocked: complete six-factor checkpoints[\s\S]{0,500}PIT evidence blocked: available_at_utc coverage/,
+  'PIT materialization must not bypass six-factor history or fact-availability gates'
+);
+assert.match(
+  pitMaterializer,
+  /factor_matrix[\s\S]{0,1800}matrix\.quality \* 0\.20[\s\S]{0,300}matrix\.risk \* 0\.10/,
+  'PIT holdings must calculate the declared six-factor weighted score'
+);
+assert.match(
+  pitMaterializer,
+  /ranking_method["']?:\s*["']six-factor point-in-time weighted score["']/,
+  'PIT snapshots must preserve the declared six-factor ranking provenance'
+);
+assert.match(
+  pitMaterializer,
+  /eligible = sessions\[1:\]/,
+  'PIT execution checkpoints must reserve a completed prior signal session'
+);
+assert.match(
+  pitMaterializer,
+  /signal_day = previous_session\[checkpoint\]/,
+  'PIT selection must rank the prior session rather than the execution close'
+);
+assert.match(
+  pitMaterializer,
+  /previous_weights[\s\S]{0,1800}gross_factor[\s\S]{0,1200}traded_notional[\s\S]{0,500}TRADE_COST_RATE/,
+  'PIT NAV must mark old holdings before applying turnover-based costs'
+);
+assert.match(
+  pitMaterializer,
+  /as_of = datetime\.combine\(checkpoint, time\(hour=7\), tzinfo=timezone\.utc\)/,
+  'A-share PIT as-of timestamps must use the 15:00 Asia/Shanghai market close'
+);
 for (const producer of projectionProducers) {
   assert.match(
     producer,
@@ -102,4 +137,4 @@ for (const producer of projectionProducers) {
   );
 }
 
-console.log('projection schema migration runner: 21 assertions passed');
+console.log('projection schema migration runner: 27 assertions passed');
