@@ -1,0 +1,33 @@
+backend/src/services/ResearchTradingLoopService.ts
+  s_ec1e6492779c20::t_62757cf3175555 1309,1341-1348
+backend/tests/services/research-trading-loop.test.ts
+  s_ec1e6492779c20::t_a71a6cdcb3f597 376-384
+frontend/src/pages/catdesk/catdesk.css
+  s_ec1e6492779c20::t_d19b0009108c49 1598-1636
+frontend/src/pages/catdesk/shared/ResearchLoopStatusStrip.tsx
+  s_ec1e6492779c20::t_b17420496c5859 94-111
+frontend/src/pages/catdesk/shared/__tests__/researchLoopUi.test.tsx
+  s_ec1e6492779c20::t_821661dc758488 28-36,101-103
+frontend/src/pages/catdesk/tabs/__tests__/portfolioAndAIEntry.test.tsx
+  s_ec1e6492779c20::t_95bc7853ee5a0e 37-45
+frontend/src/services/researchTradingLoopService.ts
+  s_ec1e6492779c20::t_1760754c89ab3d 56-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c65f7b00974d0330849eab238372f931c0e42658",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
