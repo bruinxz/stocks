@@ -497,6 +497,11 @@ function testPipelineContracts() {
     scheduler,
     /type: 'RESEARCH_TRADING_LOOP'[\s\S]{0,160}cron_expression: '35,50 9 \* \* 1-5'/
   );
+  assert.match(
+    scheduler,
+    /status === 'waiting_for_quotes'[\s\S]{0,900}status: blocked \? 'FAILED' : 'COMPLETED'[\s\S]{0,900}if \(blocked\) throw new Error/,
+    '研究或行情未就绪时调度任务必须真实失败，不能被统一成功出口覆盖'
+  );
   const loopService = fs.readFileSync(
     path.join(root, 'backend/src/services/ResearchTradingLoopService.ts'),
     'utf8'

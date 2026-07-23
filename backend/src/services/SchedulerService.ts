@@ -1705,21 +1705,27 @@ class SchedulerService {
         });
         const users = Array.isArray((result as any).users) ? (result as any).users : [];
         const failed = users.filter((row: any) => row.status === 'failed').length;
+        const waiting = users.filter((row: any) => row.status === 'waiting_for_quotes').length;
         const completed = users.filter((row: any) => row.status === 'completed').length;
+        const deduped = users.filter((row: any) => row.status === 'deduped').length;
+        const blocked = (result as any).status === 'skipped' || failed > 0 || waiting > 0;
+        const errorMessage =
+          (result as any).status === 'skipped'
+            ? `研究数据未到齐：早报=${(result as any).morning_research_day || 'missing'}，高倍=${
+                (result as any).multibagger_research_day || 'missing'
+              }`
+            : failed > 0
+            ? `${failed} 个用户闭环执行失败`
+            : waiting > 0
+            ? `${waiting} 个用户仍缺少可成交的实时行情`
+            : null;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: users.length,
-          completed_items: completed,
-          failed_items: failed,
-          status: failed > 0 ? 'FAILED' : 'COMPLETED',
+          completed_items: completed + deduped,
+          failed_items: failed + waiting,
+          status: blocked ? 'FAILED' : 'COMPLETED',
           completed_at: new Date(),
-          error_message:
-            (result as any).status === 'skipped'
-              ? `研究数据未到齐：早报=${(result as any).morning_research_day || 'missing'}，高倍=${
-                  (result as any).multibagger_research_day || 'missing'
-                }`
-              : failed > 0
-              ? `${failed} 个用户闭环执行失败`
-              : null,
+          error_message: errorMessage,
           result_summary: result as any,
         });
         logger.info(
@@ -1727,6 +1733,7 @@ class SchedulerService {
             (result as any).research_day || (result as any).expected_research_day || '-'
           } users=${users.length}`
         );
+        if (blocked) throw new Error(errorMessage || '研究交易闭环未完成');
       } else if (task.type === 'PAPER_TRADING_AUTO_SYNC') {
         // 修复 HIGH #24 (2026-06-16): all_portfolios 模式 — 之前 AUTO_SYNC 只对
         // parameters.portfolio_name 指定的单 portfolio 跑, 其他 portfolio 永远无 BUY.
