@@ -166,6 +166,8 @@ async function main(): Promise<void> {
     );
     assert('list exposes top-level win_rate_6m', list.body.snapshots?.[0]?.win_rate_6m === 0.58);
     assert('list does not expose nested metrics', !('metrics' in (list.body.snapshots?.[0] || {})));
+    assert('list marks persisted evidence ready', list.body.evidence_status?.state === 'ready');
+    assert('ready evidence has no blockers', list.body.evidence_status?.blockers?.length === 0);
     const listCall = calls.at(-1);
     assert(
       'list uses parameterized filters',

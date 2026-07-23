@@ -13,6 +13,7 @@ import { MetricsCards } from './MetricsCards';
 import { BacktestChart } from './BacktestChart';
 import { PitTimeline } from './PitTimeline';
 import { PitBadge } from './PitBadge';
+import { BacktestEvidenceBlockers } from './BacktestEvidenceBlockers';
 import { buildBacktestSidebarSections } from './BacktestSidebarSections';
 import {
   BACKTEST_STRATEGY_MARKET_SCOPES,
@@ -48,6 +49,7 @@ export function BacktestEvidence() {
 
   const {
     snapshots,
+    evidenceStatus,
     selectedSnapshot,
     holdings,
     loading,
@@ -152,7 +154,15 @@ export function BacktestEvidence() {
   } else if (error) {
     content = <ErrorState message={error.message} />;
   } else if (!visibleSnapshots.length) {
-    content = <EmptyState title="暂无回测快照 · 请等待历史时点数据入库或切换策略" />;
+    content =
+      evidenceStatus?.state === 'blocked' ? (
+        <BacktestEvidenceBlockers status={evidenceStatus} />
+      ) : (
+        <EmptyState
+          title="暂无可核验的回测快照"
+          description="当前接口没有返回证据门禁状态，系统不会猜测缺失原因。"
+        />
+      );
   } else {
     content = (
       <>

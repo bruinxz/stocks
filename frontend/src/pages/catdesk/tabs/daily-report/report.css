@@ -346,6 +346,13 @@
   color: var(--report-muted);
 }
 
+.editorial-lead--unavailable small {
+  display: block;
+  margin: 10px 0 18px;
+  color: #8f776a;
+  font: 600 10px/1.6 var(--cd-font-mono);
+}
+
 .editorial-loading-line {
   width: min(740px, 90%);
   height: 42px;

@@ -2,7 +2,10 @@ import {
   BACKTEST_MARKET_SCOPES,
   BACKTEST_STRATEGIES,
   type BacktestHolding,
+  type BacktestEvidenceBlocker,
+  type BacktestEvidenceStatus,
   type BacktestMarketScope,
+  type BacktestSnapshotListEnvelope,
   type BacktestSnapshotSlot,
   type BacktestStrategy,
   type RawBacktestSnapshot,
@@ -64,6 +67,14 @@ function requiredNumber(value: unknown, label: string): number {
   const parsed = optionalNumber(value, label);
   if (parsed == null) {
     throw new BacktestContractError(`${label} is required`);
+  }
+  return parsed;
+}
+
+function requiredNonNegativeInteger(value: unknown, label: string): number {
+  const parsed = requiredNumber(value, label);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new BacktestContractError(`${label} must be a non-negative integer`);
   }
   return parsed;
 }
@@ -191,6 +202,72 @@ export function parseSnapshotListResponse(
   return envelope.snapshots.map((snapshot, index) =>
     parseSnapshot(snapshot, requestedStrategy, requestedMarketScope, index)
   );
+}
+
+function parseEvidenceBlocker(value: unknown, index: number): BacktestEvidenceBlocker {
+  const raw = asRecord(value, `evidence_status.blockers[${index}]`);
+  const observed = optionalNumber(raw.observed, `evidence_status.blockers[${index}].observed`);
+  const required = optionalNumber(raw.required, `evidence_status.blockers[${index}].required`);
+  return {
+    code: requiredString(raw.code, `evidence_status.blockers[${index}].code`),
+    title: requiredString(raw.title, `evidence_status.blockers[${index}].title`),
+    detail: requiredString(raw.detail, `evidence_status.blockers[${index}].detail`),
+    ...(observed == null ? {} : { observed }),
+    ...(required == null ? {} : { required }),
+    ...(raw.unit == null
+      ? {}
+      : { unit: requiredString(raw.unit, `evidence_status.blockers[${index}].unit`) }),
+  };
+}
+
+function parseEvidenceStatus(value: unknown): BacktestEvidenceStatus {
+  const raw = asRecord(value, 'evidence_status');
+  if (raw.state !== 'ready' && raw.state !== 'blocked') {
+    throw new BacktestContractError('evidence_status.state must be ready or blocked');
+  }
+  if (!Array.isArray(raw.blockers)) {
+    throw new BacktestContractError('evidence_status.blockers must be an array');
+  }
+  const status: BacktestEvidenceStatus = {
+    state: raw.state,
+    snapshot_count: requiredNonNegativeInteger(
+      raw.snapshot_count,
+      'evidence_status.snapshot_count'
+    ),
+    required_checkpoint_count: requiredNonNegativeInteger(
+      raw.required_checkpoint_count,
+      'evidence_status.required_checkpoint_count'
+    ),
+    blockers: raw.blockers.map(parseEvidenceBlocker),
+  };
+  if (status.state === 'ready' && status.blockers.length > 0) {
+    throw new BacktestContractError('ready evidence_status must not contain blockers');
+  }
+  if (status.state === 'blocked' && status.blockers.length === 0) {
+    throw new BacktestContractError('blocked evidence_status must contain blockers');
+  }
+  return status;
+}
+
+export function parseSnapshotListEnvelope(
+  value: unknown,
+  requestedStrategy: BacktestStrategy,
+  requestedMarketScope: BacktestMarketScope
+): BacktestSnapshotListEnvelope {
+  const envelope = asRecord(value, 'response');
+  const snapshots = parseSnapshotListResponse(value, requestedStrategy, requestedMarketScope);
+  const evidenceStatus = parseEvidenceStatus(envelope.evidence_status);
+  if (evidenceStatus.snapshot_count !== snapshots.length) {
+    throw new BacktestContractError(
+      'evidence_status.snapshot_count must match response.snapshots length'
+    );
+  }
+  if (snapshots.length === 0 && evidenceStatus.state !== 'blocked') {
+    throw new BacktestContractError(
+      'empty snapshots must be accompanied by blocked evidence_status'
+    );
+  }
+  return { snapshots, evidence_status: evidenceStatus };
 }
 
 export function parseHoldingsResponse(value: unknown): BacktestHolding[] {

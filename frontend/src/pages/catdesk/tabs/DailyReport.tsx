@@ -5,9 +5,9 @@ import { ErrorState } from '../shared/ErrorState';
 import { LoadingState } from '../shared/LoadingState';
 import { ReportDocument } from './daily-report/ReportDocument';
 import { TabKpiStrip } from './daily-report/TabKpiStrip';
-import { buildDailyReportKpi } from './daily-report/slots';
+import { buildDailyReportKpi, dailyReportStatusLabel } from './daily-report/slots';
 import type { DailyReportViewState } from './daily-report/types';
-import { GENERATION_STATUS_LABELS, MARKET_SCOPE_LABELS, PROFILE_LABELS } from '../shared/uiLabels';
+import { MARKET_SCOPE_LABELS, PROFILE_LABELS } from '../shared/uiLabels';
 import './daily-report/report.css';
 
 export interface DailyReportProps {
@@ -81,8 +81,14 @@ export function DailyReport({
           <span className="report-eyebrow">A 股每日日报 · 板块、个股与证据账本</span>
           <h2>每日日报</h2>
         </div>
-        <Tag color={state.generation.status === 'completed' ? 'green' : 'blue'}>
-          {GENERATION_STATUS_LABELS[state.generation.status] ?? state.generation.status}
+        <Tag
+          color={
+            state.generation.status === 'completed' || state.generation.status === 'idle'
+              ? 'green'
+              : 'blue'
+          }
+        >
+          {dailyReportStatusLabel(state.report, state.generation)}
         </Tag>
       </div>
       <ReportDocument

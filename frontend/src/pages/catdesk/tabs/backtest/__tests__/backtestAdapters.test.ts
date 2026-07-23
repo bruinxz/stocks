@@ -2,6 +2,7 @@ import { describe, expect, test } from '@jest/globals';
 import {
   BacktestContractError,
   parseHoldingsResponse,
+  parseSnapshotListEnvelope,
   parseSnapshotListResponse,
 } from '../backtestAdapters';
 
@@ -21,6 +22,66 @@ function snapshot(overrides: Record<string, unknown> = {}) {
 }
 
 describe('backtest snapshot adapter', () => {
+  test('parses fail-closed evidence blockers for an empty replay', () => {
+    expect(
+      parseSnapshotListEnvelope(
+        {
+          strategy: 'us_preferred',
+          market_scope: 'cn_a',
+          snapshots: [],
+          evidence_status: {
+            state: 'blocked',
+            snapshot_count: 0,
+            required_checkpoint_count: 27,
+            blockers: [
+              {
+                code: 'factor_history_insufficient',
+                title: '六维因子历史截面不足',
+                detail: '当前只有 1 个完整检查点。',
+                observed: 1,
+                required: 27,
+                unit: '个检查点',
+              },
+            ],
+          },
+        },
+        'us_preferred',
+        'cn_a'
+      ).evidence_status
+    ).toEqual({
+      state: 'blocked',
+      snapshot_count: 0,
+      required_checkpoint_count: 27,
+      blockers: [
+        expect.objectContaining({
+          code: 'factor_history_insufficient',
+          observed: 1,
+          required: 27,
+        }),
+      ],
+    });
+  });
+
+  test('rejects empty snapshots that claim evidence is ready', () => {
+    expect(() =>
+      parseSnapshotListEnvelope(
+        {
+          strategy: 'us_preferred',
+          market_scope: 'us',
+          snapshots: [],
+          evidence_status: {
+            state: 'ready',
+            snapshot_count: 0,
+            required_checkpoint_count: 27,
+            blockers: [],
+          },
+        },
+        'us_preferred',
+        'us'
+      )
+    ).toThrow(/empty snapshots/);
+  });
+
   test('maps canonical top-level metrics', () => {
     const [mapped] = parseSnapshotListResponse(
       {

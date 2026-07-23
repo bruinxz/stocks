@@ -3,6 +3,181 @@ import { QueryTypes } from 'sequelize';
 import { logger } from '../../utils/logger';
 import { sequelize } from '../../config/database';
 
+const REQUIRED_PIT_CHECKPOINTS = 27;
+
+interface BacktestEvidenceBlocker {
+  code: string;
+  title: string;
+  detail: string;
+  observed?: number;
+  required?: number;
+  unit?: string;
+}
+
+interface BacktestEvidenceStatus {
+  state: 'ready' | 'blocked';
+  snapshot_count: number;
+  required_checkpoint_count: number;
+  blockers: BacktestEvidenceBlocker[];
+}
+
+interface CnAEvidenceReadinessRow {
+  stock_count: number | string;
+  listing_date_count: number | string;
+  historical_member_count: number | string;
+  factor_day_count: number | string;
+  complete_factor_day_count: number | string;
+  available_at_table_count: number | string;
+}
+
+function numeric(value: number | string | null | undefined): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function loadEmptyEvidenceStatus(
+  marketScope: string
+): Promise<BacktestEvidenceStatus> {
+  if (marketScope !== 'cn_a') {
+    return {
+      state: 'blocked',
+      snapshot_count: 0,
+      required_checkpoint_count: REQUIRED_PIT_CHECKPOINTS,
+      blockers: [
+        {
+          code: 'market_history_not_connected',
+          title: '该市场的历史时点证据源尚未接入',
+          detail: '当前没有可核验的历史成分、因子可用时间与持仓快照，因此不展示收益曲线。',
+        },
+      ],
+    };
+  }
+
+  const [row] = await sequelize.query<CnAEvidenceReadinessRow>(
+    `WITH stock_master AS (
+       SELECT COUNT(*)::int AS stock_count,
+              COUNT(listing_date)::int AS listing_date_count,
+              COUNT(*) FILTER (
+                WHERE delisting_date IS NOT NULL OR is_listed = FALSE
+              )::int AS historical_member_count
+         FROM stocks
+        WHERE type = 'stock'
+     ), factor_day_coverage AS (
+       SELECT fs.trade_date,
+              COUNT(DISTINCT fs.stock_code)::int AS universe_size,
+              COUNT(DISTINCT fs.stock_code) FILTER (
+                WHERE fs.factor_name IN ('quality', 'quality_high')
+                  AND fs.raw_value IS NOT NULL
+              )::int AS q_coverage,
+              COUNT(DISTINCT fs.stock_code) FILTER (
+                WHERE fs.factor_name IN ('growth', 'earnings_surprise', 'analyst_consensus')
+                  AND fs.raw_value IS NOT NULL
+              )::int AS g_coverage,
+              COUNT(DISTINCT fs.stock_code) FILTER (
+                WHERE fs.factor_name = 'value' AND fs.raw_value IS NOT NULL
+              )::int AS v_coverage,
+              COUNT(DISTINCT fs.stock_code) FILTER (
+                WHERE fs.factor_name IN ('momentum', 'money_flow', 'northbound')
+                  AND fs.raw_value IS NOT NULL
+              )::int AS m_coverage,
+              COUNT(DISTINCT fs.stock_code) FILTER (
+                WHERE fs.factor_name IN ('gradual_breakout', 'industry_momentum')
+                  AND fs.raw_value IS NOT NULL
+              )::int AS t_coverage,
+              COUNT(DISTINCT fs.stock_code) FILTER (
+                WHERE fs.factor_name IN ('low_vol', 'liquidity')
+                  AND fs.raw_value IS NOT NULL
+              )::int AS r_coverage
+         FROM factor_scores fs
+        GROUP BY fs.trade_date
+     ), factor_history AS (
+       SELECT COUNT(*)::int AS factor_day_count,
+              COUNT(*) FILTER (
+                WHERE q_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+                  AND g_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+                  AND v_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+                  AND m_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+                  AND t_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+                  AND r_coverage >= GREATEST(500, CEIL(universe_size * 0.20))
+              )::int AS complete_factor_day_count
+         FROM factor_day_coverage
+     ), availability AS (
+       SELECT COUNT(DISTINCT table_name)::int AS available_at_table_count
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN (
+            'factor_scores', 'stock_fundamental_factors', 'stock_valuation_factors'
+          )
+          AND column_name = 'available_at_utc'
+     )
+     SELECT stock_master.stock_count,
+            stock_master.listing_date_count,
+            stock_master.historical_member_count,
+            factor_history.factor_day_count,
+            factor_history.complete_factor_day_count,
+            availability.available_at_table_count
+       FROM stock_master CROSS JOIN factor_history CROSS JOIN availability`,
+    { type: QueryTypes.SELECT }
+  );
+
+  const stockCount = numeric(row?.stock_count);
+  const listingDateCount = numeric(row?.listing_date_count);
+  const completeFactorDayCount = numeric(row?.complete_factor_day_count);
+  const availableAtTableCount = numeric(row?.available_at_table_count);
+  const blockers: BacktestEvidenceBlocker[] = [];
+
+  if (stockCount === 0 || listingDateCount < stockCount) {
+    blockers.push({
+      code: 'security_lifecycle_incomplete',
+      title: '证券上市与退市时间不完整',
+      detail: `仅 ${listingDateCount}/${stockCount} 只股票记录了上市日，无法还原历史时点的真实可投资范围，也无法排除幸存者偏差。`,
+      observed: listingDateCount,
+      required: stockCount,
+      unit: '只股票',
+    });
+  }
+
+  if (completeFactorDayCount < REQUIRED_PIT_CHECKPOINTS) {
+    blockers.push({
+      code: 'factor_history_insufficient',
+      title: '六维因子历史截面不足',
+      detail: `近 6 个月回放需要 ${REQUIRED_PIT_CHECKPOINTS} 个完整检查点，当前只有 ${completeFactorDayCount} 个交易日同时满足质量、成长、估值、动量、趋势和风险覆盖要求。`,
+      observed: completeFactorDayCount,
+      required: REQUIRED_PIT_CHECKPOINTS,
+      unit: '个检查点',
+    });
+  }
+
+  if (availableAtTableCount < 3) {
+    blockers.push({
+      code: 'fact_availability_unproven',
+      title: '历史事实的可用时间尚未留痕',
+      detail: '因子、财务与估值事实尚未全部记录 available_at_utc，无法证明回放只使用了当时已经公开的数据。',
+      observed: availableAtTableCount,
+      required: 3,
+      unit: '张事实表',
+    });
+  }
+
+  if (!blockers.length) {
+    blockers.push({
+      code: 'pit_replay_not_materialized',
+      title: '历史时点快照尚未生成',
+      detail: '基础证据已具备，但 27 个检查点尚未写入持仓与净值快照。',
+      observed: 0,
+      required: REQUIRED_PIT_CHECKPOINTS,
+      unit: '个快照',
+    });
+  }
+
+  return {
+    state: 'blocked',
+    snapshot_count: 0,
+    required_checkpoint_count: REQUIRED_PIT_CHECKPOINTS,
+    blockers,
+  };
+}
+
 function normalizeHoldingRows(rows: unknown[]): { ok: true; holdings: any[] } | { ok: false } {
   const holdings: any[] = [];
   for (const value of rows) {
@@ -90,9 +265,19 @@ export class BacktestPitController {
         { replacements, type: QueryTypes.SELECT }
       );
 
+      const evidenceStatus: BacktestEvidenceStatus = snapshots.length
+        ? {
+            state: 'ready',
+            snapshot_count: snapshots.length,
+            required_checkpoint_count: REQUIRED_PIT_CHECKPOINTS,
+            blockers: [],
+          }
+        : await loadEmptyEvidenceStatus(marketScope);
+
       res.json({
         strategy,
         market_scope: marketScope,
+        evidence_status: evidenceStatus,
         snapshots: snapshots.map(snapshot => ({
           ...snapshot,
           net_value: snapshot.net_value == null ? null : Number(snapshot.net_value),

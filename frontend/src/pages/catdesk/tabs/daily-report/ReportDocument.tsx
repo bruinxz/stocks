@@ -17,6 +17,29 @@ export interface ReportDocumentProps {
   globalSummary?: React.ReactNode;
 }
 
+const REPORT_PROFILE_CODES: Record<string, string> = {
+  us_preferred: 'SELECT',
+  multibagger: 'MBG',
+  japan_blue_chip: 'JPB',
+  japan_multibagger: 'JPM',
+  korea_semiconductor_chain: 'KSC',
+  korea_multibagger: 'KRM',
+};
+
+const REPORT_MARKET_CODES: Record<string, string> = {
+  cn_a: 'CNA',
+  us: 'USA',
+  jp: 'JPN',
+  kr: 'KOR',
+};
+
+export function dailyReportNumber(report: DailyReportDocument): string {
+  const day = report.trading_day.replace(/-/g, '');
+  const market = REPORT_MARKET_CODES[report.snapshot.market_scope] ?? 'MKT';
+  const profile = REPORT_PROFILE_CODES[report.snapshot.profile] ?? 'STRAT';
+  return `${market}-${day}-${profile}`;
+}
+
 export function ReportDocument({ report, aShareOverview, globalSummary }: ReportDocumentProps) {
   return (
     <article className="report-document">
@@ -27,7 +50,7 @@ export function ReportDocument({ report, aShareOverview, globalSummary }: Report
         </div>
         <div className="report-document__edition">
           <span>{report.trading_day}</span>
-          <small>第 {report.report_id.slice(0, 6).toUpperCase()} 号</small>
+          <small>第 {dailyReportNumber(report)} 号</small>
         </div>
       </header>
 

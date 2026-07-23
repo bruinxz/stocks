@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, jest, test } from '@jest/globals';
 import { DailyReport } from '../../DailyReport';
+import { dailyReportNumber } from '../ReportDocument';
 import { ReportHistory } from '../../ReportHistory';
 import { tokenizeEvidence } from '../evidenceTokens';
 import { nextGenerationState, parseGenerationJob, pollDelay } from '../generationMachine';
@@ -143,6 +144,7 @@ describe('Tab 6/7 contract-first behavior', () => {
     expect(daily).toContain('href="sec-edgar://');
     expect(daily).toContain('投资有风险');
     expect(daily).toContain('高确信度');
+    expect(daily).toContain(`第 ${dailyReportNumber(report)} 号`);
 
     const historyState: ReportHistoryViewState = {
       kind: 'ready',
@@ -166,6 +168,21 @@ describe('Tab 6/7 contract-first behavior', () => {
     expect(history).toContain('历史档案 · 快照登记簿');
     expect(history).toContain('新增');
     expect(history).toContain('AAPL');
+  });
+
+  test('treats a loaded archived report as complete instead of showing idle', () => {
+    const daily = renderToStaticMarkup(
+      <DailyReport
+        state={{
+          kind: 'ready',
+          report,
+          generation: { job_id: 'idle', status: 'idle' },
+        }}
+      />
+    );
+    expect(daily).toContain('已归档');
+    expect(daily).not.toContain('idle');
+    expect(dailyReportNumber(report)).toBe('USA-20260710-SELECT');
   });
 
   test('parses evidence tokens and rejects dangling markers', () => {

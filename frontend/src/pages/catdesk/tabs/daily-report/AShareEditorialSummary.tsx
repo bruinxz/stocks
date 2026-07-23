@@ -8,14 +8,21 @@ async function loadDailyMarketBrief(
   tradingDay: string,
   signal: AbortSignal
 ): Promise<DailyMarketBrief> {
-  const response = await api.get('/market/daily-brief', {
-    signal,
-    params: { date: tradingDay },
-  });
-  if (!response.data?.success || !response.data?.data) {
-    throw new Error(response.data?.message || 'A 股收盘简报暂不可用');
+  try {
+    const response = await api.get('/market/daily-brief', {
+      signal,
+      params: { date: tradingDay },
+    });
+    if (!response.data?.success || !response.data?.data) {
+      throw new Error(response.data?.message || 'A 股收盘简报暂不可用');
+    }
+    return response.data.data as DailyMarketBrief;
+  } catch (error) {
+    const message = (error as { response?: { data?: { message?: unknown } } })?.response?.data
+      ?.message;
+    if (typeof message === 'string' && message.trim()) throw new Error(message);
+    throw error;
   }
-  return response.data.data as DailyMarketBrief;
 }
 
 function formatPrice(value: number): string {
@@ -43,10 +50,11 @@ export function AShareEditorialSummary({ report }: { report: DailyReportDocument
     return (
       <section className="editorial-lead editorial-lead--unavailable">
         <span className="report-eyebrow">A 股主稿</span>
-        <h1>A 股观察：先看研究线索，收盘数据稍后补齐</h1>
-        <p>指数与板块收盘稿暂未就绪，不影响下方个股证据阅读。</p>
+        <h1>{report.trading_day} 收盘稿未通过完整性校验</h1>
+        <p>{error?.message || '指数与板块收盘数据暂不可用。'}</p>
+        <small>不会用更早交易日替代；下方个股研究快照仍按原始日期展示。</small>
         <button type="button" onClick={refetch}>
-          重新整理收盘数据
+          重新校验收盘数据
         </button>
       </section>
     );

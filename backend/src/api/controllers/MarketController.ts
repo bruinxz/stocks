@@ -142,11 +142,20 @@ export class MarketController {
    */
   getDailyBrief = async (req: Request, res: Response) => {
     try {
+      const numberValue = (value: unknown) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
       const requestedDate =
         typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
           ? req.query.date
           : null;
-      const [dateRow] = await sequelize.query<{ trade_date: string | null }>(
+      const [dateRow] = await sequelize.query<{
+        trade_date: string | null;
+        covered: number | string;
+        total: number | string;
+        coverage_rate: number | string;
+      }>(
         `
           WITH listed AS (
             SELECT COUNT(*)::numeric AS total
@@ -158,12 +167,28 @@ export class MarketController {
             JOIN stocks stock ON stock.id = bar.stock_id
             WHERE stock.is_listed = TRUE
               AND COALESCE(stock.type, 'stock') = 'stock'
-              AND (:requested_date::date IS NULL OR bar.time::date <= :requested_date::date)
+              AND (
+                (
+                  :requested_date::date IS NOT NULL
+                  AND bar.time >= :requested_date::date
+                  AND bar.time < :requested_date::date + INTERVAL '1 day'
+                )
+                OR (
+                  :requested_date::date IS NULL
+                  AND bar.time >= CURRENT_DATE - INTERVAL '365 days'
+                )
+              )
             GROUP BY bar.time::date
           )
-          SELECT MAX(coverage.trade_date)::text AS trade_date
+          SELECT coverage.trade_date::text AS trade_date,
+                 coverage.covered,
+                 listed.total,
+                 coverage.covered / NULLIF(listed.total, 0) AS coverage_rate
           FROM coverage CROSS JOIN listed
-          WHERE coverage.covered / NULLIF(listed.total, 0) >= 0.95
+          WHERE :requested_date::date IS NOT NULL
+             OR coverage.covered / NULLIF(listed.total, 0) >= 0.95
+          ORDER BY coverage.trade_date DESC
+          LIMIT 1
         `,
         {
           replacements: { requested_date: requestedDate },
@@ -172,7 +197,37 @@ export class MarketController {
       );
       const tradeDate = dateRow?.trade_date;
       if (!tradeDate) {
-        res.status(404).json({ success: false, message: '暂无完整 A 股交易日数据' });
+        res.status(404).json({
+          success: false,
+          message: requestedDate
+            ? `${requestedDate} 没有可核验的 A 股收盘行情，不使用更早交易日替代`
+            : '暂无完整 A 股交易日数据',
+          data: requestedDate
+            ? {
+                requested_date: requestedDate,
+                coverage_rate: 0,
+                required_coverage_rate: 0.95,
+              }
+            : undefined,
+        });
+        return;
+      }
+      const coverageRate = numberValue(dateRow.coverage_rate);
+      if (requestedDate && (tradeDate !== requestedDate || coverageRate < 0.95)) {
+        res.status(409).json({
+          success: false,
+          message: `${requestedDate} 收盘行情覆盖 ${(coverageRate * 100).toFixed(
+            2
+          )}%，低于 95% 完整性门槛，不使用更早交易日替代`,
+          data: {
+            requested_date: requestedDate,
+            available_trade_date: tradeDate,
+            covered: numberValue(dateRow.covered),
+            total: numberValue(dateRow.total),
+            coverage_rate: coverageRate,
+            required_coverage_rate: 0.95,
+          },
+        });
         return;
       }
 
@@ -305,10 +360,6 @@ export class MarketController {
         ),
       ]);
 
-      const numberValue = (value: unknown) => {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : 0;
-      };
       const breadth = breadthRows[0] || {
         total_count: 0,
         advancing_count: 0,

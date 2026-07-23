@@ -74,6 +74,27 @@ export interface BacktestHolding {
   is_stale: boolean;
 }
 
+export interface BacktestEvidenceBlocker {
+  code: string;
+  title: string;
+  detail: string;
+  observed?: number;
+  required?: number;
+  unit?: string;
+}
+
+export interface BacktestEvidenceStatus {
+  state: 'ready' | 'blocked';
+  snapshot_count: number;
+  required_checkpoint_count: number;
+  blockers: BacktestEvidenceBlocker[];
+}
+
+export interface BacktestSnapshotListEnvelope {
+  snapshots: BacktestSnapshotSlot[];
+  evidence_status: BacktestEvidenceStatus;
+}
+
 export interface EquityDataPoint {
   date: string;
   netValue: number;

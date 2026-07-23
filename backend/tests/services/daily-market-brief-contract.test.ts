@@ -31,8 +31,18 @@ const reportStyles = fs.readFileSync(
 
 assert.match(
   controller,
-  /getDailyBrief[\s\S]{0,2600}covered \/ NULLIF\(listed\.total, 0\) >= 0\.95/,
+  /getDailyBrief[\s\S]{0,3600}covered \/ NULLIF\(listed\.total, 0\) >= 0\.95/,
   'daily brief must select a full-coverage trading day'
+);
+assert.match(
+  controller,
+  /bar\.time >= :requested_date::date[\s\S]{0,180}bar\.time < :requested_date::date \+ INTERVAL '1 day'/,
+  'a requested report day must be checked exactly instead of falling back to an older close'
+);
+assert.match(
+  controller,
+  /不使用更早交易日替代/,
+  'an incomplete requested close must fail closed with an explicit no-fallback message'
 );
 assert.match(
   controller,
@@ -67,4 +77,4 @@ assert.match(
   'the index tape must own horizontal overflow on narrow screens'
 );
 
-console.log('daily market brief contract: 10 assertions passed');
+console.log('daily market brief contract: 12 assertions passed');
