@@ -32,6 +32,7 @@ for (const migration of [
   '2026-07-11-sprint3-market-storage-phase1.sql',
   '2026-07-12-pit-replay-custom-hotfix.sql',
   '2026-07-14-multibagger-classification-provenance.sql',
+  '2026-07-14-multibagger-text-hit-provenance.sql',
   '2026-07-14-multibagger-source-version-integrity.sql',
   '2026-07-12-ai-recommendation-sot-v031.sql',
 ]) {
@@ -50,7 +51,7 @@ assert.match(
 );
 assert.match(
   runner,
-  /ck_backtest_pit_strategy[\s\S]{0,1200}classification_policy_version[\s\S]{0,1800}ck_multibagger_candidate_score_source_versions/,
+  /ck_backtest_pit_strategy[\s\S]{0,1200}classification_policy_version[\s\S]{0,2200}ck_multibagger_text_hit_fact_hash[\s\S]{0,1800}ck_multibagger_candidate_score_source_versions/,
   'the runner must apply and verify every required Sprint 3 follow-up migration'
 );
 assert.match(

@@ -26,6 +26,7 @@ const MIGRATIONS = {
   phase1: '2026-07-11-sprint3-market-storage-phase1.sql',
   pit_hotfix: '2026-07-12-pit-replay-custom-hotfix.sql',
   classification_provenance: '2026-07-14-multibagger-classification-provenance.sql',
+  text_hit_provenance: '2026-07-14-multibagger-text-hit-provenance.sql',
   source_version_integrity: '2026-07-14-multibagger-source-version-integrity.sql',
   ai_recommendation: '2026-07-12-ai-recommendation-sot-v031.sql',
 } as const;
@@ -139,6 +140,26 @@ async function ensurePhase1Schema(): Promise<void> {
   }
   if (!provenanceColumns.every(name => candidateColumns.has(name))) {
     throw new Error('Multibagger classification provenance verification failed');
+  }
+
+  let textHitColumns = await columnNames('multibagger_text_hit');
+  const textHitProvenanceColumns = ['source_version', 'hit_fact_hash'];
+  const textHitProvenanceCount = textHitProvenanceColumns.filter(name =>
+    textHitColumns.has(name)
+  ).length;
+  if (textHitProvenanceCount === 0) {
+    await applyMigration(MIGRATIONS.text_hit_provenance);
+    textHitColumns = await columnNames('multibagger_text_hit');
+  } else if (textHitProvenanceCount !== textHitProvenanceColumns.length) {
+    throw new Error('Multibagger text-hit provenance schema is partially installed');
+  }
+  const textHitConstraints = await constraintNames('multibagger_text_hit');
+  if (
+    !textHitProvenanceColumns.every(name => textHitColumns.has(name)) ||
+    !textHitConstraints.has('ck_multibagger_text_hit_source_version') ||
+    !textHitConstraints.has('ck_multibagger_text_hit_fact_hash')
+  ) {
+    throw new Error('Multibagger text-hit provenance verification failed');
   }
 
   let universeConstraints = await constraintNames('multibagger_universe');
