@@ -14,7 +14,7 @@ import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { RealtimeQuote } from '../models/RealtimeQuote';
 import { Stock } from '../models/Stock';
 import { logger } from '../utils/logger';
-import { normalizeSymbol } from '../utils/stockSymbol';
+import { normalizeSymbol, quantizeBuyQuantity } from '../utils/stockSymbol';
 import { getEast8DateString } from '../utils/timezone';
 import { checkAShareTradingHours } from '../utils/tradingCalendar';
 import { expectedCompletedTradeDate } from './PageFreshnessService';
@@ -712,7 +712,7 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
        WHERE research_trading_loop_runs.status IN ('failed', 'skipped')
           OR (
             research_trading_loop_runs.status = 'running'
-            AND research_trading_loop_runs.updated_at < NOW() - INTERVAL '30 minutes'
+            AND research_trading_loop_runs.updated_at < NOW() - INTERVAL '10 minutes'
           )
        RETURNING id, user_id, portfolio_id, trading_day, research_day, status`,
       {
@@ -751,17 +751,24 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
     }
 
     try {
-      const execution = await sequelize.transaction(async transaction =>
-        input.decision.action === 'SELL'
-          ? this.executeSell(input, signal.id, transaction)
-          : this.executeBuy(input, signal.id, transaction)
-      );
-      await this.updateDecision(decisionId, {
-        status: execution.status,
-        trade_id: execution.trade_id,
-        quantity: execution.quantity,
-        reference_price: input.price.price,
-        metadata: execution.metadata || {},
+      const execution = await sequelize.transaction(async transaction => {
+        const result =
+          input.decision.action === 'SELL'
+            ? this.executeSell(input, signal.id, transaction)
+            : this.executeBuy(input, signal.id, transaction);
+        const resolved = await result;
+        await this.updateDecision(
+          decisionId,
+          {
+            status: resolved.status,
+            trade_id: resolved.trade_id,
+            quantity: resolved.quantity,
+            reference_price: input.price.price,
+            metadata: resolved.metadata || {},
+          },
+          transaction
+        );
+        return resolved;
       });
       return { ...execution, signal_id: signal.id };
     } catch (error: any) {
@@ -859,7 +866,11 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
     return rows[0].id;
   }
 
-  private async updateDecision(id: number, patch: Record<string, any>): Promise<void> {
+  private async updateDecision(
+    id: number,
+    patch: Record<string, any>,
+    transaction?: Transaction
+  ): Promise<void> {
     const fields: string[] = [`updated_at = NOW()`];
     const replacements: Record<string, any> = { id };
     for (const key of ['status', 'trade_id', 'quantity', 'reference_price']) {
@@ -874,7 +885,7 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
     }
     await sequelize.query(
       `UPDATE research_trading_loop_decisions SET ${fields.join(', ')} WHERE id = :id`,
-      { replacements }
+      { replacements, transaction }
     );
   }
 
@@ -911,8 +922,10 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
     const executePrice = price * 1.001;
     const targetAmount =
       (finite(portfolio.total_value) * finite(input.decision.target_weight_pct)) / 100;
-    const quantity = Math.floor(targetAmount / executePrice / 100) * 100;
-    if (quantity < 100) return { status: 'skipped', metadata: { skip_reason: 'below_one_lot' } };
+    const quantity = quantizeBuyQuantity(targetAmount / executePrice, input.decision.symbol);
+    if (quantity <= 0) {
+      return { status: 'skipped', metadata: { skip_reason: 'below_one_lot' } };
+    }
     const amount = executePrice * quantity;
     const commission = Math.max(5, amount * 0.0003);
     const transferFee = amount * 0.00001;

@@ -1,8 +1,10 @@
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
+import sequelize from '../../src/config/database';
 import {
   ResearchTradingLoopService,
+  SequelizeResearchTradingLoopRepository,
   buildResearchLoopDecisions,
   canSellPositionOnTradingDay,
   hasResearchLoopPositionCapacity,
@@ -352,6 +354,71 @@ async function testDashboardExecutionState() {
   assert.match(stale.execution.message, /已暂停/);
 }
 
+async function testDecisionAndTradeShareTransaction() {
+  const repository = new SequelizeResearchTradingLoopRepository() as any;
+  const transactionToken = { id: 'research-loop-test-transaction' };
+  const originalTransaction = (sequelize as any).transaction;
+  let rolledBack = false;
+  let transactionalUpdate = false;
+  let failureUpdate = false;
+
+  repository.upsertSignal = async () => ({ id: 11 });
+  repository.insertDecision = async () => 22;
+  repository.executeBuy = async (_input: unknown, _signal_id: number, transaction: unknown) => {
+    assert.equal(transaction, transactionToken, '成交必须收到决策状态使用的同一事务');
+    return { status: 'executed', trade_id: 33, quantity: 100 };
+  };
+  repository.updateDecision = async (
+    _id: number,
+    patch: Record<string, unknown>,
+    transaction?: unknown
+  ) => {
+    if (transaction) {
+      transactionalUpdate = true;
+      throw new Error('simulated decision persistence failure');
+    }
+    failureUpdate = true;
+    assert.equal(patch.status, 'failed');
+  };
+  (sequelize as any).transaction = async (callback: (transaction: unknown) => Promise<unknown>) => {
+    try {
+      return await callback(transactionToken);
+    } catch (error) {
+      rolledBack = true;
+      throw error;
+    }
+  };
+
+  try {
+    const result = await repository.executeDecision({
+      run: { id: 1, trading_day: '2026-07-24', research_day: '2026-07-23' },
+      portfolio: { id: 1 },
+      decision: {
+        symbol: 'sh.600001',
+        name: '测试股票',
+        action: 'BUY',
+        combined_score: 80,
+        target_weight_pct: 9,
+        sources: [],
+        reason: '故障注入',
+      },
+      price: {
+        symbol: 'sh.600001',
+        name: '测试股票',
+        price: 10,
+        quote_time: new Date(),
+        trade_date: '2026-07-24',
+      },
+    });
+    assert.equal(result.status, 'failed');
+    assert(transactionalUpdate, '成交后的决策状态必须在事务内写入');
+    assert(rolledBack, '事务内决策写入失败必须回滚成交事务');
+    assert(failureUpdate, '回滚后必须留下明确的失败决策状态');
+  } finally {
+    (sequelize as any).transaction = originalTransaction;
+  }
+}
+
 function testPipelineContracts() {
   const root = path.resolve(__dirname, '../../..');
   const scheduler = fs.readFileSync(
@@ -391,7 +458,17 @@ function testPipelineContracts() {
     'utf8'
   );
   assert.match(loopService, /hasResearchLoopPositionCapacity\(activePositions\.length\)/);
-  assert.match(loopService, /status = 'running'[\s\S]{0,180}INTERVAL '30 minutes'/);
+  assert.match(loopService, /status = 'running'[\s\S]{0,180}INTERVAL '10 minutes'/);
+  assert.match(
+    loopService,
+    /sequelize\.transaction\(async transaction => \{[\s\S]{0,900}updateDecision\([\s\S]{0,300}transaction/,
+    '模拟成交与决策状态必须在同一事务提交，禁止裂账'
+  );
+  assert.match(
+    loopService,
+    /quantizeBuyQuantity\([\s\S]{0,120}input\.decision\.symbol/,
+    '研究闭环买入必须遵守主板、科创板和北交所各自交易单位'
+  );
   assert.match(
     loopService,
     /UPDATE paper_trading_portfolios[\s\S]{0,1000}auto_trade_enabled = TRUE/,
@@ -476,6 +553,7 @@ async function main() {
   testQuoteFreshness();
   await testFreshnessAndIdempotency();
   await testDashboardExecutionState();
+  await testDecisionAndTradeShareTransaction();
   testPipelineContracts();
   console.log('research trading loop tests passed');
 }
