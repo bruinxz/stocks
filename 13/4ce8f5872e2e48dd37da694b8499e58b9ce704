@@ -1,0 +1,43 @@
+backend/scripts/migrations/2026-07-24-research-trading-loop-schema.sql
+  s_ec1e6492779c20::t_338fdf33359b26 1-73
+backend/src/api/controllers/ResearchTradingLoopController.ts
+  s_ec1e6492779c20::t_60773184d563ac 2-5,16-24,36-44
+backend/src/scripts/apply-research-trading-loop-schema.ts
+  s_ec1e6492779c20::t_9234aabce37271 1-87
+backend/src/scripts/sync-derived-factors.ts
+  s_ec1e6492779c20::t_3d9ece367ef65d 63-64
+backend/src/services/ResearchTradingLoopService.ts
+  s_ec1e6492779c20::t_fb679b11362817 26-42,140,395-412,1032,1131
+backend/tests/services/research-trading-loop.test.ts
+  s_ec1e6492779c20::t_5906043c89b689 184,192-194,281,303-310,335-339,377-381
+frontend/src/pages/catdesk/shared/ResearchLoopStatusStrip.tsx
+  s_ec1e6492779c20::t_9e9d6b564a0254 1-6,12,16-36
+frontend/src/pages/catdesk/shared/__tests__/researchLoopUi.test.tsx
+  s_ec1e6492779c20::t_9f3910a2b17334 91-104
+frontend/src/pages/catdesk/tabs/AShareMorningBrief.tsx
+  s_ec1e6492779c20::t_c4a1d2a1c3625a 61,140
+frontend/src/pages/catdesk/tabs/PortfolioOverview.tsx
+  s_ec1e6492779c20::t_812f7b96cb7703 208,279
+frontend/src/pages/catdesk/tabs/multibagger/HighMultipotential.tsx
+  s_ec1e6492779c20::t_035e0f43c98f22 64,126
+frontend/src/services/researchTradingLoopService.ts
+  s_ec1e6492779c20::t_a4ee7fc240cc61 64-74,81-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "134ce8f5872e2e48dd37da694b8499e58b9ce704",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
