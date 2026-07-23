@@ -256,6 +256,21 @@ SKIP_DEFAULT_USER_INIT=true
 - 在 `stock_backtest_dev` 上手动执行并验证。
 - 不建议为了一次调试关闭 `SKIP_DB_SYNC` 去跑全量 alter。
 
+### 页面投影表由 migration 管理
+
+日韩行情、高倍潜力、PIT 回测证据和 AI 推荐表包含复合外键、约束触发器与
+ownership marker，模型的 `sync()` 被刻意设为 no-op，`sequelize.sync({ alter: true })`
+不会创建它们。个人本地库首次初始化或重建后执行：
+
+```bash
+cd backend
+npm run db:apply-projection-schema
+```
+
+命令会幂等创建并验证全部页面投影表；发现只安装了一部分时会拒绝继续，避免把
+半套 schema 当成成功。共享 `stock_backtest_dev` 仍须按正常 migration 审批流程执行，
+不要把个人调试命令直接指向共享或生产数据库。
+
 ### 数据不是实时生产数据
 
 测试库是从生产库复制出来的快照。生产库后续新增的行情、任务、用户配置、报告，不会自动进入测试库。

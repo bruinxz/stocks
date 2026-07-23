@@ -283,27 +283,33 @@ export class DataSyncService {
       for (const stockData of stocks) {
         const symbol = normalizeSymbol(stockData.code);
         try {
-          const [stock, created] = await Stock.upsert(
-            {
-              symbol: symbol,
-              name: stockData.code_name,
-              listing_date: this.safeParseDate(stockData.ipoDate),
-              delisting_date: this.safeParseDate(stockData.outDate),
-              is_listed: stockData.status === 1,
-              type: this.mapStockType(stockData.type),
-              market: extractMarketFromSymbol(symbol),
-              total_market_cap: stockData.total_market_cap,
-              circulating_market_cap: stockData.circulating_market_cap,
-              pe_dynamic: stockData.pe_dynamic,
-              pb: stockData.pb,
-              turnover_rate: stockData.turnover_rate,
-              price: stockData.price,
-              change_percent: stockData.change_percent,
-            },
-            {
-              conflictFields: ['symbol'],
+          const payload: Record<string, unknown> = {
+            symbol,
+            name: stockData.code_name,
+            listing_date: this.safeParseDate(stockData.ipoDate),
+            delisting_date: this.safeParseDate(stockData.outDate),
+            is_listed: stockData.status === 1,
+            type: this.mapStockType(stockData.type),
+            market: extractMarketFromSymbol(symbol),
+            total_market_cap: stockData.total_market_cap,
+            circulating_market_cap: stockData.circulating_market_cap,
+            pe_dynamic: stockData.pe_dynamic,
+            pb: stockData.pb,
+            turnover_rate: stockData.turnover_rate,
+            price: stockData.price,
+            change_percent: stockData.change_percent,
+          };
+          // 浅层行情源通常不返回 IPO、退市或估值字段。缺失代表“本次未知”，
+          // 不能用 NULL 覆盖更完整来源此前写入的股票主数据。
+          Object.keys(payload).forEach(key => {
+            if (payload[key] === undefined || payload[key] === null || payload[key] === '') {
+              delete payload[key];
             }
-          );
+          });
+
+          const [, created] = await Stock.upsert(payload, {
+            conflictFields: ['symbol'],
+          });
 
           if (created) {
             createdCount++;

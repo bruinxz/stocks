@@ -28,6 +28,7 @@ REPO_ROOT = (
     if repo_root_override
     else Path(__file__).resolve().parents[2]
 ).resolve()
+OPTIONAL_STEPS = {"refresh_backtest_pit_cn_a"}
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -333,17 +334,29 @@ def main() -> int:
             _run("refresh_multibagger_cn_a", multibagger_args, 600)
         )
 
+        pit_args = [
+            "scripts/ops/populate_live_backtest_pit.py",
+            "--env-file",
+            str(args.env_file),
+        ]
+        if args.dry_run:
+            pit_args.append("--dry-run")
+        results.append(_run("refresh_backtest_pit_cn_a", pit_args, 600))
+
     failed = [item for item in results if not item.get("ok")]
+    critical_failed = [item for item in failed if item["name"] not in OPTIONAL_STEPS]
+    degraded = [item for item in failed if item["name"] in OPTIONAL_STEPS]
     summary = {
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "schedule": "09:00 Asia/Shanghai",
         "dry_run": args.dry_run,
-        "success": not failed,
-        "failed_steps": [item["name"] for item in failed],
+        "success": not critical_failed,
+        "failed_steps": [item["name"] for item in critical_failed],
+        "degraded_steps": [item["name"] for item in degraded],
         "steps": results,
     }
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str))
-    return 0 if not failed else 1
+    return 0 if not critical_failed else 1
 
 
 if __name__ == "__main__":

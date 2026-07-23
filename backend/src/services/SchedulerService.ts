@@ -5606,6 +5606,7 @@ class SchedulerService {
           }
         }
         const failedSteps = Array.isArray(summary?.failed_steps) ? summary.failed_steps : [];
+        const degradedSteps = Array.isArray(summary?.degraded_steps) ? summary.degraded_steps : [];
         const failed = result.code !== 0 || summary?.success === false;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: Array.isArray(summary?.steps) ? summary.steps.length : 1,
@@ -5624,11 +5625,15 @@ class SchedulerService {
             scenario: 'global_market_daily_sync',
             schedule: '09:00 Asia/Shanghai',
             failed_steps: failedSteps,
+            degraded_steps: degradedSteps,
             generated_at: summary?.generated_at || new Date().toISOString(),
           },
         });
         if (failed) {
           throw new Error(`全球市场同步失败: ${failedSteps.join(', ') || 'script failed'}`);
+        }
+        if (degradedSteps.length > 0) {
+          logger.warn(`[GLOBAL_MARKET_DAILY_SYNC] 非关键投影降级: ${degradedSteps.join(', ')}`);
         }
         logger.info('[GLOBAL_MARKET_DAILY_SYNC] A 股日报与海外催化数据刷新完成');
       } else if (task.type === 'RSS_NEWS_SYNC') {

@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -48,12 +49,12 @@ UNIVERSE = {
 
 
 def _load_env(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
+    values = dict(os.environ)
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#") and "=" in stripped:
             key, value = stripped.split("=", 1)
-            values[key] = value.strip().strip('"').strip("'")
+            values.setdefault(key, value.strip().strip('"').strip("'"))
     return values
 
 

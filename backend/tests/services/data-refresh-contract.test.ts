@@ -280,6 +280,26 @@ assert.match(
   'global refresh must persist the US technology market before recommendation snapshots'
 );
 assert.match(
+  globalSync,
+  /populate_live_backtest_pit\.py[\s\S]{0,260}refresh_backtest_pit_cn_a/,
+  'global refresh must materialize the backtest evidence page instead of leaving its table permanently empty'
+);
+assert.match(
+  globalSync,
+  /OPTIONAL_STEPS = \{"refresh_backtest_pit_cn_a"\}/,
+  'PIT evidence must be explicitly classified as an optional projection'
+);
+assert.match(
+  globalSync,
+  /critical_failed =[\s\S]{0,500}"degraded_steps"[\s\S]{0,220}return 0 if not critical_failed else 1/,
+  'an unavailable optional PIT projection must not roll back successful daily market refreshes'
+);
+assert.match(
+  scheduler,
+  /degradedSteps[\s\S]{0,1200}非关键投影降级/,
+  'the scheduler must preserve optional projection degradation in its execution summary and logs'
+);
+assert.match(
   usTechSync,
   /"SMH"[\s\S]{0,180}"semiconductor"[\s\S]{0,500}"IGV"[\s\S]{0,180}"software_cloud"/,
   'US technology refresh must keep explicit sector ETF proxies'
@@ -366,4 +386,4 @@ assert.match(
   'A-share report history must support PIT-bounded historical materialization'
 );
 
-console.log('data refresh contract: 52 assertions passed');
+console.log('data refresh contract: 56 assertions passed');

@@ -11,6 +11,7 @@ from decimal import Decimal, ROUND_HALF_EVEN
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import statistics
 import sys
@@ -119,12 +120,12 @@ WHERE RIGHT(stock.symbol, 6) = ANY(%s)
 
 
 def _load_env(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
+    values = dict(os.environ)
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#") and "=" in stripped:
             key, value = stripped.split("=", 1)
-            values[key] = value.strip().strip('"').strip("'")
+            values.setdefault(key, value.strip().strip('"').strip("'"))
     return values
 
 
@@ -194,13 +195,30 @@ def _read_inputs(
             window_end = requested_end
             if window_end is None:
                 cursor.execute(
-                    "SELECT MAX(time)::date AS trading_day "
-                    "FROM daily_bars WHERE is_trading_day = TRUE"
+                    """
+                    WITH listed AS (
+                      SELECT COUNT(*)::numeric AS total
+                        FROM stocks
+                       WHERE is_listed = TRUE AND type = 'stock'
+                    ), coverage AS (
+                      SELECT bar.time::date AS trading_day,
+                             COUNT(DISTINCT bar.stock_id)::numeric AS covered
+                        FROM daily_bars bar
+                        JOIN stocks stock ON stock.id = bar.stock_id
+                       WHERE bar.is_trading_day = TRUE
+                         AND stock.is_listed = TRUE
+                         AND stock.type = 'stock'
+                       GROUP BY bar.time::date
+                    )
+                    SELECT MAX(coverage.trading_day) AS trading_day
+                      FROM coverage CROSS JOIN listed
+                     WHERE coverage.covered >= CEIL(listed.total * 0.80)
+                    """
                 )
                 latest = cursor.fetchone()
                 window_end = latest["trading_day"] if latest else None
             if window_end is None:
-                raise RuntimeError("daily_bars does not contain a trading day")
+                raise RuntimeError("daily_bars does not contain a broad-market trading day")
             window_start = requested_start or (window_end - timedelta(days=DEFAULT_WINDOW_DAYS))
             if window_start >= window_end:
                 raise RuntimeError("window start must be earlier than window end")
@@ -412,6 +430,7 @@ def main() -> int:
     parser.add_argument("--env-file", type=Path, required=True)
     parser.add_argument("--window-start", type=date.fromisoformat)
     parser.add_argument("--window-end", type=date.fromisoformat)
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     values = _load_env(args.env_file)
     database_url = _database_url(values)
@@ -427,15 +446,20 @@ def main() -> int:
         window_start,
         window_end,
     )
-    manifests, deleted = asyncio.run(_write(values, facts))
+    if args.dry_run:
+        manifests = []
+        deleted = 0
+    else:
+        manifests, deleted = asyncio.run(_write(values, facts))
     print(
         json.dumps(
             {
                 "strategy": "us_preferred",
                 "market_scope": "cn_a",
+                "dry_run": args.dry_run,
                 "actual_session_count": len(sessions),
-                "snapshot_count": len(manifests),
-                "holding_count": len(manifests) * 3,
+                "snapshot_count": len(facts),
+                "holding_count": len(facts) * 3,
                 "inserted": sum(manifest.inserted for manifest in manifests),
                 "replaced_snapshot_count": deleted,
                 "window_start": window_start.isoformat(),
