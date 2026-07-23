@@ -1,0 +1,23 @@
+backend/src/services/SchedulerService.ts
+  s_ec1e6492779c20::t_8b0825849a2366 7067-7068
+backend/tests/services/data-refresh-contract.test.ts
+  s_ec1e6492779c20::t_e46f06ed093250 334-338
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "de9500349911bfea6e2659d4a24eefc323f4d00f",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
