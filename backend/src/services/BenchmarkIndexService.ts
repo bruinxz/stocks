@@ -3,7 +3,7 @@ import moment from 'moment-timezone';
 import { Stock } from '../models/Stock';
 import { DailyBar } from '../models/DailyBar';
 import { DataSyncService } from '../data/services/DataSyncService';
-import { normalizeSymbol, extractMarket } from '../utils/stockSymbol';
+import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 
 export interface BenchmarkIndexDefinition {
@@ -44,6 +44,18 @@ function roundNumber(value: number, digits = 4): number {
   return Math.round(value * base) / base;
 }
 
+const MIN_PLAUSIBLE_BENCHMARK_LEVEL = 100;
+const MAX_PLAUSIBLE_BENCHMARK_LEVEL = 100000;
+
+export function isPlausibleBenchmarkLevel(value: unknown): boolean {
+  const level = Number(value);
+  return (
+    Number.isFinite(level) &&
+    level >= MIN_PLAUSIBLE_BENCHMARK_LEVEL &&
+    level <= MAX_PLAUSIBLE_BENCHMARK_LEVEL
+  );
+}
+
 class BenchmarkIndexService {
   private readonly coverageCache = new Set<string>();
 
@@ -60,7 +72,6 @@ class BenchmarkIndexService {
           market: index.market,
           type: index.type,
           is_listed: true,
-          data_status: 'complete',
         },
         { conflictFields: ['symbol'] }
       );
@@ -130,11 +141,53 @@ class BenchmarkIndexService {
       endDate,
       Math.min(Math.max(Number(options.concurrency || 2), 1), 5),
       undefined,
-      options.data_source || 'tencent_only'
+      options.data_source || 'tencent_only',
+      'repair'
     );
 
     for (const symbol of symbols) {
-      this.coverageCache.add(this.cacheKey(symbol, startDate, endDate));
+      const stock = await Stock.findOne({ where: { symbol } });
+      const [firstBar, latestBar] = stock
+        ? await Promise.all([
+            DailyBar.findOne({
+              where: {
+                stock_id: stock.id,
+                time: {
+                  [Op.gte]: new Date(`${startDate}T00:00:00.000Z`),
+                  [Op.lte]: new Date(`${endDate}T23:59:59.999Z`),
+                },
+              },
+              order: [['time', 'ASC']],
+            }),
+            DailyBar.findOne({
+              where: {
+                stock_id: stock.id,
+                time: {
+                  [Op.gte]: new Date(`${startDate}T00:00:00.000Z`),
+                  [Op.lte]: new Date(`${endDate}T23:59:59.999Z`),
+                },
+              },
+              order: [['time', 'DESC']],
+            }),
+          ])
+        : [null, null];
+      const valid = Boolean(
+        firstBar &&
+          latestBar &&
+          isPlausibleBenchmarkLevel(firstBar.close) &&
+          isPlausibleBenchmarkLevel(latestBar.close)
+      );
+      if (stock) {
+        await stock.update({ data_status: valid ? 'complete' : 'conflict' });
+      }
+      if (valid) {
+        this.coverageCache.add(this.cacheKey(symbol, startDate, endDate));
+      } else {
+        result[symbol] = -1;
+        logger.error(
+          `基准指数 ${symbol} 同步后仍未通过点位校验，已标记 conflict，禁止用于收益比较`
+        );
+      }
     }
 
     return result;
@@ -206,6 +259,8 @@ class BenchmarkIndexService {
         count > 0 &&
         firstBar &&
         latestBar &&
+        isPlausibleBenchmarkLevel(firstBar.close) &&
+        isPlausibleBenchmarkLevel(latestBar.close) &&
         dateOnly(firstBar.time) <= startDate &&
         dateOnly(latestBar.time) >= endDate;
 
@@ -274,7 +329,11 @@ class BenchmarkIndexService {
       [...bars].reverse().find(bar => dateOnly(bar.time) <= endDate) || bars[bars.length - 1];
     const entryPrice = Number(entryBar.close);
     const exitPrice = Number(exitBar.close);
-    if (!entryPrice || !exitPrice || !Number.isFinite(entryPrice) || !Number.isFinite(exitPrice)) {
+    if (!isPlausibleBenchmarkLevel(entryPrice) || !isPlausibleBenchmarkLevel(exitPrice)) {
+      await indexStock.update({ data_status: 'conflict' });
+      logger.error(
+        `基准指数 ${benchmark.symbol} 收益区间存在异常点位，已拒绝生成相对收益并标记 conflict`
+      );
       return null;
     }
 

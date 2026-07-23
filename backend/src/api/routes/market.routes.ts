@@ -454,9 +454,10 @@ router.patch(
  *       触发数据更新任务，包括：
  *       1. 查询新股并同步到数据库
  *       2. 更新全部股票最新数据（比较数据库最新日期）
- *       3. 检查过去一周数据完整性，缺失的补更新
+ *       3. 行情严重滞后时，从全市场覆盖水位连续补齐至最近已完成交易日
  *
- *       接口会异步执行，立即返回任务ID。如果当天已经更新成功则跳过。
+ *       接口会异步执行，立即返回任务ID。force=true 可绕过已有完成记录，
+ *       但同一交易日已有排队或运行任务时仍会复用该任务，避免重复全市场同步。
  *     responses:
  *       200:
  *         description: 更新任务已开始或今日已更新
@@ -472,10 +473,17 @@ router.patch(
  *                   properties:
  *                     message:
  *                       type: string
- *                     updatedToday:
+ *                     job_id:
+ *                       type: string
+ *                       description: 排队或运行中的任务ID
+ *                     target_date:
+ *                       type: string
+ *                       format: date
+ *                       description: 最近已完成的A股交易日
+ *                     already_current:
  *                       type: boolean
- *                       description: 今日是否已更新过
- *                     logId:
+ *                       description: 该目标交易日是否已有完成记录
+ *                     log_id:
  *                       type: integer
  *                       description: 更新记录ID
  *                     status:
@@ -504,7 +512,7 @@ router.post(
  *     description: 查询数据更新任务的状态、队列情况和锁状态
  *     parameters:
  *       - in: query
- *         name: jobId
+ *         name: job_id
  *         schema:
  *           type: string
  *         description: 任务ID（可选）

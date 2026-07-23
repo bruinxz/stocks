@@ -4,6 +4,7 @@ import { Stock } from '../../models/Stock';
 import { DailyBar } from '../../models/DailyBar';
 import { sequelize } from '../../config/database';
 import { logger } from '../../utils/logger';
+import { assessAShareFreshness } from '../../services/PageFreshnessService';
 
 export class StockController {
   /**
@@ -102,10 +103,21 @@ export class StockController {
           )
         : [];
       const quoteByStockId = new Map(quoteRows.map(quote => [Number(quote.stock_id), quote]));
+      const quoteAssessmentNow = new Date();
       const stocks = rows.map(row => {
         const stock = row.toJSON() as Record<string, unknown>;
         const quote = quoteByStockId.get(row.id);
-        if (!quote) return stock;
+        if (!quote) {
+          const freshness = assessAShareFreshness(null, quoteAssessmentNow);
+          return {
+            ...stock,
+            quote_date: null,
+            quote_reference_date: freshness.reference_trade_date,
+            quote_lag_days: freshness.lag_days,
+            quote_status: freshness.status,
+          };
+        }
+        const freshness = assessAShareFreshness(quote.quote_date, quoteAssessmentNow);
         return {
           ...stock,
           price: quote.close,
@@ -117,6 +129,9 @@ export class StockController {
           quote_date: quote.quote_date,
           quote_updated_at: quote.quote_updated_at,
           quote_source: 'daily_bars',
+          quote_reference_date: freshness.reference_trade_date,
+          quote_lag_days: freshness.lag_days,
+          quote_status: freshness.status,
         };
       });
 

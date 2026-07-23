@@ -53,6 +53,10 @@ const dataUpdateWorker = fs.readFileSync(
   path.join(root, 'backend/src/jobs/dataUpdateWorker.ts'),
   'utf8'
 );
+const marketController = fs.readFileSync(
+  path.join(root, 'backend/src/api/controllers/MarketController.ts'),
+  'utf8'
+);
 const pageFreshness = fs.readFileSync(
   path.join(root, 'backend/src/services/PageFreshnessService.ts'),
   'utf8'
@@ -118,8 +122,28 @@ assert.match(
 );
 assert.match(
   dataUpdateWorker,
-  /status: dailyFailCount > 0 \? UpdateStatus\.FAILED : UpdateStatus\.COMPLETED[\s\S]{0,500}任务拒绝标记完成/,
+  /getBroadMarketCoverageDate\(target_date\)[\s\S]{0,180}resolveDailyUpdateWindow\(target_date, marketCoverageDate\)[\s\S]{0,220}catchup_mode/,
+  'severely stale daily data must switch from a short reread to a continuous catch-up window'
+);
+assert.match(
+  marketController,
+  /updateData = async[\s\S]{0,420}const target_date = expectedCompletedTradeDate\(\)/,
+  'manual recovery must target the latest completed A-share trade day, not the UTC calendar day'
+);
+assert.match(
+  marketController,
+  /const pendingUpdate =[\s\S]{0,420}if \(pendingUpdate\)[\s\S]{0,320}job_id: String\(pendingUpdate\.id\)/,
+  'force recovery must reuse a queued or active task for the same trade day'
+);
+assert.match(
+  dataUpdateWorker,
+  /completion_error[\s\S]{0,700}status: completion_error \? UpdateStatus\.FAILED : UpdateStatus\.COMPLETED/,
   'partial daily-update failures must not be recorded as completed'
+);
+assert.match(
+  dataUpdateWorker,
+  /final_market_coverage_date = await this\.getBroadMarketCoverageDate\(target_date\)[\s\S]{0,1200}未到达目标/,
+  'daily recovery must fail closed when the broad-market watermark did not reach the target date'
 );
 assert.match(
   dataUpdateWorker,
@@ -128,8 +152,13 @@ assert.match(
 );
 assert.match(
   pageFreshness,
-  /'market'::text[\s\S]{0,420}'daily_bars'::text AS source/,
+  /pages:\s*\[\{ page: 'market', label: 'A 股行情' \}\][\s\S]{0,120}source: 'daily_bars'/,
   'A-share page timestamp must follow the daily-bars source actually rendered by the page'
+);
+assert.match(
+  pageFreshness,
+  /coverage\.covered >= CEIL\(listed\.total \* 0\.80\)/,
+  'one updated instrument must not make the whole A-share catalogue look fresh'
 );
 assert.match(
   realtimeDedupMigration,
@@ -138,7 +167,7 @@ assert.match(
 );
 assert.match(
   pageFreshness,
-  /SELECT 'jpkr', '韩股科技'[\s\S]{0,260}market_scope = 'kr'/,
+  /pages:\s*\[\{ page: 'jpkr', label: '韩股科技' \}\][\s\S]{0,360}market_scope = 'kr'/,
   'Korean technology page timestamp must follow the primary KR representative view'
 );
 assert.match(
@@ -273,12 +302,12 @@ assert.match(
 assert.match(routes, /'\/page-freshness'.*authenticate/, 'page freshness route must be protected');
 assert.match(
   pageFreshness,
-  /SELECT 'us', '美股科技'[\s\S]{0,220}global_tech_daily_quote/,
+  /pages:\s*\[\{ page: 'us', label: '美股科技' \}\][\s\S]{0,220}global_tech_daily_quote/,
   'US page freshness must follow the technology quote table shown by the page'
 );
 assert.match(
   pageFreshness,
-  /SELECT 'jpkr', '韩股科技'[\s\S]{0,260}market_scope = 'kr'/,
+  /pages:\s*\[\{ page: 'jpkr', label: '韩股科技' \}\][\s\S]{0,360}market_scope = 'kr'/,
   'Korean technology freshness must not be held back by the secondary Japan view'
 );
 assert.match(
@@ -337,4 +366,4 @@ assert.match(
   'A-share report history must support PIT-bounded historical materialization'
 );
 
-console.log('data refresh contract: 48 assertions passed');
+console.log('data refresh contract: 52 assertions passed');

@@ -7,8 +7,9 @@ import { DailyBar } from '../models/DailyBar';
 import { dataQualityService } from '../services/DataQualityService';
 import { redisLock, LockKeys } from '../utils/redisLock';
 import { logger } from '../utils/logger';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import moment from 'moment-timezone';
+import { resolveDailyUpdateWindow } from './dailyUpdateWindow';
 
 export class DataUpdateWorker {
   private dataSyncService: DataSyncService;
@@ -167,10 +168,14 @@ export class DataUpdateWorker {
       logger.info('开始增量数据更新...');
 
       const target_date = date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-      const sevenDaysAgo = moment
-        .tz(target_date, 'Asia/Shanghai')
-        .subtract(7, 'days')
-        .format('YYYY-MM-DD');
+      const marketCoverageDate = await this.getBroadMarketCoverageDate(target_date);
+      const updateWindow = resolveDailyUpdateWindow(target_date, marketCoverageDate);
+      if (updateWindow.catchup_mode) {
+        logger.warn(
+          `全市场行情落后 ${updateWindow.lag_days} 个自然日，日更切换为连续补洞窗口 ` +
+            `${updateWindow.start_date}..${updateWindow.target_date}`
+        );
+      }
 
       // 获取最新K线早于目标日期的股票。旧逻辑只判断“最近7天是否有任意数据”，
       // 会导致已同步到上一个交易日的股票在新交易日被错误跳过。
@@ -190,7 +195,12 @@ export class DataUpdateWorker {
         for (let i = 0; i < stocksNeedingUpdate.length; i += batchSize) {
           const batch = stocksNeedingUpdate.slice(i, i + batchSize);
           const batchPromises = batch.map(symbol =>
-            this.syncStockWithLock(symbol, sevenDaysAgo, target_date, 'tencent_only')
+            this.syncStockWithLock(
+              symbol,
+              updateWindow.start_date,
+              updateWindow.target_date,
+              'tencent_only'
+            )
               .then(count => {
                 results[symbol] = count;
                 return { symbol, count };
@@ -224,17 +234,6 @@ export class DataUpdateWorker {
         dailyFailCount = failCount;
         dailySkipCount = skipCount;
 
-        resultDetails.dailyUpdate = {
-          stocksNeedingUpdate: stocksNeedingUpdate.length,
-          maxStocks: max_stocks,
-          targetDate: target_date,
-          startDate: sevenDaysAgo,
-          successCount,
-          failCount,
-          skipCount,
-          totalInserted,
-        };
-
         totalAffectedStocks += successCount;
         totalInsertedRecords += totalInserted;
       } else {
@@ -247,8 +246,8 @@ export class DataUpdateWorker {
       logger.info('检查并更新股票基本信息...');
       try {
         const newStocksCount = await this.dataSyncService.syncAllStocks();
-        resultDetails.stockInfoUpdate = {
-          updatedCount: newStocksCount,
+        resultDetails.stock_info_update = {
+          updated_count: newStocksCount,
         };
         totalAffectedStocks += newStocksCount;
       } catch (error) {
@@ -258,19 +257,45 @@ export class DataUpdateWorker {
 
       await job.progress(95);
 
-      // 3. 更新更新记录状态
+      // 3. 以后置覆盖水位而非“请求没有抛错”判定成功。外部源返回空数组时，
+      // 单股同步会记为 skip；若不核验水位，整批 0 落盘也会制造完成假象。
+      const final_market_coverage_date = await this.getBroadMarketCoverageDate(target_date);
+      const market_coverage_reached = final_market_coverage_date === target_date;
+      resultDetails.daily_update = {
+        stocks_needing_update: stocksNeedingUpdate.length,
+        max_stocks,
+        target_date,
+        start_date: updateWindow.start_date,
+        market_coverage_date: updateWindow.market_coverage_date,
+        final_market_coverage_date,
+        market_coverage_reached,
+        catchup_mode: updateWindow.catchup_mode,
+        lag_days: updateWindow.lag_days,
+        success_count: dailySuccessCount,
+        fail_count: dailyFailCount,
+        skip_count: dailySkipCount,
+        total_inserted: totalInsertedRecords,
+      };
+      const completion_error =
+        dailyFailCount > 0
+          ? `每日行情增量同步存在 ${dailyFailCount} 个失败证券，任务拒绝标记完成`
+          : !market_coverage_reached
+          ? `全市场行情覆盖水位仍为 ${
+              final_market_coverage_date || '缺失'
+            }，未到达目标 ${target_date}`
+          : null;
+
+      // 4. 更新更新记录状态
       await updateLog.update({
-        status: dailyFailCount > 0 ? UpdateStatus.FAILED : UpdateStatus.COMPLETED,
+        status: completion_error ? UpdateStatus.FAILED : UpdateStatus.COMPLETED,
         completed_at: new Date(),
         affected_stocks: totalAffectedStocks,
         inserted_records: totalInsertedRecords,
-        error: dailyFailCount > 0 ? `${dailyFailCount} 个证券同步失败` : null,
+        error: completion_error,
         result: resultDetails,
       });
 
-      if (dailyFailCount > 0) {
-        throw new Error(`每日行情增量同步存在 ${dailyFailCount} 个失败证券，任务拒绝标记完成`);
-      }
+      if (completion_error) throw new Error(completion_error);
 
       logger.info(
         `每日数据更新完成。影响股票: ${totalAffectedStocks}, 插入记录: ${totalInsertedRecords}`
@@ -336,6 +361,43 @@ export class DataUpdateWorker {
   /**
    * 获取需要增量更新的股票列表
    */
+  private async getBroadMarketCoverageDate(target_date: string): Promise<string | null> {
+    try {
+      const database = DailyBar.sequelize;
+      if (!database) return null;
+      const rows = await database.query<{ trade_date: string }>(
+        `WITH listed AS (
+           SELECT COUNT(*)::numeric AS total
+             FROM stocks
+            WHERE is_listed = TRUE AND type = 'stock'
+         ), coverage AS (
+           SELECT bar.time::date AS trade_date,
+                  COUNT(DISTINCT bar.stock_id)::numeric AS covered
+             FROM daily_bars bar
+             JOIN stocks stock ON stock.id = bar.stock_id
+            WHERE stock.is_listed = TRUE
+              AND stock.type = 'stock'
+              AND bar.time >= CAST(:target_date AS date) - INTERVAL '365 days'
+              AND bar.time < CAST(:target_date AS date) + INTERVAL '1 day'
+            GROUP BY bar.time::date
+         )
+         SELECT coverage.trade_date::text AS trade_date
+           FROM coverage CROSS JOIN listed
+          WHERE coverage.covered >= CEIL(listed.total * 0.80)
+          ORDER BY coverage.trade_date DESC
+          LIMIT 1`,
+        {
+          replacements: { target_date },
+          type: QueryTypes.SELECT,
+        }
+      );
+      return rows[0]?.trade_date || null;
+    } catch (error: any) {
+      logger.warn(`读取全市场覆盖水位失败，日更退回 7 天窗口: ${error?.message ?? error}`);
+      return null;
+    }
+  }
+
   private async getStocksNeedingIncrementalUpdate(
     target_date: string,
     limit = 300

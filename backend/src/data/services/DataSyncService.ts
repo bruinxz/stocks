@@ -56,6 +56,27 @@ export interface SyncStats {
   errorStats: ErrorStats;
 }
 
+export type DailyBarWriteMode = 'insert_only' | 'repair';
+
+const DAILY_BAR_REPAIR_FIELDS = [
+  'open',
+  'high',
+  'low',
+  'close',
+  'volume',
+  'turnover',
+  'adj_close',
+  'turnover_rate',
+  'change_percent',
+  'pe',
+  'pb',
+  'ps',
+  'market_cap',
+  'is_trading_day',
+  'is_suspended',
+  'updated_at',
+];
+
 export class DataSyncService {
   private dataSource: CombinedDataSource;
   private errorStats: ErrorStats;
@@ -432,7 +453,8 @@ export class DataSyncService {
     symbol: string,
     start_date: string,
     end_date: string,
-    dataSource = 'auto'
+    dataSource = 'auto',
+    writeMode: DailyBarWriteMode = 'insert_only'
   ): Promise<number> {
     const normalizedSymbol = normalizeSymbol(symbol);
     try {
@@ -556,11 +578,20 @@ export class DataSyncService {
 
         if (barsToInsert.length > 0) {
           try {
-            // 批量插入，如果主键冲突则忽略，这大大减少了数据库交互次数和连接池压力
-            await DailyBar.bulkCreate(barsToInsert, {
-              ignoreDuplicates: true,
-              logging: false, // 关闭 SQL 打印，避免日志过大导致内存泄漏
-            });
+            // 常规增量同步保持 insert-only；明确的 repair 同步必须覆盖同日坏值，
+            // 否则 ignoreDuplicates 会让已污染的指数/股票 K 线永久无法修复。
+            await DailyBar.bulkCreate(
+              barsToInsert,
+              writeMode === 'repair'
+                ? {
+                    updateOnDuplicate: DAILY_BAR_REPAIR_FIELDS,
+                    logging: false,
+                  }
+                : {
+                    ignoreDuplicates: true,
+                    logging: false,
+                  }
+            );
             insertedCount = barsToInsert.length;
           } catch (error) {
             failedCount += barsToInsert.length;
@@ -623,7 +654,8 @@ export class DataSyncService {
       currentBatchInserted: number,
       completedBatchSymbols: string[]
     ) => void | Promise<void>,
-    dataSource = 'auto'
+    dataSource = 'auto',
+    writeMode: DailyBarWriteMode = 'insert_only'
   ): Promise<{ [symbol: string]: number }> {
     const normalizedSymbols = normalizeSymbols(symbols);
     const results: { [symbol: string]: number } = {};
@@ -632,7 +664,7 @@ export class DataSyncService {
     for (let i = 0; i < totalCount; i += batchSize) {
       const batch = normalizedSymbols.slice(i, i + batchSize);
       const promises = batch.map(symbol =>
-        this.syncStockHistory(symbol, start_date, end_date, dataSource)
+        this.syncStockHistory(symbol, start_date, end_date, dataSource, writeMode)
           .then(count => {
             results[symbol] = count;
             return { symbol, count };

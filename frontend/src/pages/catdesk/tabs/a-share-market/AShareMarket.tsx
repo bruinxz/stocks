@@ -1,9 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Empty, Input, Select, Spin, Table, Tag } from 'antd';
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
-import { ReloadOutlined, SearchOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
+import {
+  CloudSyncOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+  StarFilled,
+  StarOutlined,
+} from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
+import { useSelector } from 'react-redux';
+import { Link } from 'react-router-dom';
 import api from '../../../../services/api';
+import type { RootState } from '../../../../store/rootReducer';
 import {
   buildSecurityListParams,
   securityTypeLabel,
@@ -27,6 +36,9 @@ interface StockRow {
   quote_date?: string | null;
   quote_updated_at?: string | null;
   quote_source?: string | null;
+  quote_reference_date?: string | null;
+  quote_lag_days?: number | null;
+  quote_status?: 'fresh' | 'delayed' | 'missing';
 }
 
 interface HistoryBar {
@@ -37,6 +49,8 @@ interface HistoryBar {
   close: number;
   volume: number;
 }
+
+type RepairPhase = 'idle' | 'queueing' | 'queued' | 'running' | 'completed' | 'error';
 
 const MARKET_OPTIONS = [
   { value: '', label: '全部市场' },
@@ -85,6 +99,30 @@ function quoteDateLabel(value: string | null | undefined): string {
   return value === today ? '今日行情' : `截至 ${value}`;
 }
 
+function quoteGuardLabel(row: StockRow): string {
+  if (row.quote_status === 'delayed') {
+    const lag = numberValue(row.quote_lag_days);
+    return lag && lag > 0 ? `已过期 ${lag} 个交易日` : '报价已过期';
+  }
+  if (row.quote_status === 'missing') return '行情待同步';
+  if (row.quote_status !== 'fresh') return '状态未核验';
+  const change = numberValue(row.change_percent);
+  return change == null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+}
+
+function quoteIsDecisionReady(row: StockRow | null): boolean {
+  return row?.quote_status === 'fresh';
+}
+
+function repairPhaseLabel(phase: RepairPhase): string {
+  if (phase === 'queueing') return '正在提交补齐任务…';
+  if (phase === 'queued') return '补齐任务已排队，页面会自动核验进度。';
+  if (phase === 'running') return '正在补齐全市场行情，请保持页面打开。';
+  if (phase === 'completed') return '补齐任务已完成，行情已重新核验。';
+  if (phase === 'error') return '补齐任务未成功。';
+  return '';
+}
+
 function formatNumber(value: number | string | null | undefined, digits = 2): string {
   const parsed = numberValue(value);
   return parsed == null || parsed === 0 ? '—' : parsed.toFixed(digits);
@@ -113,6 +151,7 @@ function movingAverage(values: number[], period: number): Array<number | null> {
 }
 
 export default function AShareMarket() {
+  const canRepairMarket = useSelector((state: RootState) => state.auth.user?.role === 'admin');
   const [rows, setRows] = useState<StockRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -127,6 +166,12 @@ export default function AShareMarket() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [windowSize, setWindowSize] = useState(120);
   const [favorites, setFavorites] = useState<string[]>(readFavorites);
+  const [repairPhase, setRepairPhase] = useState<RepairPhase>('idle');
+  const [repairJobId, setRepairJobId] = useState<string | null>(null);
+  const [repairMessage, setRepairMessage] = useState<string | null>(null);
+  const visibleQuotesAllReady = rows.length > 0 && rows.every(quoteIsDecisionReady);
+  const repairBusy =
+    repairPhase === 'queueing' || repairPhase === 'queued' || repairPhase === 'running';
 
   const loadStocks = useCallback(
     async (signal?: AbortSignal) => {
@@ -165,6 +210,91 @@ export default function AShareMarket() {
     void loadStocks(controller.signal);
     return () => controller.abort();
   }, [loadStocks]);
+
+  const requestMarketRepair = useCallback(async () => {
+    if (repairBusy) return;
+    setRepairPhase('queueing');
+    setRepairJobId(null);
+    setRepairMessage(null);
+    try {
+      const response = await api.post('/market/update-data', null, {
+        params: { force: true },
+      });
+      const payload = response.data?.data ?? {};
+      if (payload.already_current) {
+        setRepairPhase('completed');
+        setRepairMessage(payload.message || '最近已完成交易日的行情已有完成记录。');
+        void loadStocks();
+        return;
+      }
+      if (!payload.job_id) {
+        throw new Error('补齐接口没有返回任务编号');
+      }
+      setRepairJobId(String(payload.job_id));
+      setRepairPhase('queued');
+      setRepairMessage(
+        payload.target_date ? `目标交易日 ${payload.target_date}` : payload.message || null
+      );
+    } catch (requestError: any) {
+      const status = requestError?.response?.status;
+      setRepairPhase('error');
+      setRepairMessage(
+        status === 403
+          ? '当前账号没有补齐行情权限，请联系管理员。'
+          : requestError?.response?.data?.error || requestError?.message || '补齐任务提交失败'
+      );
+    }
+  }, [loadStocks, repairBusy]);
+
+  useEffect(() => {
+    if (!repairJobId || (repairPhase !== 'queued' && repairPhase !== 'running')) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const schedule = () => {
+      timer = setTimeout(() => void poll(), 3500);
+    };
+    const poll = async () => {
+      let keepPolling = true;
+      try {
+        const response = await api.get('/market/update-status', {
+          params: { job_id: repairJobId },
+        });
+        if (cancelled) return;
+        const job = response.data?.data?.job;
+        const state = String(job?.state || '').toLowerCase();
+        if (state === 'active') {
+          setRepairPhase('running');
+          setRepairMessage(
+            Number.isFinite(Number(job?.progress)) ? `当前进度 ${Number(job.progress)}%` : null
+          );
+        } else if (state === 'completed') {
+          keepPolling = false;
+          setRepairPhase('completed');
+          setRepairMessage('补齐任务已完成，正在重新核验可用行情。');
+          void loadStocks();
+        } else if (state === 'failed') {
+          keepPolling = false;
+          setRepairPhase('error');
+          setRepairMessage(job?.failedReason || '补齐任务执行失败，请到数据中心查看日志。');
+        }
+      } catch (pollError: any) {
+        if (!cancelled) {
+          setRepairMessage(
+            pollError?.response?.data?.error || '暂时无法读取补齐进度，任务可能仍在后台运行。'
+          );
+        }
+      } finally {
+        if (!cancelled && keepPolling) schedule();
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [loadStocks, repairJobId, repairPhase]);
 
   useEffect(() => {
     if (!selected) {
@@ -241,12 +371,19 @@ export default function AShareMarket() {
         sorter: (a, b) => (numberValue(a.price) ?? -Infinity) - (numberValue(b.price) ?? -Infinity),
         render: (value, row) => {
           const change = numberValue(row.change_percent);
+          const decisionReady = quoteIsDecisionReady(row);
           return (
-            <div className={change != null && change < 0 ? 'quote-down' : 'quote-up'}>
-              <strong>{formatNumber(value)}</strong>
-              <small>
-                {change == null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`}
-              </small>
+            <div
+              className={
+                decisionReady
+                  ? change != null && change < 0
+                    ? 'quote-down'
+                    : 'quote-up'
+                  : 'quote-stale'
+              }
+            >
+              <strong>{decisionReady ? formatNumber(value) : '—'}</strong>
+              <small>{quoteGuardLabel(row)}</small>
               <small className="quote-date">{quoteDateLabel(row.quote_date)}</small>
             </div>
           );
@@ -259,7 +396,7 @@ export default function AShareMarket() {
         width: 82,
         sorter: (a, b) =>
           (numberValue(a.pe_dynamic) ?? -Infinity) - (numberValue(b.pe_dynamic) ?? -Infinity),
-        render: value => formatNumber(value),
+        render: (value, row) => (quoteIsDecisionReady(row) ? formatNumber(value) : '—'),
       },
       {
         title: '市净率',
@@ -267,7 +404,7 @@ export default function AShareMarket() {
         align: 'right',
         width: 78,
         sorter: (a, b) => (numberValue(a.pb) ?? -Infinity) - (numberValue(b.pb) ?? -Infinity),
-        render: value => formatNumber(value),
+        render: (value, row) => (quoteIsDecisionReady(row) ? formatNumber(value) : '—'),
       },
       {
         title: '换手率',
@@ -276,7 +413,8 @@ export default function AShareMarket() {
         width: 82,
         sorter: (a, b) =>
           (numberValue(a.turnover_rate) ?? -Infinity) - (numberValue(b.turnover_rate) ?? -Infinity),
-        render: value => {
+        render: (value, row) => {
+          if (!quoteIsDecisionReady(row)) return '—';
           const parsed = numberValue(value);
           return parsed == null ? '—' : `${parsed.toFixed(2)}%`;
         },
@@ -289,7 +427,7 @@ export default function AShareMarket() {
         sorter: (a, b) =>
           (numberValue(a.total_market_cap) ?? -Infinity) -
           (numberValue(b.total_market_cap) ?? -Infinity),
-        render: value => formatMarketCap(value),
+        render: (value, row) => (quoteIsDecisionReady(row) ? formatMarketCap(value) : '—'),
       },
       {
         title: '自选',
@@ -421,6 +559,43 @@ export default function AShareMarket() {
       </div>
 
       {error ? <div className="market-error">{error}</div> : null}
+      {!loading && rows.length > 0 && !visibleQuotesAllReady ? (
+        <div className="market-data-gate" role="alert">
+          <div className="market-data-gate__copy">
+            <strong>当前行情未通过时效校验</strong>
+            <span>
+              当前列表仍有报价没有对齐至最近已完成交易日
+              {rows[0]?.quote_reference_date ? `（${rows[0].quote_reference_date}）` : ''}
+              ，过期条目的价格与图表已暂停展示，避免把历史旧值当成今天的决策依据。
+            </span>
+          </div>
+          <div className="market-data-gate__actions">
+            {canRepairMarket ? (
+              <Button
+                className="market-repair-button"
+                icon={<CloudSyncOutlined />}
+                loading={repairPhase === 'queueing'}
+                disabled={repairBusy}
+                onClick={() => void requestMarketRepair()}
+              >
+                {repairPhase === 'queued'
+                  ? '已排队'
+                  : repairPhase === 'running'
+                    ? '补齐中'
+                    : '补齐行情'}
+              </Button>
+            ) : (
+              <span className="market-repair-permission">请联系管理员补齐行情</span>
+            )}
+            {(repairPhase !== 'idle' || repairMessage) && (
+              <span className={`market-repair-state is-${repairPhase}`} role="status">
+                {repairMessage || repairPhaseLabel(repairPhase)}
+              </span>
+            )}
+            {canRepairMarket ? <Link to="/workspace/data">查看数据中心</Link> : null}
+          </div>
+        </div>
+      ) : null}
 
       <div className="market-browser-grid">
         <section className="market-list-panel">
@@ -453,15 +628,17 @@ export default function AShareMarket() {
                 </div>
                 <div
                   className={
-                    (numberValue(selected.change_percent) ?? 0) < 0 ? 'quote-down' : 'quote-up'
+                    quoteIsDecisionReady(selected)
+                      ? (numberValue(selected.change_percent) ?? 0) < 0
+                        ? 'quote-down'
+                        : 'quote-up'
+                      : 'quote-stale'
                   }
                 >
-                  <strong>{formatNumber(selected.price)}</strong>
-                  <small>
-                    {numberValue(selected.change_percent) == null
-                      ? '暂无最新涨跌幅'
-                      : `${(numberValue(selected.change_percent) ?? 0) >= 0 ? '+' : ''}${numberValue(selected.change_percent)?.toFixed(2)}%`}
-                  </small>
+                  <strong>
+                    {quoteIsDecisionReady(selected) ? formatNumber(selected.price) : '—'}
+                  </strong>
+                  <small>{quoteGuardLabel(selected)}</small>
                   <small className="quote-date quote-date--detail">
                     {quoteDateLabel(selected.quote_date)}
                   </small>
@@ -480,7 +657,9 @@ export default function AShareMarket() {
                 ))}
               </div>
               <div className="market-chart">
-                {historyLoading ? (
+                {!quoteIsDecisionReady(selected) ? (
+                  <Empty description="行情未对齐，图表已暂停展示" />
+                ) : historyLoading ? (
                   <Spin tip="正在加载历史行情" />
                 ) : visibleHistory.length ? (
                   <ReactECharts option={chartOption} style={{ height: 340 }} />
@@ -491,19 +670,31 @@ export default function AShareMarket() {
               <div className="market-facts">
                 <span>
                   <small>市盈率</small>
-                  <strong>{formatNumber(selected.pe_dynamic)}</strong>
+                  <strong>
+                    {quoteIsDecisionReady(selected) ? formatNumber(selected.pe_dynamic) : '—'}
+                  </strong>
                 </span>
                 <span>
                   <small>市净率</small>
-                  <strong>{formatNumber(selected.pb)}</strong>
+                  <strong>
+                    {quoteIsDecisionReady(selected) ? formatNumber(selected.pb) : '—'}
+                  </strong>
                 </span>
                 <span>
                   <small>换手率</small>
-                  <strong>{formatNumber(selected.turnover_rate)}%</strong>
+                  <strong>
+                    {quoteIsDecisionReady(selected)
+                      ? `${formatNumber(selected.turnover_rate)}%`
+                      : '—'}
+                  </strong>
                 </span>
                 <span>
                   <small>总市值</small>
-                  <strong>{formatMarketCap(selected.total_market_cap)}</strong>
+                  <strong>
+                    {quoteIsDecisionReady(selected)
+                      ? formatMarketCap(selected.total_market_cap)
+                      : '—'}
+                  </strong>
                 </span>
               </div>
             </>

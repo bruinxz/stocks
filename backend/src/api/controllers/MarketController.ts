@@ -9,6 +9,7 @@ import { DataSourceHealthService } from '../../data/services/DataSourceHealthSer
 import { stockFactorService } from '../../data/services/StockFactorService';
 import { dataQualityService } from '../../services/DataQualityService';
 import { realtimeIndexService } from '../../services/RealtimeIndexService';
+import { expectedCompletedTradeDate } from '../../services/PageFreshnessService';
 import { dataUpdateQueue } from '../../jobs/dataUpdateQueue';
 import { dataUpdateWorker } from '../../jobs/dataUpdateWorker';
 import { redisLock, LockKeys } from '../../utils/redisLock';
@@ -950,7 +951,9 @@ export class MarketController {
    */
   updateData = async (req: Request, res: Response) => {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      // 日更只能瞄准最近一个已经收盘的 A 股交易日。UTC 日历日会在上海时区
+      // 08:00 前指向前一天，盘中又会误把尚未完成的当日行情标成更新目标。
+      const target_date = expectedCompletedTradeDate();
       const forceUpdate = req.query.force === 'true';
 
       // 1. 检查Redis分布式锁，防止并发请求
@@ -972,17 +975,20 @@ export class MarketController {
           dataUpdateQueue.getJobs(['active']),
         ]);
 
-        const hasPendingUpdate = [...waitingJobs, ...activeJobs].some(
-          job => job.data.type === 'daily_update' && job.data.date === today
+        const pendingUpdate = [...waitingJobs, ...activeJobs].find(
+          job => job.data.type === 'daily_update' && job.data.date === target_date
         );
 
-        if (hasPendingUpdate && !forceUpdate) {
+        // force 只允许绕过历史完成记录，不能绕过正在运行的任务；否则用户重复点击
+        // 会为同一交易日排入多份全市场同步，放大外部数据源限流与数据库写压力。
+        if (pendingUpdate) {
           return res.json({
             success: true,
             data: {
-              message: '已有更新任务在队列中等待处理',
+              message: '已有同一交易日的补齐任务正在队列中',
               queued: true,
-              date: today,
+              job_id: String(pendingUpdate.id),
+              target_date,
             },
           });
         }
@@ -991,7 +997,7 @@ export class MarketController {
         if (!forceUpdate) {
           const existingUpdate = await DataUpdateLog.findOne({
             where: {
-              date: today,
+              date: target_date,
               type: UpdateType.DAILY_UPDATE,
               status: UpdateStatus.COMPLETED,
             },
@@ -1001,9 +1007,10 @@ export class MarketController {
             return res.json({
               success: true,
               data: {
-                message: '今日数据已更新，跳过',
-                updatedToday: true,
-                logId: existingUpdate.id,
+                message: `${target_date} 行情已有完成记录，跳过`,
+                already_current: true,
+                target_date,
+                log_id: existingUpdate.id,
                 result: existingUpdate.result,
               },
             });
@@ -1015,11 +1022,11 @@ export class MarketController {
           'daily_update',
           {
             type: 'daily_update',
-            date: today,
+            date: target_date,
             forceUpdate,
           },
           {
-            jobId: `daily-update-${today}-${Date.now()}`,
+            jobId: `daily-update-${target_date}-${Date.now()}`,
             priority: 1, // 较高优先级
           }
         );
@@ -1030,10 +1037,10 @@ export class MarketController {
           success: true,
           data: {
             message: '数据更新任务已排队',
-            jobId: job.id,
+            job_id: String(job.id),
             queue: 'data-update',
-            date: today,
-            estimatedStart: new Date(Date.now() + 1000).toISOString(), // 预估1秒后开始
+            target_date,
+            estimated_start: new Date(Date.now() + 1000).toISOString(), // 预估1秒后开始
           },
         });
       } finally {
@@ -1055,7 +1062,9 @@ export class MarketController {
    */
   getUpdateStatus = async (req: Request, res: Response) => {
     try {
-      const { jobId, date, start_date, end_date } = req.query;
+      const { job_id, jobId, date, start_date, end_date } = req.query;
+      // job_id 是当前 API 契约；保留 jobId 仅兼容旧的运维书签。
+      const requested_job_id = job_id || jobId;
       // type可以是单个值或数组（多个type参数）
       const typeParam = req.query.type;
       const types = Array.isArray(typeParam) ? typeParam : typeParam ? [typeParam] : [];
@@ -1070,9 +1079,9 @@ export class MarketController {
       };
 
       // 1. 如果提供了jobId，查询特定任务
-      if (jobId) {
+      if (requested_job_id) {
         try {
-          const job = await dataUpdateQueue.getJob(jobId.toString());
+          const job = await dataUpdateQueue.getJob(requested_job_id.toString());
           if (job) {
             try {
               const state = await job.getState();
@@ -1086,7 +1095,7 @@ export class MarketController {
                 processedOn: job.processedOn,
               };
             } catch (jobError) {
-              logger.warn(`获取任务 ${jobId} 状态失败:`, jobError);
+              logger.warn(`获取任务 ${requested_job_id} 状态失败:`, jobError);
               statusData.errors.jobState = jobError.message;
               statusData.job = {
                 id: job.id,
@@ -1097,7 +1106,7 @@ export class MarketController {
             }
           }
         } catch (error) {
-          logger.warn(`查询任务 ${jobId} 失败:`, error);
+          logger.warn(`查询任务 ${requested_job_id} 失败:`, error);
           statusData.errors.jobQuery = error.message;
         }
       }
