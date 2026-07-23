@@ -1,0 +1,25 @@
+datapipeline/tests/test_populate_live_kr_market.py
+  s_ec1e6492779c20::t_0521c4bef4cd43 1-60
+datapipeline/tests/test_sync_global_markets_daily.py
+  s_ec1e6492779c20::t_68d0c328ac13a5 3,5,11,79-138
+scripts/ops/populate_live_kr_market.py
+  s_ec1e6492779c20::t_9497225f268065 29,38-39,69-73,203-268,291
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e7963baa603282c14b97b8f7efd8c3a557dac305",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
