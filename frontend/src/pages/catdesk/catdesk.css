@@ -1532,6 +1532,7 @@
 
 .catdesk-loop-strip {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -1546,7 +1547,7 @@
 
 .catdesk-loop-strip__flow {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 0 100%;
   align-items: center;
   gap: 9px;
   min-width: 0;

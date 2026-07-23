@@ -37,6 +37,32 @@ export function ResearchLoopStatusStrip({ dashboard, error, focus }: Props) {
   const { research } = dashboard;
   const fresh = research.morning.fresh && research.multibagger.fresh;
   const run = fresh && dashboard.latest_run?.is_current ? dashboard.latest_run : null;
+  const execution = dashboard.execution;
+  const jointSummary = run
+    ? `买 ${run.buy_count} · 持 ${run.hold_count} · 卖 ${run.sell_count}`
+    : execution.status === 'scheduled'
+      ? `${research.merged_target_count} 只目标 · 09:35 执行`
+      : execution.status === 'waiting_for_quotes'
+        ? `${research.merged_target_count} 只目标 · 行情 ${execution.fresh_quote_count ?? 0}/${
+            execution.required_quote_count ?? research.merged_target_count
+          }`
+        : execution.status === 'market_closed'
+          ? `${research.merged_target_count} 只目标 · 今日休市`
+          : execution.status === 'ready'
+            ? `${research.merged_target_count} 只目标 · 行情已齐`
+            : execution.status === 'stalled' || execution.status === 'failed'
+              ? '今日执行异常'
+              : '暂停交易';
+  const statusTone =
+    execution.status === 'completed'
+      ? { color: 'green', icon: <CheckCircleOutlined /> }
+      : execution.status === 'running' || execution.status === 'ready'
+        ? { color: 'blue', icon: <SyncOutlined spin={execution.status === 'running'} /> }
+        : execution.status === 'scheduled' || execution.status === 'waiting_for_quotes'
+          ? { color: 'gold', icon: <ClockCircleOutlined /> }
+          : execution.status === 'market_closed'
+            ? { color: 'default', icon: <ClockCircleOutlined /> }
+            : { color: 'red', icon: <WarningOutlined /> };
   return (
     <section className="catdesk-loop-strip" aria-label="研究交易闭环状态">
       <div className="catdesk-loop-strip__flow">
@@ -57,25 +83,23 @@ export function ResearchLoopStatusStrip({ dashboard, error, focus }: Props) {
         <i>→</i>
         <span className={focus === 'portfolio' ? 'is-focus' : ''}>
           <b>联合决策</b>
-          <small>
-            {run
-              ? `买 ${run.buy_count} · 持 ${run.hold_count} · 卖 ${run.sell_count}`
-              : '等待今日执行'}
-          </small>
+          <small>{jointSummary}</small>
         </span>
         <i>→</i>
         <span>
           <b>研究闭环盘</b>
-          <small>{run ? `${run.trading_day} · #${run.id}` : '尚无运行记录'}</small>
+          <small>{run ? `${run.trading_day} · #${run.id}` : '今日尚未生成交易记录'}</small>
         </span>
       </div>
-      <Tag
-        icon={fresh ? <CheckCircleOutlined /> : <ClockCircleOutlined />}
-        color={fresh ? 'green' : 'gold'}
-      >
-        {fresh ? `研究日 ${research.expected_research_day} 已对齐` : '研究数据未到齐，暂停交易'}
+      {fresh ? (
+        <Tag icon={<CheckCircleOutlined />} color="green">
+          研究日 {research.expected_research_day} 已对齐
+        </Tag>
+      ) : null}
+      <Tag icon={statusTone.icon} color={statusTone.color}>
+        {execution.message}
       </Tag>
-      {run?.status === 'running' ? <Tag icon={<SyncOutlined spin />}>执行中</Tag> : null}
+      {execution.next_attempt_label ? <Tag>下次尝试 {execution.next_attempt_label}</Tag> : null}
     </section>
   );
 }

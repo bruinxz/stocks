@@ -320,6 +320,38 @@ async function testFreshnessAndIdempotency() {
   assert.equal(quoteWaitingRepo.execution_count, 0, '报价未齐不得生成成交决策');
 }
 
+async function testDashboardExecutionState() {
+  const preopenRepo = new FakeRepository();
+  const preopen: any = await new ResearchTradingLoopService(preopenRepo).getDashboard(
+    4,
+    new Date('2026-07-22T01:20:00.000Z')
+  );
+  assert.equal(preopen.execution.status, 'scheduled');
+  assert.equal(preopen.execution.next_attempt_label, '今日 09:35');
+  assert.match(preopen.execution.message, /不会|行情齐全/);
+  assert.equal(preopenRepo.portfolio_load_count, 0, '盘前状态不应伪装成行情就绪检查');
+
+  const quoteWaitingRepo = new FakeRepository();
+  quoteWaitingRepo.prices_ready = false;
+  const quoteWaiting: any = await new ResearchTradingLoopService(quoteWaitingRepo).getDashboard(
+    4,
+    new Date('2026-07-22T01:35:00.000Z')
+  );
+  assert.equal(quoteWaiting.execution.status, 'waiting_for_quotes');
+  assert.equal(quoteWaiting.execution.required_quote_count, 1);
+  assert.equal(quoteWaiting.execution.fresh_quote_count, 0);
+  assert.match(quoteWaiting.execution.message, /不会使用昨日收盘价伪造成交/);
+
+  const staleRepo = new FakeRepository();
+  staleRepo.stale = true;
+  const stale: any = await new ResearchTradingLoopService(staleRepo).getDashboard(
+    4,
+    new Date('2026-07-22T01:35:00.000Z')
+  );
+  assert.equal(stale.execution.status, 'research_blocked');
+  assert.match(stale.execution.message, /已暂停/);
+}
+
 function testPipelineContracts() {
   const root = path.resolve(__dirname, '../../..');
   const scheduler = fs.readFileSync(
@@ -360,6 +392,11 @@ function testPipelineContracts() {
   );
   assert.match(loopService, /hasResearchLoopPositionCapacity\(activePositions\.length\)/);
   assert.match(loopService, /status = 'running'[\s\S]{0,180}INTERVAL '30 minutes'/);
+  assert.match(
+    loopService,
+    /UPDATE paper_trading_portfolios[\s\S]{0,1000}auto_trade_enabled = TRUE/,
+    '半迁移的旧账户必须在执行前归一化为唯一研究闭环盘'
+  );
   assert.match(
     globalSync,
     /refresh_multibagger_cn_a[\s\S]{0,200}populate_live_multibagger\.py|populate_live_multibagger\.py[\s\S]{0,300}refresh_multibagger_cn_a/
@@ -428,6 +465,7 @@ async function main() {
   testHardPositionCapacity();
   testQuoteFreshness();
   await testFreshnessAndIdempotency();
+  await testDashboardExecutionState();
   testPipelineContracts();
   console.log('research trading loop tests passed');
 }

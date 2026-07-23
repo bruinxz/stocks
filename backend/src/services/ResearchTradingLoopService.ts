@@ -136,6 +136,29 @@ export interface ResearchLoopRunRow {
   status: string;
 }
 
+export type ResearchLoopExecutionStatus =
+  | 'research_blocked'
+  | 'market_closed'
+  | 'scheduled'
+  | 'waiting_for_quotes'
+  | 'ready'
+  | 'stalled'
+  | 'portfolio_not_ready'
+  | 'running'
+  | 'completed'
+  | 'failed';
+
+export interface ResearchLoopExecutionState {
+  trading_day: string;
+  status: ResearchLoopExecutionStatus;
+  reason_code: string;
+  message: string;
+  next_attempt_label: string | null;
+  required_quote_count: number | null;
+  fresh_quote_count: number | null;
+  unavailable_symbols: string[];
+}
+
 export interface ResearchTradingLoopRepository {
   assertReady(): Promise<void>;
   ensureLoopPortfolios(): Promise<void>;
@@ -449,6 +472,33 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
           capital: RESEARCH_LOOP_INITIAL_CAPITAL,
         },
       }
+    );
+
+    // portfolio_type was introduced with a default of research_loop, so an old portfolio can
+    // otherwise be mistaken for the canonical loop account while keeping its old name and a
+    // disabled execution flag. The product has one mandatory research-loop account per user;
+    // normalize it every time before execution rather than silently leaving a half-migrated
+    // account unable to trade.
+    await sequelize.query(
+      `UPDATE paper_trading_portfolios
+          SET name = :name,
+              description = 'A股早报 + 高倍潜力每日联合决策；只由研究闭环执行器维护。',
+              strategy_keys = '[]'::jsonb,
+              enabled_factors = '[]'::jsonb,
+              risk_profile_overrides = '{"max_positions":6,"max_single_weight_pct":12,"hard_stop_loss_pct":8}'::jsonb,
+              auto_trade_enabled = TRUE,
+              updated_at = NOW()
+        WHERE portfolio_type = 'research_loop'
+          AND is_active = TRUE
+          AND (
+            name IS DISTINCT FROM :name
+            OR description IS DISTINCT FROM 'A股早报 + 高倍潜力每日联合决策；只由研究闭环执行器维护。'
+            OR strategy_keys IS DISTINCT FROM '[]'::jsonb
+            OR enabled_factors IS DISTINCT FROM '[]'::jsonb
+            OR risk_profile_overrides IS DISTINCT FROM '{"max_positions":6,"max_single_weight_pct":12,"hard_stop_loss_pct":8}'::jsonb
+            OR auto_trade_enabled IS DISTINCT FROM TRUE
+          )`,
+      { replacements: { name: RESEARCH_LOOP_PORTFOLIO_NAME } }
     );
   }
 
@@ -1181,6 +1231,12 @@ export class ResearchTradingLoopService {
             String(dashboard.research_day || '') === bundle.expected_research_day,
         }
       : null;
+    const execution = await this.buildExecutionState({
+      user_id,
+      now,
+      bundle,
+      latest_run: latestRun,
+    });
     return {
       research: {
         expected_research_day: bundle.expected_research_day,
@@ -1199,8 +1255,127 @@ export class ResearchTradingLoopService {
         },
         merged_target_count: selectResearchLoopTargets(bundle, RESEARCH_LOOP_MAX_POSITIONS).length,
       },
+      execution,
       latest_run: latestRun,
     };
+  }
+
+  private async buildExecutionState(input: {
+    user_id: number;
+    now: Date;
+    bundle: ResearchBundle;
+    latest_run: Record<string, any> | null;
+  }): Promise<ResearchLoopExecutionState> {
+    const trading_day = getEast8DateString(input.now);
+    const result = (
+      status: ResearchLoopExecutionStatus,
+      reason_code: string,
+      message: string,
+      overrides: Partial<ResearchLoopExecutionState> = {}
+    ): ResearchLoopExecutionState => ({
+      trading_day,
+      status,
+      reason_code,
+      message,
+      next_attempt_label: null,
+      required_quote_count: null,
+      fresh_quote_count: null,
+      unavailable_symbols: [],
+      ...overrides,
+    });
+
+    const fresh =
+      input.bundle.morning.research_day === input.bundle.expected_research_day &&
+      input.bundle.multibagger.research_day === input.bundle.expected_research_day;
+    if (!fresh) {
+      return result(
+        'research_blocked',
+        'research_not_fresh',
+        '两份研究尚未同时到达上一完整交易日，今日自动模拟交易已暂停'
+      );
+    }
+
+    if (input.latest_run?.is_current) {
+      const status = String(input.latest_run.status || 'failed');
+      if (status === 'running') {
+        return result('running', 'run_in_progress', '正在生成联合决策并执行模拟成交');
+      }
+      if (status === 'completed') {
+        return result('completed', 'run_completed', '今日研究决策与模拟成交已完成');
+      }
+      return result('failed', 'run_failed', '今日研究闭环执行失败，已停止继续模拟成交');
+    }
+
+    const marketHours = checkAShareTradingHours(input.now);
+    const shanghai = new Date(input.now.getTime() + 8 * 60 * 60 * 1000);
+    const minuteOfDay = shanghai.getUTCHours() * 60 + shanghai.getUTCMinutes();
+    const firstAttempt = 9 * 60 + 35;
+    const lastAttempt = 9 * 60 + 50;
+
+    if (marketHours.code === 'NON_TRADING_HOURS_HOLIDAY') {
+      return result('market_closed', marketHours.code, marketHours.reason || '今日 A 股休市');
+    }
+    if (minuteOfDay < firstAttempt) {
+      return result(
+        'scheduled',
+        marketHours.code || 'WAITING_FOR_FIRST_ATTEMPT',
+        '研究已就绪；09:35 将在今日行情齐全后执行模拟交易',
+        { next_attempt_label: '今日 09:35' }
+      );
+    }
+
+    const portfolios = await this.repository.loadLoopPortfolios(input.user_id);
+    const portfolio = portfolios[0];
+    if (!portfolio) {
+      return result(
+        'portfolio_not_ready',
+        'portfolio_not_ready',
+        '研究闭环模拟盘尚未初始化，已暂停自动模拟交易'
+      );
+    }
+    const positions = await this.repository.loadPositions(portfolio.id);
+    const targetSymbols = selectResearchLoopTargets(input.bundle, RESEARCH_LOOP_MAX_POSITIONS).map(
+      candidate => candidate.symbol
+    );
+    const requiredSymbols = [
+      ...new Set([
+        ...targetSymbols,
+        ...positions.map(position => normalizeSymbol(position.symbol)),
+      ]),
+    ];
+    const prices = await this.repository.loadPrices(requiredSymbols, trading_day);
+    const unavailableSymbols = requiredSymbols.filter(
+      symbol => !isResearchLoopPriceFresh(prices.get(symbol), trading_day, input.now)
+    );
+    const quoteState = {
+      required_quote_count: requiredSymbols.length,
+      fresh_quote_count: requiredSymbols.length - unavailableSymbols.length,
+      unavailable_symbols: unavailableSymbols,
+    };
+
+    if (unavailableSymbols.length > 0) {
+      const nextAttempt = minuteOfDay < lastAttempt ? '今日 09:50' : null;
+      return result(
+        'waiting_for_quotes',
+        'waiting_for_quotes',
+        `正在等待目标池行情：${quoteState.fresh_quote_count}/${quoteState.required_quote_count} 只已就绪；不会使用昨日收盘价伪造成交`,
+        { ...quoteState, next_attempt_label: nextAttempt }
+      );
+    }
+
+    if (marketHours.allowed && minuteOfDay <= lastAttempt) {
+      return result('ready', 'quotes_ready', '今日目标行情已齐，等待自动执行任务落账', {
+        ...quoteState,
+        next_attempt_label: minuteOfDay < lastAttempt ? '今日 09:50' : null,
+      });
+    }
+
+    return result(
+      'stalled',
+      'run_missing_after_window',
+      '今日行情已齐但没有形成执行记录，自动模拟交易已暂停并等待补跑',
+      quoteState
+    );
   }
 }
 

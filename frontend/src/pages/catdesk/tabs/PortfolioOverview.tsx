@@ -251,6 +251,54 @@ export default function PortfolioOverview() {
   if (!data) return <EmptyState title="还没有可查看的模拟盘" />;
 
   const valuation = data.valuation;
+  const emptyStateCopy = (() => {
+    const execution = loopDashboard?.execution;
+    if (!execution) {
+      return {
+        kicker: '研究闭环状态不可用',
+        title: '当前账户没有持仓',
+        description: '无法确认研究与执行状态，自动模拟交易保持暂停。',
+      };
+    }
+    if (execution.status === 'scheduled') {
+      return {
+        kicker: '盘前研究已经就绪',
+        title: '等待 09:35 模拟执行',
+        description:
+          '当前不会使用昨日收盘价伪造成交。开盘后仅在目标池行情全部新鲜时生成第一笔模拟持仓。',
+      };
+    }
+    if (execution.status === 'waiting_for_quotes') {
+      return {
+        kicker: '研究已就绪 · 行情仍在到齐',
+        title: `等待目标池行情 ${execution.fresh_quote_count ?? 0}/${
+          execution.required_quote_count ?? loopDashboard.research.merged_target_count
+        }`,
+        description: execution.next_attempt_label
+          ? `缺失行情不会用昨日收盘价替代；系统将在${execution.next_attempt_label}自动重试。`
+          : '缺失行情不会用昨日收盘价替代；今日模拟交易保持暂停。',
+      };
+    }
+    if (execution.status === 'market_closed') {
+      return {
+        kicker: '研究保留 · 今日不成交',
+        title: 'A 股休市，账户保持空仓',
+        description: execution.message,
+      };
+    }
+    if (execution.status === 'completed') {
+      return {
+        kicker: '今日研究闭环已完成',
+        title: '今日决策没有形成持仓',
+        description: '请查看上方联合决策记录，核对跳过或卖出的具体原因。',
+      };
+    }
+    return {
+      kicker: '研究闭环已暂停',
+      title: '今日模拟执行未完成',
+      description: execution.message,
+    };
+  })();
 
   return (
     <section className="catdesk-portfolio catdesk-ledger">
@@ -366,7 +414,15 @@ export default function PortfolioOverview() {
         <span>
           <b>A 股早报</b>
           {data.latest_morning_brief.freshness === 'fresh'
-            ? `${data.latest_morning_brief.trading_day} · ${data.positions.filter(row => row.morning_brief.matched).length} 只命中`
+            ? `${data.latest_morning_brief.trading_day} · ${
+                loopDashboard?.research.morning.candidate_count ?? 0
+              } 只候选${
+                data.positions.length
+                  ? ` · 持仓 ${
+                      data.positions.filter(row => row.morning_brief.matched).length
+                    } 只命中`
+                  : ''
+              }`
             : data.latest_morning_brief.freshness === 'delayed'
               ? `数据停在 ${data.latest_morning_brief.trading_day} · 已过期`
               : '暂无规范快照'}
@@ -375,7 +431,13 @@ export default function PortfolioOverview() {
         <span>
           <b>高倍潜力</b>
           {data.latest_multibagger?.freshness === 'fresh'
-            ? `${dateTime(data.latest_multibagger.as_of)} · ${data.positions.filter(row => row.multibagger.matched).length} 只命中`
+            ? `${dateTime(data.latest_multibagger.as_of)} · ${
+                loopDashboard?.research.multibagger.candidate_count ?? 0
+              } 只候选${
+                data.positions.length
+                  ? ` · 持仓 ${data.positions.filter(row => row.multibagger.matched).length} 只命中`
+                  : ''
+              }`
             : data.latest_multibagger
               ? `${dateTime(data.latest_multibagger.as_of)} · 研究已过期`
               : '暂无研究快照'}
@@ -384,7 +446,7 @@ export default function PortfolioOverview() {
       </div>
 
       {data.positions.length === 0 ? (
-        <EmptyState title="当前账户没有持仓" variant="simple" />
+        <EmptyState {...emptyStateCopy} variant="simple" />
       ) : (
         <div className="catdesk-portfolio__table-wrap">
           <table className="catdesk-portfolio__table catdesk-ledger__table">

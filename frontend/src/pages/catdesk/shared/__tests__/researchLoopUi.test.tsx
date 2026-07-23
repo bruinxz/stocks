@@ -26,6 +26,18 @@ function dashboard(fresh = true): ResearchTradingLoopDashboard {
       },
       merged_target_count: 6,
     },
+    execution: {
+      trading_day: '2026-07-22',
+      status: fresh ? 'completed' : 'research_blocked',
+      reason_code: fresh ? 'run_completed' : 'research_not_fresh',
+      message: fresh
+        ? '今日研究决策与模拟成交已完成'
+        : '两份研究尚未同时到达上一完整交易日，今日自动模拟交易已暂停',
+      next_attempt_label: null,
+      required_quote_count: null,
+      fresh_quote_count: null,
+      unavailable_symbols: [],
+    },
     latest_run: {
       id: 7,
       portfolio_id: 1,
@@ -84,8 +96,49 @@ describe('research loop shared UI', () => {
     await act(async () =>
       root.render(<ResearchLoopStatusStrip dashboard={dashboard(false)} focus="portfolio" />)
     );
-    expect(container.textContent).toContain('研究数据未到齐，暂停交易');
+    expect(container.textContent).toContain('今日自动模拟交易已暂停');
     expect(container.textContent).toContain('2026-07-16');
+  });
+
+  test('pre-open state names the real execution time instead of implying background work', async () => {
+    const value = dashboard();
+    value.latest_run = null;
+    value.execution = {
+      trading_day: '2026-07-22',
+      status: 'scheduled',
+      reason_code: 'NON_TRADING_HOURS_PRE_OPEN',
+      message: '研究已就绪；09:35 将在今日行情齐全后执行模拟交易',
+      next_attempt_label: '今日 09:35',
+      required_quote_count: null,
+      fresh_quote_count: null,
+      unavailable_symbols: [],
+    };
+    await act(async () =>
+      root.render(<ResearchLoopStatusStrip dashboard={value} focus="portfolio" />)
+    );
+    expect(container.textContent).toContain('6 只目标 · 09:35 执行');
+    expect(container.textContent).toContain('今日尚未生成交易记录');
+    expect(container.textContent).toContain('下次尝试 今日 09:35');
+  });
+
+  test('quote waiting state exposes coverage and the no-fabrication guarantee', async () => {
+    const value = dashboard();
+    value.latest_run = null;
+    value.execution = {
+      trading_day: '2026-07-22',
+      status: 'waiting_for_quotes',
+      reason_code: 'waiting_for_quotes',
+      message: '正在等待目标池行情：4/6 只已就绪；不会使用昨日收盘价伪造成交',
+      next_attempt_label: '今日 09:50',
+      required_quote_count: 6,
+      fresh_quote_count: 4,
+      unavailable_symbols: ['sh.600001', 'sz.000001'],
+    };
+    await act(async () =>
+      root.render(<ResearchLoopStatusStrip dashboard={value} focus="portfolio" />)
+    );
+    expect(container.textContent).toContain('6 只目标 · 行情 4/6');
+    expect(container.textContent).toContain('不会使用昨日收盘价伪造成交');
   });
 
   test('infrastructure failures are visible and suspend automatic trading', async () => {

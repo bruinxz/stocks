@@ -35,6 +35,16 @@ jest.mock('../../shared/useResearchTradingLoop', () => ({
         },
         merged_target_count: 6,
       },
+      execution: {
+        trading_day: '2026-07-22',
+        status: 'completed',
+        reason_code: 'run_completed',
+        message: '今日研究决策与模拟成交已完成',
+        next_attempt_label: null,
+        required_quote_count: 6,
+        fresh_quote_count: 6,
+        unavailable_symbols: [],
+      },
       latest_run: {
         id: 9,
         portfolio_id: 65,

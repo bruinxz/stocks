@@ -2,6 +2,18 @@ import { authenticatedFetch } from './api';
 
 export type ResearchLoopAction = 'BUY' | 'HOLD' | 'SELL';
 
+export type ResearchLoopExecutionStatus =
+  | 'research_blocked'
+  | 'market_closed'
+  | 'scheduled'
+  | 'waiting_for_quotes'
+  | 'ready'
+  | 'stalled'
+  | 'portfolio_not_ready'
+  | 'running'
+  | 'completed'
+  | 'failed';
+
 export interface ResearchLoopDecisionView {
   id: number;
   symbol: string;
@@ -40,6 +52,16 @@ export interface ResearchTradingLoopDashboard {
       fresh: boolean;
     };
     merged_target_count: number;
+  };
+  execution: {
+    trading_day: string;
+    status: ResearchLoopExecutionStatus;
+    reason_code: string;
+    message: string;
+    next_attempt_label: string | null;
+    required_quote_count: number | null;
+    fresh_quote_count: number | null;
+    unavailable_symbols: string[];
   };
   latest_run: null | {
     id: number;
