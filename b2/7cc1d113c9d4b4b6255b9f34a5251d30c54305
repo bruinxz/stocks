@@ -1,0 +1,35 @@
+backend/src/services/ResearchTradingLoopService.ts
+  s_ec1e6492779c20::t_0bbbe41660c86a 139-161,476-502,1234-1239,1258,1262-1379
+backend/tests/services/research-trading-loop.test.ts
+  s_ec1e6492779c20::t_9416f533ebe549 323-354,395-399,468
+frontend/src/pages/catdesk/shared/EmptyState.tsx
+  s_ec1e6492779c20::t_83b5d0593f1092 7-8,11-16,26,28
+frontend/src/pages/catdesk/shared/ResearchLoopStatusStrip.tsx
+  s_ec1e6492779c20::t_751cecbf8cbfd6 40-65,86,91,94-100,102
+frontend/src/pages/catdesk/shared/__tests__/researchLoopUi.test.tsx
+  s_ec1e6492779c20::t_ac8d44af9ee829 29-40,99,103-143
+frontend/src/pages/catdesk/tabs/PortfolioOverview.tsx
+  s_ec1e6492779c20::t_77f6dc2ac44ba8 254-301,417-425,434-440,449
+frontend/src/pages/catdesk/tabs/__tests__/portfolioAndAIEntry.test.tsx
+  s_ec1e6492779c20::t_bbb0f5819d1a67 38-47
+frontend/src/services/researchTradingLoopService.ts
+  s_ec1e6492779c20::t_bcf46b6c16379c 5-16,56-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b27cc1d113c9d4b4b6255b9f34a5251d30c54305",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
