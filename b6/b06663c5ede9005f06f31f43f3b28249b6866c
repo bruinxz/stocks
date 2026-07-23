@@ -1,0 +1,31 @@
+datapipeline/tests/test_global_sync_child_env.py
+  s_ec1e6492779c20::t_0850e986871722 1-35
+datapipeline/tests/test_populate_live_us_tech_market.py
+  s_ec1e6492779c20::t_5c2d53eca7ede9 1-68
+scripts/ops/populate_live_backtest_pit.py
+  s_ec1e6492779c20::t_b5e97593bf9ef5 124-125
+scripts/ops/populate_live_multibagger.py
+  s_ec1e6492779c20::t_12503492314cfa 213-214
+scripts/ops/populate_live_recommendations.py
+  s_ec1e6492779c20::t_53c5e07daf54b1 237-238
+scripts/ops/populate_live_us_tech_market.py
+  s_ec1e6492779c20::t_c5febca624f908 13-14,51-52,57-58,161-210,253,274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b6b06663c5ede9005f06f31f43f3b28249b6866c",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
