@@ -7064,7 +7064,8 @@ class SchedulerService {
       // cron_expression 全部对齐 cronRegistry.ts 的 recommendedCron.
       // ===========================================================================
       {
-        name: '财务报告全市场批量同步',
+        // 名称是默认任务的稳定身份；实现已切为报告期批量同步，但不能改名导致重复 seed。
+        name: '财务报告全市场断点同步',
         type: 'FINANCIAL_REPORT_SYNC',
         cron_expression: '0 1 * * 0',
         is_active: true,

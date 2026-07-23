@@ -331,6 +331,11 @@ assert.match(
   /task\.type === 'FINANCIAL_REPORT_SYNC'[\s\S]{0,3200}scenario === 'financial_report_sync'[\s\S]{0,1600}status: ok \? 'COMPLETED' : 'FAILED'[\s\S]{0,1000}throw new Error\(`财务报告同步失败/,
   'financial-report scheduler runs must require a structured child success and propagate failure'
 );
+assert.match(
+  scheduler,
+  /name: '财务报告全市场断点同步'[\s\S]{0,120}type: 'FINANCIAL_REPORT_SYNC'/,
+  'financial-report task must preserve its stable seed identity while changing implementation'
+);
 assert(
   financialReportCli.includes("DATA_CLI_SYNC_SCHEMA === 'true'") &&
     financialReportCli.includes(
