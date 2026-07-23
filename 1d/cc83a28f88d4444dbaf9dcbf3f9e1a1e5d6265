@@ -1,0 +1,23 @@
+backend/src/scripts/apply-projection-schema-migrations.ts
+  s_ec1e6492779c20::t_3f14069485a28d 29,145-164
+backend/tests/services/projection-schema-migration-runner.test.ts
+  s_ec1e6492779c20::t_4a52b225c38b91 35,54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1dcc83a28f88d4444dbaf9dcbf3f9e1a1e5d6265",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
