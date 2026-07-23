@@ -31,6 +31,7 @@ export interface ResearchLoopDecisionView {
     rating: string | null;
   }>;
   reason: string;
+  metadata?: Record<string, unknown>;
   trade_id: number | null;
   created_at: string;
 }

@@ -57,7 +57,7 @@ jest.mock('../../shared/useResearchTradingLoop', () => ({
         buy_count: 1,
         hold_count: 1,
         sell_count: 1,
-        skipped_count: 0,
+        skipped_count: 1,
         total_value: 205000,
         current_cash: 192680,
         completed_at: '2026-07-22T01:36:00Z',
@@ -76,6 +76,22 @@ jest.mock('../../shared/useResearchTradingLoop', () => ({
             reason: '两个研究源继续支持，保持持仓',
             trade_id: null,
             created_at: '2026-07-22T01:35:00Z',
+          },
+          {
+            id: 2,
+            symbol: 'sh.600001',
+            name: '测试涨停股',
+            action: 'BUY',
+            status: 'skipped',
+            combined_score: 80,
+            target_weight_pct: 9,
+            reference_price: 11,
+            quantity: null,
+            sources: [],
+            reason: 'A股早报新进入目标池',
+            metadata: { skip_reason: 'limit_up_unfillable' },
+            trade_id: null,
+            created_at: '2026-07-22T01:35:01Z',
           },
         ],
       },
@@ -337,6 +353,8 @@ describe('CatDesk portfolio and AI entries', () => {
     expect(container.querySelector('[aria-label="选择模拟盘"]')).toBeNull();
     expect(container.textContent).toContain('研究日 2026-07-21 已对齐');
     expect(container.textContent).toContain('继续持有');
+    expect(container.textContent).toContain('已触及涨停，买入无法可靠成交');
+    expect(container.textContent).not.toContain('skipped');
     expect(container.textContent).toContain('¥205,000.00');
     expect(container.textContent).toContain('福能股份');
     expect(container.textContent).toContain('1,100 股');

@@ -68,6 +68,30 @@ const TIMELINE_ICON: Record<LedgerTimelineItem['type'], React.ReactNode> = {
   correction: <SafetyCertificateOutlined />,
 };
 
+const DECISION_SKIP_REASON_LABEL: Record<string, string> = {
+  fresh_realtime_quote_missing: '缺少新鲜行情',
+  max_positions_reached: '已达 6 只持仓上限',
+  below_one_lot: '目标金额不足最小交易单位',
+  insufficient_cash: '可用资金不足',
+  position_missing: '没有可卖持仓',
+  t_plus_1: 'T+1 限制，今日不可卖出',
+  execution_reality_missing: '缺少昨收或成交量，无法核验成交边界',
+  limit_up_unfillable: '已触及涨停，买入无法可靠成交',
+  limit_down_unfillable: '已触及跌停，卖出无法可靠成交',
+};
+
+function decisionExecutionLabel(decision: { status: string; metadata?: Record<string, unknown> }) {
+  if (decision.status === 'executed') return '已成交';
+  if (decision.status === 'held') return '继续持有';
+  if (decision.status === 'planned') return '等待执行';
+  if (decision.status === 'failed') return '执行失败，未改变仓位';
+  if (decision.status === 'skipped') {
+    const reason = String(decision.metadata?.skip_reason || '');
+    return DECISION_SKIP_REASON_LABEL[reason] || '已跳过，未改变仓位';
+  }
+  return '状态待核对';
+}
+
 function FreshnessTag({ row }: { row: PortfolioLedgerPosition['quote'] }) {
   if (row.freshness === 'live') return <Tag color="green">盘中 · {row.age_minutes ?? 0} 分钟</Tag>;
   if (row.freshness === 'close') return <Tag color="blue">有效收盘价 · {row.trade_date}</Tag>;
@@ -350,11 +374,8 @@ export default function PortfolioOverview() {
                 {decision.target_weight_pct
                   ? ` · 目标 ${Number(decision.target_weight_pct).toFixed(0)}%`
                   : ''}
-                {decision.status === 'executed'
-                  ? ' · 已成交'
-                  : decision.status === 'held'
-                    ? ' · 继续持有'
-                    : ` · ${decision.status}`}
+                {' · '}
+                {decisionExecutionLabel(decision)}
               </span>
             </article>
           ))}
