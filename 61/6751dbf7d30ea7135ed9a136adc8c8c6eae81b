@@ -1,0 +1,25 @@
+frontend/src/pages/catdesk/tabs/PortfolioOverview.tsx
+  s_ec1e6492779c20::t_5f146b468c9fad 71-94,377-378
+frontend/src/pages/catdesk/tabs/__tests__/portfolioAndAIEntry.test.tsx
+  s_ec1e6492779c20::t_2f3d174c0985a5 60,80-95,356-357
+frontend/src/services/researchTradingLoopService.ts
+  s_ec1e6492779c20::t_df802e2cf102aa 34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "616751dbf7d30ea7135ed9a136adc8c8c6eae81b",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
