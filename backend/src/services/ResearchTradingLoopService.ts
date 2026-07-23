@@ -179,6 +179,21 @@ export function hasResearchLoopPositionCapacity(
   return Math.max(0, Math.floor(finite(current_position_count))) < Math.max(1, max_positions);
 }
 
+export function isResearchLoopPriceFresh(
+  price: ResearchLoopPrice | null | undefined,
+  trading_day: string,
+  now: Date,
+  max_age_ms = 30 * 60_000
+): boolean {
+  return Boolean(
+    price &&
+      price.price > 0 &&
+      price.trade_date === trading_day &&
+      now.getTime() - price.quote_time.getTime() >= 0 &&
+      now.getTime() - price.quote_time.getTime() <= max_age_ms
+  );
+}
+
 function record(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, any>)
@@ -1051,11 +1066,34 @@ export class ResearchTradingLoopService {
       ...bundle.morning.candidates.map(row => row.symbol),
       ...bundle.multibagger.candidates.map(row => row.symbol),
     ];
+    const targetSymbols = selectResearchLoopTargets(bundle, RESEARCH_LOOP_MAX_POSITIONS).map(
+      candidate => candidate.symbol
+    );
     const users: any[] = [];
     for (const portfolio of portfolios) {
       const positions = await this.repository.loadPositions(portfolio.id);
       const symbols = [...allSymbols, ...positions.map(position => position.symbol)];
       const prices = await this.repository.loadPrices(symbols, tradingDay);
+      const requiredSymbols = [
+        ...new Set([
+          ...targetSymbols,
+          ...positions.map(position => normalizeSymbol(position.symbol)),
+        ]),
+      ];
+      const unavailableSymbols = requiredSymbols.filter(
+        symbol => !isResearchLoopPriceFresh(prices.get(symbol), tradingDay, now)
+      );
+      if (unavailableSymbols.length > 0) {
+        users.push({
+          user_id: portfolio.user_id,
+          portfolio_id: portfolio.id,
+          status: 'waiting_for_quotes',
+          required_quote_count: requiredSymbols.length,
+          fresh_quote_count: requiredSymbols.length - unavailableSymbols.length,
+          unavailable_symbols: unavailableSymbols,
+        });
+        continue;
+      }
       const run = await this.repository.claimRun({
         portfolio,
         trading_day: tradingDay,
@@ -1120,7 +1158,11 @@ export class ResearchTradingLoopService {
     return {
       trading_day: tradingDay,
       research_day: bundle.expected_research_day,
-      status: users.some(row => row.status === 'failed') ? 'partial' : 'completed',
+      status: users.some(row => row.status === 'failed')
+        ? 'partial'
+        : users.some(row => row.status === 'waiting_for_quotes')
+        ? 'waiting_for_quotes'
+        : 'completed',
       morning_snapshot_id: bundle.morning.snapshot_id,
       multibagger_as_of: bundle.multibagger.as_of,
       users,

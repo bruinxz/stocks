@@ -6,6 +6,7 @@ import {
   buildResearchLoopDecisions,
   canSellPositionOnTradingDay,
   hasResearchLoopPositionCapacity,
+  isResearchLoopPriceFresh,
   mergeResearchCandidates,
   selectResearchLoopTargets,
   type ResearchBundle,
@@ -180,6 +181,32 @@ function testHardPositionCapacity() {
   assert.equal(hasResearchLoopPositionCapacity(7), false);
 }
 
+function testQuoteFreshness() {
+  const now = new Date('2026-07-24T01:35:00.000Z');
+  const fresh = {
+    symbol: 'sh.600001',
+    name: '测试股票',
+    price: 10,
+    quote_time: new Date('2026-07-24T01:30:00.000Z'),
+    trade_date: '2026-07-24',
+  };
+  assert.equal(isResearchLoopPriceFresh(fresh, '2026-07-24', now), true);
+  assert.equal(
+    isResearchLoopPriceFresh(
+      { ...fresh, quote_time: new Date('2026-07-24T00:59:59.000Z') },
+      '2026-07-24',
+      now
+    ),
+    false,
+    '超过 30 分钟的报价不得占用当日 run'
+  );
+  assert.equal(
+    isResearchLoopPriceFresh({ ...fresh, trade_date: '2026-07-23' }, '2026-07-24', now),
+    false,
+    '上一交易日报价不得用于今日模拟成交'
+  );
+}
+
 class FakeRepository implements ResearchTradingLoopRepository {
   ready_count = 0;
   ensure_count = 0;
@@ -188,6 +215,7 @@ class FakeRepository implements ResearchTradingLoopRepository {
   completed_count = 0;
   portfolio_load_count = 0;
   stale = false;
+  prices_ready = true;
 
   async assertReady() {
     this.ready_count += 1;
@@ -217,7 +245,8 @@ class FakeRepository implements ResearchTradingLoopRepository {
   async loadPositions() {
     return [];
   }
-  async loadPrices() {
+  async loadPrices(_symbols: string[], trading_day: string) {
+    if (!this.prices_ready) return new Map();
     return new Map([
       [
         'sh.600001',
@@ -225,8 +254,8 @@ class FakeRepository implements ResearchTradingLoopRepository {
           symbol: 'sh.600001',
           name: '测试股票',
           price: 10,
-          quote_time: new Date(),
-          trade_date: '2026-07-22',
+          quote_time: new Date(`${trading_day}T01:34:00.000Z`),
+          trade_date: trading_day,
         },
       ],
     ]);
@@ -280,6 +309,15 @@ async function testFreshnessAndIdempotency() {
   assert.equal(closed.reason, 'market_closed');
   assert.equal(closedRepo.ready_count, 0, '非交易时段不需要探测研究闭环结构');
   assert.equal(closedRepo.ensure_count, 0, '非交易时段不得创建或执行账户');
+
+  const quoteWaitingRepo = new FakeRepository();
+  quoteWaitingRepo.prices_ready = false;
+  const waiting: any = await new ResearchTradingLoopService(quoteWaitingRepo).run({
+    now: new Date('2026-07-22T01:35:00.000Z'),
+  });
+  assert.equal(waiting.status, 'waiting_for_quotes');
+  assert.equal(quoteWaitingRepo.claim_count, 0, '报价未齐不得占用幂等 run，9:50 必须可重试');
+  assert.equal(quoteWaitingRepo.execution_count, 0, '报价未齐不得生成成交决策');
 }
 
 function testPipelineContracts() {
@@ -388,6 +426,7 @@ async function main() {
   testSourceDiversityWithDifferentScoreScales();
   testTPlusOne();
   testHardPositionCapacity();
+  testQuoteFreshness();
   await testFreshnessAndIdempotency();
   testPipelineContracts();
   console.log('research trading loop tests passed');
