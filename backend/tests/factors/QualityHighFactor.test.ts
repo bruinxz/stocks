@@ -48,6 +48,8 @@ import {
   MIN_GROSS_MARGIN_SD,
   ANNUAL_REPORT_LOOKBACK_DAYS,
   GROSS_MARGIN_LOOKBACK_DAYS,
+  extractReportGrossMargin,
+  annualizeReportedRoe,
 } from '../../src/quant/factors/library/QualityHighFactor';
 import { factorRegistry } from '../../src/quant/factors/FactorRegistry';
 // 触发 library 自我登记
@@ -233,6 +235,33 @@ console.log('\n## combineQualityHigh');
     combineQualityHigh({ roic_proxy: null, gm_stability: null, net_margin: null }) === null
   );
 }
+
+console.log('\n## 全市场财报辅助字段');
+expectClose(
+  'Q1 ROE 年化 ×4',
+  annualizeReportedRoe(2.5, '2026-03-31') ?? -1,
+  10
+);
+expectClose(
+  'H1 ROE 年化 ×2',
+  annualizeReportedRoe(5, '2026-06-30') ?? -1,
+  10
+);
+expectClose(
+  '三季报 ROE 年化 ×4/3',
+  annualizeReportedRoe(7.5, '2026-09-30') ?? -1,
+  10
+);
+expectClose(
+  '年报 ROE 不缩放',
+  annualizeReportedRoe(10, '2026-12-31') ?? -1,
+  10
+);
+expectClose(
+  '从 market_report_row 提取销售毛利率',
+  extractReportGrossMargin({ market_report_row: { 销售毛利率: 36.8 } }) ?? -1,
+  36.8
+);
 {
   // 全有效 → 三项均值
   const score = combineQualityHigh({ roic_proxy: 15, gm_stability: 9, net_margin: 6 });

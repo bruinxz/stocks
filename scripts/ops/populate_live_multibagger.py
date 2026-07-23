@@ -68,7 +68,7 @@ WITH day AS (
       WHERE factor_name = 'value' AND raw_value IS NOT NULL
     )::int AS valuation_coverage,
     COUNT(DISTINCT stock_code) FILTER (
-      WHERE factor_name IN ('concept_heat', 'earnings_surprise')
+      WHERE factor_name IN ('quality_high', 'concept_heat', 'earnings_surprise')
         AND raw_value IS NOT NULL
     )::int AS moat_coverage,
     COUNT(DISTINCT stock_code) FILTER (
@@ -94,7 +94,8 @@ WITH day AS (
       WHERE factor_name = 'value' AND raw_value IS NOT NULL
     ) * 100 AS valuation,
     AVG(percentile) FILTER (
-      WHERE factor_name IN ('concept_heat', 'earnings_surprise') AND raw_value IS NOT NULL
+      WHERE factor_name IN ('quality_high', 'concept_heat', 'earnings_surprise')
+        AND raw_value IS NOT NULL
     ) * 100 AS moat,
     AVG(percentile) FILTER (
       WHERE factor_name IN ('momentum', 'gradual_breakout', 'money_flow')

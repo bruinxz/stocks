@@ -183,10 +183,37 @@ export function combineQualityHigh(comp: QualityHighComponents): number | null {
   return (comp.roic_proxy + comp.gm_stability + comp.net_margin) / 3;
 }
 
+function finiteOrNull(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return isFiniteNumber(parsed) ? parsed : null;
+}
+
+export function extractReportGrossMargin(
+  raw_payload: Record<string, any> | null | undefined
+): number | null {
+  return finiteOrNull(raw_payload?.market_report_row?.['销售毛利率']);
+}
+
+export function annualizeReportedRoe(roe: unknown, report_date: string): number | null {
+  const parsed = finiteOrNull(roe);
+  if (parsed === null) return null;
+  const suffix = String(report_date).slice(5, 10);
+  const multiplier =
+    suffix === '03-31' ? 4 : suffix === '06-30' ? 2 : suffix === '09-30' ? 4 / 3 : 1;
+  return parsed * multiplier;
+}
+
+function reportIsAvailable(raw_payload: Record<string, any> | null | undefined, asOf: string) {
+  const announcementDate = raw_payload?.announcement_date;
+  if (announcementDate == null || announcementDate === '') return true;
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(announcementDate)) && String(announcementDate) <= asOf;
+}
+
 export const qualityHighFactor: Factor = {
   name: 'quality_high',
   description:
-    '高阶质量 = ROIC 代理(年报 ROE → SFF.roe 兜底) + 毛利率稳定性(1/sd, BD-3 ≥3 obs) + 净利率(FinancialReport / SFF.gross_margin 兜底) 等权合成',
+    '高阶质量 = 已公告 ROIC(ROE)代理 + 多期毛利率稳定性 + 净利率，FinancialReport 优先并由 SFF 兜底',
   category: 'quality',
 
   async compute(ctx) {
@@ -196,7 +223,7 @@ export const qualityHighFactor: Factor = {
     const annualStart = lookbackStartDate(ctx.as_of_date, ANNUAL_REPORT_LOOKBACK_DAYS);
     const gmStart = lookbackStartDate(ctx.as_of_date, GROSS_MARGIN_LOOKBACK_DAYS);
 
-    // ----- 1) FinancialReport 年报：取每只股票最近一份年报的 roe / net_profit / revenue -----
+    // ----- 1) FinancialReport：取最新已公告报告 + 多期毛利率时序 -----
     //
     // 注意：FinancialReport.stock_code 已经是无后缀形式（与 ctx.universe 一致），
     // 不需要走 Stock.symbol 反查。
@@ -204,11 +231,18 @@ export const qualityHighFactor: Factor = {
     // **BD-3 注释 (2026-06-23)**: prod 实测 financial_reports 表只 25 distinct 股票
     // (上游 sync 严重欠缺). 本路径只能命中 25 票, 其余靠 StockFundamentalFactor fallback (路径 1b/3b).
     const reportRows = (await FinancialReport.findAll({
-      attributes: ['stock_code', 'report_date', 'report_type', 'net_profit', 'revenue', 'roe'],
+      attributes: [
+        'stock_code',
+        'report_date',
+        'report_type',
+        'net_profit',
+        'revenue',
+        'roe',
+        'raw_payload',
+      ],
       where: {
         stock_code: { [Op.in]: ctx.universe },
         report_date: { [Op.gte]: annualStart, [Op.lte]: ctx.as_of_date },
-        report_type: '年报',
       },
       raw: true,
     })) as unknown as Array<{
@@ -218,26 +252,32 @@ export const qualityHighFactor: Factor = {
       net_profit: any;
       revenue: any;
       roe: any;
+      raw_payload?: Record<string, any> | null;
     }>;
 
-    interface LatestAnnual {
+    interface LatestReport {
       report_date: string;
       net_profit: number | null;
       revenue: number | null;
       roe: number | null;
     }
-    const latestAnnual = new Map<string, LatestAnnual>();
+    const latestReport = new Map<string, LatestReport>();
+    const reportGmByCode = new Map<string, number[]>();
     for (const r of reportRows) {
-      const cur = latestAnnual.get(r.stock_code);
+      if (!reportIsAvailable(r.raw_payload, ctx.as_of_date)) continue;
+      const grossMargin = extractReportGrossMargin(r.raw_payload);
+      if (grossMargin !== null) {
+        const values = reportGmByCode.get(r.stock_code) || [];
+        values.push(grossMargin);
+        reportGmByCode.set(r.stock_code, values);
+      }
+      const cur = latestReport.get(r.stock_code);
       if (cur && cur.report_date >= r.report_date) continue;
-      const np = Number(r.net_profit);
-      const rev = Number(r.revenue);
-      const roe = Number(r.roe);
-      latestAnnual.set(r.stock_code, {
+      latestReport.set(r.stock_code, {
         report_date: r.report_date,
-        net_profit: isFiniteNumber(np) ? np : null,
-        revenue: isFiniteNumber(rev) ? rev : null,
-        roe: isFiniteNumber(roe) ? roe : null,
+        net_profit: finiteOrNull(r.net_profit),
+        revenue: finiteOrNull(r.revenue),
+        roe: annualizeReportedRoe(r.roe, r.report_date),
       });
     }
 
@@ -303,18 +343,22 @@ export const qualityHighFactor: Factor = {
 
     // ----- 3) 合成：3 子分量等权重 (FinancialReport 优先, SFF 兜底) -----
     for (const code of ctx.universe) {
-      const annual = latestAnnual.get(code);
+      const report = latestReport.get(code);
       const sff = latestSFF.get(code);
-      const gmSeries = gmByCode.get(code) ?? [];
+      const reportGmSeries = reportGmByCode.get(code) ?? [];
+      const gmSeries =
+        reportGmSeries.length >= MIN_GROSS_MARGIN_OBSERVATIONS
+          ? reportGmSeries
+          : gmByCode.get(code) ?? [];
 
-      // ROIC proxy: 优先 annual ROE, 缺则 SFF.roe (TTM 代理 - 一致语义)
-      const roicProxy = annual?.roe ?? sff?.roe ?? null;
+      // ROIC proxy: 优先最新已公告报告的年化 ROE, 缺则 SFF.roe。
+      const roicProxy = report?.roe ?? sff?.roe ?? null;
 
       // gm stability 仍只依赖 SFF 时序 (BD-3 已调 MIN=3)
       const gmStability = computeGrossMarginStability(gmSeries);
 
       // net_margin: 优先 FinancialReport (np/rev), 缺则 SFF.gross_margin (毛利率代理 — 与净利率同方向, 上限)
-      let netMargin: number | null = computeNetMargin(annual?.net_profit, annual?.revenue);
+      let netMargin: number | null = computeNetMargin(report?.net_profit, report?.revenue);
       if (netMargin === null && sff?.gross_margin !== null && sff?.gross_margin !== undefined) {
         // 毛利率作为净利率代理: 实证毛利率 > 净利率 (扣完费用前), 相关性 0.5-0.7;
         // 缺真实 net_margin 时此代理仍保留 "盈利能力强弱" 排序意义.
