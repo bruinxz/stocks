@@ -13,6 +13,7 @@ import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { RealtimeQuote } from '../models/RealtimeQuote';
 import { Stock } from '../models/Stock';
+import { describeLimits } from '../quant/marketLimits';
 import { logger } from '../utils/logger';
 import { normalizeSymbol, quantizeBuyQuantity } from '../utils/stockSymbol';
 import { getEast8DateString } from '../utils/timezone';
@@ -116,6 +117,8 @@ export interface ResearchLoopPrice {
   price: number;
   quote_time: Date;
   trade_date: string;
+  previous_close: number;
+  volume: number;
 }
 
 export interface ResearchLoopPortfolioRow {
@@ -211,10 +214,30 @@ export function isResearchLoopPriceFresh(
   return Boolean(
     price &&
       price.price > 0 &&
+      price.previous_close > 0 &&
+      price.volume > 0 &&
       price.trade_date === trading_day &&
       now.getTime() - price.quote_time.getTime() >= 0 &&
       now.getTime() - price.quote_time.getTime() <= max_age_ms
   );
+}
+
+export function researchLoopExecutionBlockReason(
+  price: ResearchLoopPrice,
+  action: ResearchLoopAction
+): string | null {
+  if (action === 'HOLD') return null;
+  if (!(price.previous_close > 0) || !(price.volume > 0)) return 'execution_reality_missing';
+  const limits = describeLimits(price.symbol, price.name, price.previous_close);
+  if (!(limits.upper && limits.lower)) return 'execution_reality_missing';
+  const modeledPrice = price.price * (action === 'BUY' ? 1.001 : 1 - 0.001);
+  if (action === 'BUY' && (price.price >= limits.upper * 0.9999 || modeledPrice > limits.upper)) {
+    return 'limit_up_unfillable';
+  }
+  if (action === 'SELL' && (price.price <= limits.lower * 1.0001 || modeledPrice < limits.lower)) {
+    return 'limit_down_unfillable';
+  }
+  return null;
 }
 
 function record(value: unknown): Record<string, any> {
@@ -677,12 +700,15 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
       const symbol = normalizeSymbol(row.symbol);
       const price = finite(row.current_price);
       if (!prices.has(symbol) && price > 0) {
+        const raw = record(row.raw_payload);
         prices.set(symbol, {
           symbol,
           name: row.name || symbol,
           price,
           quote_time: row.quote_time,
           trade_date: row.trade_date,
+          previous_close: finite(raw.previous_close),
+          volume: finite(row.volume),
         });
       }
     }
@@ -746,6 +772,15 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
       await this.updateDecision(decisionId, {
         status: 'skipped',
         metadata: { skip_reason: 'fresh_realtime_quote_missing' },
+      });
+      return { status: 'skipped', signal_id: signal.id };
+    }
+    const executionBlock = researchLoopExecutionBlockReason(input.price, input.decision.action);
+    if (executionBlock) {
+      await this.updateDecision(decisionId, {
+        status: 'skipped',
+        reference_price: input.price.price,
+        metadata: { skip_reason: executionBlock },
       });
       return { status: 'skipped', signal_id: signal.id };
     }

@@ -10,6 +10,7 @@ import {
   hasResearchLoopPositionCapacity,
   isResearchLoopPriceFresh,
   mergeResearchCandidates,
+  researchLoopExecutionBlockReason,
   selectResearchLoopTargets,
   type ResearchBundle,
   type ResearchLoopPortfolioRow,
@@ -127,6 +128,8 @@ function testBuyHoldSellAndSixPositionCap() {
         price: row.current_price,
         quote_time: new Date('2026-07-22T01:34:00.000Z'),
         trade_date: '2026-07-22',
+        previous_close: 10,
+        volume: 100000,
       },
     ])
   );
@@ -191,6 +194,8 @@ function testQuoteFreshness() {
     price: 10,
     quote_time: new Date('2026-07-24T01:30:00.000Z'),
     trade_date: '2026-07-24',
+    previous_close: 9.8,
+    volume: 100000,
   };
   assert.equal(isResearchLoopPriceFresh(fresh, '2026-07-24', now), true);
   assert.equal(
@@ -206,6 +211,41 @@ function testQuoteFreshness() {
     isResearchLoopPriceFresh({ ...fresh, trade_date: '2026-07-23' }, '2026-07-24', now),
     false,
     '上一交易日报价不得用于今日模拟成交'
+  );
+  assert.equal(
+    isResearchLoopPriceFresh({ ...fresh, previous_close: 0 }, '2026-07-24', now),
+    false,
+    '缺昨收时无法核验涨跌停边界，不得视为可成交行情'
+  );
+  assert.equal(
+    isResearchLoopPriceFresh({ ...fresh, volume: 0 }, '2026-07-24', now),
+    false,
+    '零成交量报价不得用于模拟成交'
+  );
+}
+
+function testExecutionRealityBlocks() {
+  const normal = {
+    symbol: 'sh.600001',
+    name: '测试股票',
+    price: 10.5,
+    quote_time: new Date('2026-07-24T01:35:00.000Z'),
+    trade_date: '2026-07-24',
+    previous_close: 10,
+    volume: 100000,
+  };
+  assert.equal(researchLoopExecutionBlockReason(normal, 'BUY'), null);
+  assert.equal(
+    researchLoopExecutionBlockReason({ ...normal, price: 11 }, 'BUY'),
+    'limit_up_unfillable'
+  );
+  assert.equal(
+    researchLoopExecutionBlockReason({ ...normal, price: 9 }, 'SELL'),
+    'limit_down_unfillable'
+  );
+  assert.equal(
+    researchLoopExecutionBlockReason({ ...normal, volume: 0 }, 'BUY'),
+    'execution_reality_missing'
   );
 }
 
@@ -258,6 +298,8 @@ class FakeRepository implements ResearchTradingLoopRepository {
           price: 10,
           quote_time: new Date(`${trading_day}T01:34:00.000Z`),
           trade_date: trading_day,
+          previous_close: 9.8,
+          volume: 100000,
         },
       ],
     ]);
@@ -408,6 +450,8 @@ async function testDecisionAndTradeShareTransaction() {
         price: 10,
         quote_time: new Date(),
         trade_date: '2026-07-24',
+        previous_close: 9.8,
+        volume: 100000,
       },
     });
     assert.equal(result.status, 'failed');
@@ -551,6 +595,7 @@ async function main() {
   testTPlusOne();
   testHardPositionCapacity();
   testQuoteFreshness();
+  testExecutionRealityBlocks();
   await testFreshnessAndIdempotency();
   await testDashboardExecutionState();
   await testDecisionAndTradeShareTransaction();
