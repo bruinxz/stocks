@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,8 @@ import subprocess
 import sys
 import tempfile
 from typing import Mapping, Sequence
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 
@@ -39,6 +42,7 @@ from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
 from datapipeline.collectors.jpkr_deep.fx_rate_fetcher import (
     FxSourceRow,
     normalize_fx_rows,
+    parse_bok_json,
 )
 from datapipeline.contracts import FxObservation
 from datapipeline.storage.jpkr import FxObservationWriter, JpKrOfficialWriter
@@ -146,8 +150,57 @@ def _rebase_pending_fx(
     )
 
 
+def _capture_bok_fx(
+    env: Mapping[str, str],
+    *,
+    start_day: date,
+    end_day: date,
+    available_at_utc: datetime,
+) -> tuple[FxSourceRow, ...]:
+    """Fetch the official BOK ECOS USD/KRW series without exposing API keys.
+
+    ECOS accepts the public ``sample`` token for a bounded ten-row window. Operators may
+    provide BOK_ECOS_API_KEY for production quota; the key remains inside this process and
+    is never copied into logs, source ids, versions, or subprocess arguments.
+    """
+
+    api_key = str(env.get("BOK_ECOS_API_KEY") or "sample")
+    start_text = start_day.strftime("%Y%m%d")
+    end_text = end_day.strftime("%Y%m%d")
+    url = (
+        "https://ecos.bok.or.kr/api/StatisticSearch/"
+        f"{quote(api_key, safe='')}/json/en/1/10/731Y001/D/"
+        f"{start_text}/{end_text}/0000001"
+    )
+    try:
+        request = Request(
+            url,
+            headers={"User-Agent": "stocks-research/1.0", "Accept": "application/json"},
+        )
+        with urlopen(request, timeout=20) as response:
+            raw = response.read()
+        payload = json.loads(raw)
+        rows = parse_bok_json(
+            payload,
+            available_at_utc=available_at_utc,
+            source_document_id=f"bok-ecos:731Y001:0000001:{start_text}:{end_text}",
+            source_version=(
+                "bok-ecos-731Y001-0000001@1.0.0:"
+                + hashlib.sha256(raw).hexdigest()
+            ),
+        )
+    except Exception:
+        raise RuntimeError("BOK_SOURCE_READ_FAILED") from None
+    if not rows:
+        raise RuntimeError("BOK_SOURCE_EMPTY")
+    return rows
+
+
 async def _persist_official(
-    env: dict[str, str], jpx_files: list[Path], boj_file: Path
+    env: dict[str, str],
+    jpx_files: list[Path],
+    boj_file: Path,
+    bok_rows: Sequence[FxSourceRow] = (),
 ) -> dict[str, object]:
     import asyncpg
 
@@ -174,9 +227,11 @@ async def _persist_official(
             )
         )
         as_of = datetime.now(timezone.utc).replace(microsecond=0)
-        fx = parse_boj_capture_fixture(
-            json.loads(boj_file.read_text(encoding="utf-8")), as_of_utc=as_of
-        )
+        fx = tuple(
+            parse_boj_capture_fixture(
+                json.loads(boj_file.read_text(encoding="utf-8")), as_of_utc=as_of
+            )
+        ) + tuple(bok_rows)
         latest_fx_rows = await pool.fetch(
             "SELECT DISTINCT ON (pair) pair, observation_day, available_at_utc, "
             "local_per_usd, usd_per_local, change_pct, source_kind, "
@@ -207,6 +262,7 @@ async def _persist_official(
             "ok": True,
             "jp_kline": kline_result.__dict__,
             "jpy_fx": fx_result.__dict__,
+            "krw_fx_captured": len(bok_rows),
         }
     finally:
         await pool.close()
@@ -234,44 +290,73 @@ def main() -> int:
         temp = Path(directory)
         jpx_dir = temp / "jpx"
         boj_file = temp / "boj.json"
-        results.append(
-            _run(
-                "capture_jpx",
-                [
-                    "scripts/ops/capture_live_jpx_klines.py",
-                    "--output-dir",
-                    str(jpx_dir),
-                    "--days",
-                    "2",
-                    "--confirm-self-use",
-                ],
-                600,
-            )
+        capture_jpx = _run(
+            "capture_jpx",
+            [
+                "scripts/ops/capture_live_jpx_klines.py",
+                "--output-dir",
+                str(jpx_dir),
+                "--days",
+                "2",
+                "--confirm-self-use",
+            ],
+            600,
         )
-        results.append(
-            _run(
-                "capture_boj",
-                [
-                    "-m",
-                    "datapipeline.collectors.jpkr_deep.live_capture",
-                    "--confirm-self-use",
-                    "--source",
-                    "boj",
-                    "--output",
-                    str(boj_file),
-                    "--start",
-                    (today - timedelta(days=10)).isoformat(),
-                    "--end",
-                    today.isoformat(),
-                ],
-                90,
-            )
+        results.append(capture_jpx)
+        capture_boj = _run(
+            "capture_boj",
+            [
+                "-m",
+                "datapipeline.collectors.jpkr_deep.live_capture",
+                "--confirm-self-use",
+                "--source",
+                "boj",
+                "--output",
+                str(boj_file),
+                "--start",
+                (today - timedelta(days=10)).isoformat(),
+                "--end",
+                today.isoformat(),
+            ],
+            90,
         )
-        capture_ok = all(item["ok"] for item in results)
-        if capture_ok and not args.dry_run:
+        results.append(capture_boj)
+        bok_rows: tuple[FxSourceRow, ...] = ()
+        try:
+            bok_rows = _capture_bok_fx(
+                env,
+                # The public ECOS sample token is capped at ten rows. A ten-calendar-day
+                # window has at most eight weekdays, so the newest observation cannot be
+                # silently truncated from the tail of an ascending result set.
+                start_day=today - timedelta(days=10),
+                end_day=today,
+                available_at_utc=datetime.now(timezone.utc).replace(microsecond=0),
+            )
+            results.append(
+                {
+                    "name": "capture_bok_usdkrw",
+                    "ok": True,
+                    "row_count": len(bok_rows),
+                    "latest_observation_day": max(
+                        row.observation_day for row in bok_rows
+                    ).isoformat(),
+                }
+            )
+        except RuntimeError as error:
+            results.append(
+                {"name": "capture_bok_usdkrw", "ok": False, "error": str(error)}
+            )
+
+        official_capture_ok = bool(capture_jpx["ok"] and capture_boj["ok"])
+        if official_capture_ok and not args.dry_run:
             try:
                 persisted = asyncio.run(
-                    _persist_official(env, sorted(jpx_dir.glob("*.json")), boj_file)
+                    _persist_official(
+                        env,
+                        sorted(jpx_dir.glob("*.json")),
+                        boj_file,
+                        bok_rows,
+                    )
                 )
                 results.append({"name": "persist_jp_official", **persisted})
             except Exception as error:

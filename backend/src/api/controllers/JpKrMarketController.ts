@@ -35,6 +35,7 @@ const KPI_SQL = `
     SELECT symbols.response_key,
            latest_quote.close,
            latest_quote.trading_day,
+           latest_quote.source_kind,
            COALESCE(
              ROUND(
                ((latest_quote.close / NULLIF(previous_quote.close, 0)) - 1) * 100,
@@ -44,7 +45,7 @@ const KPI_SQL = `
            ) AS change_pct
     FROM index_symbols symbols
     LEFT JOIN LATERAL (
-      SELECT k.close, k.trading_day
+      SELECT k.close, k.trading_day, k.source_kind
       FROM jpkr_daily_kline k
       WHERE k.ticker = symbols.ticker
         AND k.trading_day <= CAST(:date AS date)
@@ -67,7 +68,8 @@ const KPI_SQL = `
            fx.pair,
            fx.local_per_usd,
            fx.change_pct,
-           fx.observation_day
+           fx.observation_day,
+           fx.source_kind
     FROM jpkr_fx_observation fx
     WHERE fx.observation_day <= CAST(:date AS date)
       AND fx.available_at_utc <= CAST(:cutoff AS timestamptz)
@@ -81,27 +83,32 @@ const KPI_SQL = `
     (SELECT CASE WHEN close IS NULL THEN NULL ELSE jsonb_build_object(
        'value', close,
        'change_pct', change_pct,
-       'as_of', trading_day
+       'as_of', trading_day,
+       'source_kind', source_kind
      ) END FROM index_quotes WHERE response_key = 'nikkei225') AS nikkei225,
     (SELECT CASE WHEN close IS NULL THEN NULL ELSE jsonb_build_object(
        'value', close,
        'change_pct', change_pct,
-       'as_of', trading_day
+       'as_of', trading_day,
+       'source_kind', source_kind
      ) END FROM index_quotes WHERE response_key = 'topix') AS topix,
     (SELECT CASE WHEN close IS NULL THEN NULL ELSE jsonb_build_object(
        'value', close,
        'change_pct', change_pct,
-       'as_of', trading_day
+       'as_of', trading_day,
+       'source_kind', source_kind
      ) END FROM index_quotes WHERE response_key = 'kospi') AS kospi,
     (SELECT jsonb_build_object(
        'rate', local_per_usd,
        'change_pct', change_pct,
-       'as_of', observation_day
+       'as_of', observation_day,
+       'source_kind', source_kind
      ) FROM latest_fx WHERE pair = 'USDJPY') AS usdjpy,
     (SELECT jsonb_build_object(
        'rate', local_per_usd,
        'change_pct', change_pct,
-       'as_of', observation_day
+       'as_of', observation_day,
+       'source_kind', source_kind
      ) FROM latest_fx WHERE pair = 'USDKRW') AS usdkrw
 `;
 
@@ -289,6 +296,7 @@ function normalizeKpiSnapshot(value: unknown): any | null {
       rate: numberOrZero(snapshot.rate),
       change_pct: numberOrZero(snapshot.change_pct),
       as_of: snapshot.as_of,
+      source_kind: snapshot.source_kind,
     };
   }
 
@@ -296,6 +304,7 @@ function normalizeKpiSnapshot(value: unknown): any | null {
     value: numberOrZero(snapshot.value),
     change_pct: numberOrZero(snapshot.change_pct),
     as_of: snapshot.as_of,
+    source_kind: snapshot.source_kind,
   };
 }
 

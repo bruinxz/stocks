@@ -60,9 +60,14 @@ function payload(rows: unknown[] = [marketRow()]) {
     kpi: {
       nikkei225: null,
       topix: null,
-      kospi: { value: 3250.5, change_pct: 0.8, as_of: DATE },
+      kospi: {
+        value: 3250.5,
+        change_pct: 0.8,
+        as_of: DATE,
+        source_kind: 'naver-public',
+      },
       usdjpy: null,
-      usdkrw: { rate: 1380.5, change_pct: -0.1, as_of: DATE },
+      usdkrw: { rate: 1380.5, change_pct: -0.1, as_of: DATE, source_kind: 'BOK' },
     },
     rows,
     sector_performance:

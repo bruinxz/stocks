@@ -26,6 +26,7 @@ UNIVERSE = {
 SOURCE_KIND = "naver-public"
 SOURCE_VERSION = "naver-mobile-v1"
 API_ROOT = "https://m.stock.naver.com/api/stock"
+INDEX_API_ROOT = "https://m.stock.naver.com/api/index"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) stocks-research/1.0",
     "Accept": "application/json",
@@ -34,6 +35,8 @@ HEADERS = {
 
 def _load_env(path: Path) -> dict[str, str]:
     values = dict(os.environ)
+    if not path.exists():
+        return values
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#") and "=" in stripped:
@@ -63,7 +66,11 @@ def _database_url(values: dict[str, str]) -> str:
 
 
 def _json(path: str) -> object:
-    request = Request(f"{API_ROOT}/{path}", headers=HEADERS)
+    return _json_url(f"{API_ROOT}/{path}")
+
+
+def _json_url(url: str) -> object:
+    request = Request(url, headers=HEADERS)
     with urlopen(request, timeout=20) as response:
         return json.load(response)
 
@@ -193,6 +200,72 @@ def main() -> int:
                 }
             )
 
+    # The technology watchlist alone cannot supply the page-level Korea market state.
+    # Persist KOSPI through the same timestamped Naver public source instead of deriving
+    # a synthetic index from the eight representatives.
+    kospi_ticker = "KOSPI"
+    kospi_basic = _json_url(f"{INDEX_API_ROOT}/{kospi_ticker}/basic")
+    kospi_prices = _json_url(
+        f"{INDEX_API_ROOT}/{kospi_ticker}/price?pageSize={args.days}&page=1"
+    )
+    if not isinstance(kospi_basic, dict) or not isinstance(kospi_prices, list):
+        raise RuntimeError("invalid Naver response for KOSPI")
+    kospi_name_local = str(kospi_basic.get("stockName") or "코스피")
+    kospi_security_payload = {
+        "ticker": kospi_ticker,
+        "name_local": kospi_name_local,
+        "name_en": "KOSPI",
+        "exchange": "krx",
+        "instrument_type": "index",
+        "source_url": f"{INDEX_API_ROOT}/{kospi_ticker}/basic",
+    }
+    securities.append(
+        {
+            "exchange": "krx",
+            "ticker": kospi_ticker,
+            "name_local": kospi_name_local,
+            "name_en": "KOSPI",
+            "source_kind": SOURCE_KIND,
+            "source_document_id": "naver-index-security:KOSPI",
+            "source_version": SOURCE_VERSION,
+            "available_at": available_at,
+            "fact_hash": _hash(kospi_security_payload),
+            "payload": json.dumps(kospi_security_payload, ensure_ascii=False),
+        }
+    )
+    for price in kospi_prices:
+        if not isinstance(price, dict):
+            continue
+        trading_day = date.fromisoformat(str(price["localTradedAt"]))
+        payload = {
+            "ticker": kospi_ticker,
+            "trading_day": trading_day.isoformat(),
+            "open": _number(price.get("openPrice")),
+            "high": _number(price.get("highPrice")),
+            "low": _number(price.get("lowPrice")),
+            "close": _number(price.get("closePrice")),
+            "volume": 0,
+            "source_url": f"{INDEX_API_ROOT}/{kospi_ticker}/price",
+        }
+        if payload["high"] < max(payload["open"], payload["close"]):
+            raise RuntimeError(f"invalid high price for KOSPI/{trading_day}")
+        if payload["low"] > min(payload["open"], payload["close"]):
+            raise RuntimeError(f"invalid low price for KOSPI/{trading_day}")
+        klines.append(
+            {
+                **payload,
+                "exchange": "krx",
+                "name_local": kospi_name_local,
+                "name_en": "KOSPI",
+                "source_kind": SOURCE_KIND,
+                "source_document_id": f"naver-index-price:KOSPI:{trading_day}",
+                "source_version": SOURCE_VERSION,
+                "fact_hash": _hash(payload),
+                "effective_at": _effective_at(trading_day),
+                "available_at": max(available_at, _effective_at(trading_day)),
+            }
+        )
+
     if not args.dry_run:
         import psycopg
 
@@ -215,7 +288,7 @@ def main() -> int:
                 "security_inserted": security_inserted,
                 "kline_inserted": kline_inserted,
                 "latest_trading_day": max(row["trading_day"] for row in klines),
-                "tickers": sorted(UNIVERSE),
+                "tickers": sorted([*UNIVERSE, kospi_ticker]),
             },
             ensure_ascii=False,
             sort_keys=True,

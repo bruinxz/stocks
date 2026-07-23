@@ -42,11 +42,11 @@ function response(overrides: Record<string, unknown> = {}) {
   return {
     date: DATE,
     kpi: {
-      nikkei225: { value: 41000.5, change_pct: 0.8, as_of: DATE },
-      topix: { value: 2900.25, change_pct: 0.4, as_of: DATE },
+      nikkei225: { value: 41000.5, change_pct: 0.8, as_of: DATE, source_kind: 'JPX' },
+      topix: { value: 2900.25, change_pct: 0.4, as_of: DATE, source_kind: 'JPX' },
       kospi: null,
-      usdjpy: { rate: 150.25, change_pct: 0.2, as_of: DATE },
-      usdkrw: { rate: 1380.5, change_pct: -0.1, as_of: DATE },
+      usdjpy: { rate: 150.25, change_pct: 0.2, as_of: DATE, source_kind: 'BOJ' },
+      usdkrw: { rate: 1380.5, change_pct: -0.1, as_of: DATE, source_kind: 'BOK' },
     },
     rows: [marketRow()],
     sector_performance: [
@@ -76,8 +76,18 @@ describe('JPKR strict frontend adapter', () => {
   test('parses the canonical list wire including both FX KPI snapshots', () => {
     const parsed = parseJpKrMarketResponse(response(), DATE, 'JP');
 
-    expect(parsed.kpi.usdjpy).toEqual({ rate: 150.25, change_pct: 0.2, as_of: DATE });
-    expect(parsed.kpi.usdkrw).toEqual({ rate: 1380.5, change_pct: -0.1, as_of: DATE });
+    expect(parsed.kpi.usdjpy).toEqual({
+      rate: 150.25,
+      change_pct: 0.2,
+      as_of: DATE,
+      source_kind: 'BOJ',
+    });
+    expect(parsed.kpi.usdkrw).toEqual({
+      rate: 1380.5,
+      change_pct: -0.1,
+      as_of: DATE,
+      source_kind: 'BOK',
+    });
     expect(parsed.kpi.kospi).toBeNull();
     expect(parsed.rows[0]).toMatchObject({
       symbol: '7203',
@@ -111,7 +121,7 @@ describe('JPKR strict frontend adapter', () => {
             nikkei225: null,
             topix: null,
             kospi: null,
-            usdjpy: { rate: '150.25', change_pct: 0.2, as_of: DATE },
+            usdjpy: { rate: '150.25', change_pct: 0.2, as_of: DATE, source_kind: 'BOJ' },
             usdkrw: null,
           },
         }),
@@ -124,7 +134,12 @@ describe('JPKR strict frontend adapter', () => {
       parseJpKrMarketResponse(
         response({
           kpi: {
-            nikkei225: { value: 41000.5, change_pct: 0.8, as_of: '2026-07-11' },
+            nikkei225: {
+              value: 41000.5,
+              change_pct: 0.8,
+              as_of: '2026-07-11',
+              source_kind: 'JPX',
+            },
           },
         }),
         DATE,
@@ -134,7 +149,9 @@ describe('JPKR strict frontend adapter', () => {
 
     expect(() =>
       parseJpKrMarketResponse(
-        response({ kpi: { usdkrw: { rate: 0, change_pct: 0, as_of: DATE } } }),
+        response({
+          kpi: { usdkrw: { rate: 0, change_pct: 0, as_of: DATE, source_kind: 'BOK' } },
+        }),
         DATE,
         'JP'
       )

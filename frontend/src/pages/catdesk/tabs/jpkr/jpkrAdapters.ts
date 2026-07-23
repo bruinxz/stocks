@@ -261,7 +261,7 @@ function parseIndexKpi(
 ): JpKrIndexKpiSnapshot | null {
   if (value == null) return null;
   const label = `response.kpi.${key}`;
-  const raw = exactRecord(value, ['value', 'change_pct', 'as_of'], [], label);
+  const raw = exactRecord(value, ['value', 'change_pct', 'as_of', 'source_kind'], [], label);
   const asOf = dateString(raw.as_of, `${label}.as_of`);
   if (asOf > requestedDate) {
     throw new JpKrContractError(`${label}.as_of cannot be after the requested date`);
@@ -270,6 +270,7 @@ function parseIndexKpi(
     value: positiveNumber(raw.value, `${label}.value`),
     change_pct: finiteNumber(raw.change_pct, `${label}.change_pct`),
     as_of: asOf,
+    source_kind: requiredString(raw.source_kind, `${label}.source_kind`),
   };
 }
 
@@ -280,7 +281,7 @@ function parseFxKpi(
 ): JpKrFxKpiSnapshot | null {
   if (value == null) return null;
   const label = `response.kpi.${key}`;
-  const raw = exactRecord(value, ['rate', 'change_pct', 'as_of'], [], label);
+  const raw = exactRecord(value, ['rate', 'change_pct', 'as_of', 'source_kind'], [], label);
   const asOf = dateString(raw.as_of, `${label}.as_of`);
   if (asOf > requestedDate) {
     throw new JpKrContractError(`${label}.as_of cannot be after the requested date`);
@@ -289,6 +290,7 @@ function parseFxKpi(
     rate: positiveNumber(raw.rate, `${label}.rate`),
     change_pct: finiteNumber(raw.change_pct, `${label}.change_pct`),
     as_of: asOf,
+    source_kind: requiredString(raw.source_kind, `${label}.source_kind`),
   };
 }
 

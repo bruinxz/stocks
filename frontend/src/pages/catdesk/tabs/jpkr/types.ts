@@ -49,12 +49,14 @@ export type JpKrIndexKpiSnapshot = {
   value: number;
   change_pct: number;
   as_of: string;
+  source_kind: string;
 };
 
 export type JpKrFxKpiSnapshot = {
   rate: number;
   change_pct: number;
   as_of: string;
+  source_kind: string;
 };
 
 export type JpKrMarketResponse = {

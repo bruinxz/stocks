@@ -104,11 +104,36 @@ const MARKET_ROW = {
 };
 
 const KPI_ROW = {
-  nikkei225: JSON.stringify({ value: '41000.5', change_pct: '0.8', as_of: DATE }),
-  topix: JSON.stringify({ value: '2900.25', change_pct: '0.4', as_of: DATE }),
-  kospi: null,
-  usdjpy: JSON.stringify({ rate: '150.25', change_pct: '0.2', as_of: DATE }),
-  usdkrw: JSON.stringify({ rate: '1380.50', change_pct: '-0.1', as_of: DATE }),
+  nikkei225: JSON.stringify({
+    value: '41000.5',
+    change_pct: '0.8',
+    as_of: DATE,
+    source_kind: 'JPX',
+  }),
+  topix: JSON.stringify({
+    value: '2900.25',
+    change_pct: '0.4',
+    as_of: DATE,
+    source_kind: 'JPX',
+  }),
+  kospi: JSON.stringify({
+    value: '3250.5',
+    change_pct: '0.8',
+    as_of: DATE,
+    source_kind: 'naver-public',
+  }),
+  usdjpy: JSON.stringify({
+    rate: '150.25',
+    change_pct: '0.2',
+    as_of: DATE,
+    source_kind: 'BOJ',
+  }),
+  usdkrw: JSON.stringify({
+    rate: '1380.50',
+    change_pct: '-0.1',
+    as_of: DATE,
+    source_kind: 'BOK',
+  }),
 };
 
 function buildApp(): express.Express {
@@ -179,6 +204,11 @@ async function main(): Promise<void> {
     );
     assert('USDJPY consumes dedicated FX fact', list.body.kpi.usdjpy?.rate === 150.25);
     assert('USDKRW consumes dedicated FX fact', list.body.kpi.usdkrw?.rate === 1380.5);
+    assert('FX KPI exposes authoritative source', list.body.kpi.usdkrw?.source_kind === 'BOK');
+    assert(
+      'index KPI exposes authoritative source',
+      list.body.kpi.kospi?.source_kind === 'naver-public'
+    );
 
     const kpiCall = calls[0];
     const listCall = calls[1];
@@ -189,6 +219,11 @@ async function main(): Promise<void> {
     assert('KPI SQL contains no rejected fx_days CTE', !kpiCall.sql.includes('fx_days'));
     assert('KPI SQL contains no rejected fx_summary CTE', !kpiCall.sql.includes('fx_summary'));
     assert('KPI SQL consumes dedicated FX table', kpiCall.sql.includes('jpkr_fx_observation'));
+    assert(
+      'KPI SQL exposes source provenance for every KPI slot',
+      (kpiCall.sql.match(/'source_kind', source_kind/g) || []).length === 5 &&
+        kpiCall.sql.includes('fx.source_kind')
+    );
     assert(
       'KPI SQL applies availability cutoff',
       kpiCall.sql.includes('fx.available_at_utc <= CAST(:cutoff AS timestamptz)')

@@ -4,17 +4,28 @@ import type { JpKrFxKpiSnapshot, JpKrIndexKpiSnapshot, JpKrKpi, JpKrMarket } fro
 type KpiDefinition = {
   key: keyof JpKrKpi;
   label: string;
-  source: string;
+  expected_source: string;
   kind: 'index' | 'fx';
 };
 
 const KPI_DEFINITIONS: readonly KpiDefinition[] = [
-  { key: 'nikkei225', label: '日经 225', source: '时点指数快照', kind: 'index' },
-  { key: 'topix', label: '东证指数', source: '时点指数快照', kind: 'index' },
-  { key: 'kospi', label: '韩国综合指数', source: '时点指数快照', kind: 'index' },
-  { key: 'usdjpy', label: '美元兑日元', source: '日本央行', kind: 'fx' },
-  { key: 'usdkrw', label: '美元兑韩元', source: '韩国央行', kind: 'fx' },
+  { key: 'nikkei225', label: '日经 225', expected_source: '日本交易所', kind: 'index' },
+  { key: 'topix', label: '东证指数', expected_source: '日本交易所', kind: 'index' },
+  { key: 'kospi', label: '韩国综合指数', expected_source: 'Naver 公开行情', kind: 'index' },
+  { key: 'usdjpy', label: '美元兑日元', expected_source: '日本央行', kind: 'fx' },
+  { key: 'usdkrw', label: '美元兑韩元', expected_source: '韩国央行', kind: 'fx' },
 ];
+
+const SOURCE_LABELS: Readonly<Record<string, string>> = {
+  JPX: '日本交易所',
+  BOJ: '日本央行',
+  BOK: '韩国央行',
+  'naver-public': 'Naver 公开行情',
+};
+
+export function formatKpiSourceLabel(sourceKind: string): string {
+  return SOURCE_LABELS[sourceKind] || sourceKind;
+}
 
 function formatValue(snapshot: JpKrIndexKpiSnapshot | JpKrFxKpiSnapshot): string {
   const value = 'value' in snapshot ? snapshot.value : snapshot.rate;
@@ -51,7 +62,7 @@ export function JpKrKpiStrip({ kpi, market }: { kpi: JpKrKpi; market: JpKrMarket
             >
               <div className="jpkr-kpi-card__heading">
                 <span>{definition.label}</span>
-                <small>{definition.source}</small>
+                <small>{definition.expected_source}</small>
               </div>
               <strong>暂无数据</strong>
               <span className="jpkr-kpi-card__as-of">当前数据链未提供</span>
@@ -72,7 +83,7 @@ export function JpKrKpiStrip({ kpi, market }: { kpi: JpKrKpi; market: JpKrMarket
           >
             <div className="jpkr-kpi-card__heading">
               <span>{definition.label}</span>
-              <small>{definition.source}</small>
+              <small>{formatKpiSourceLabel(snapshot.source_kind)}</small>
             </div>
             <div className="jpkr-kpi-card__quote">
               <strong>{formatValue(snapshot)}</strong>
