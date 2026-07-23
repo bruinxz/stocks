@@ -2529,6 +2529,95 @@ def _infer_report_type(report_date_iso: str) -> Optional[str]:
     return None
 
 
+def get_market_financial_report(report_period: str) -> List[Dict[str, Any]]:
+    """Fetch one reporting period for the whole A-share market in one request.
+
+    ``stock_yjbb_em`` returns the performance-report cross section (业绩报表) for
+    a quarter.  It is the cold-start path for growth coverage: one call returns
+    roughly the whole market, while ``get_financial_report`` remains the richer
+    per-stock history path for drill-down and backfills.
+    """
+    try:
+        compact = str(report_period or '').strip().replace('-', '')
+        if len(compact) != 8 or not compact.isdigit() or compact[4:] not in (
+            '0331',
+            '0630',
+            '0930',
+            '1231',
+        ):
+            print(
+                f"Invalid report_period (expected YYYYMMDD quarter end): {report_period}",
+                file=sys.stderr,
+            )
+            return []
+
+        fn = getattr(ak, 'stock_yjbb_em', None)
+        if fn is None:
+            print('AKShare has no stock_yjbb_em function', file=sys.stderr)
+            return []
+        df = fn(date=compact)
+        if df is None or df.empty:
+            print(f"stock_yjbb_em({compact}) returned empty", file=sys.stderr)
+            return []
+
+        required = ('股票代码', '营业总收入-同比增长', '净利润-同比增长')
+        missing = [name for name in required if name not in df.columns]
+        if missing:
+            print(
+                f"stock_yjbb_em({compact}) missing columns: {missing}; "
+                f"available={list(df.columns)}",
+                file=sys.stderr,
+            )
+            return []
+
+        report_date = _format_iso_date(compact)
+        report_type = _infer_report_type(report_date)
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            raw_code = row.get('股票代码')
+            if raw_code is None or pd.isna(raw_code):
+                continue
+            code = str(raw_code).strip().split('.')[0].zfill(6)
+            if len(code) != 6 or not code.isdigit():
+                continue
+
+            raw_name = row.get('股票简称')
+            stock_name = None if raw_name is None or pd.isna(raw_name) else str(raw_name).strip()
+            eps = _cell_float(row, '每股收益')
+            announce_date = _parse_date_cell(row, '最新公告日期')
+            raw_row = _row_to_jsonable(row, df.columns)
+            results.append({
+                'report_date': report_date,
+                'stock_code': code,
+                'stock_name': stock_name,
+                'report_type': report_type,
+                'net_profit': _cell_float(row, '净利润-净利润'),
+                'net_profit_yoy': _cell_float(row, '净利润-同比增长'),
+                'revenue': _cell_float(row, '营业总收入-营业总收入'),
+                'revenue_yoy': _cell_float(row, '营业总收入-同比增长'),
+                'roe': _cell_float(row, '净资产收益率'),
+                'debt_ratio': None,
+                'raw_payload': {
+                    'provider': 'akshare.stock_yjbb_em',
+                    'announcement_date': announce_date,
+                    # EarningsSurpriseFactor already consumes this canonical key.
+                    'indicator_row': {'摊薄每股收益(元)': eps},
+                    'market_report_row': raw_row,
+                },
+            })
+
+        results.sort(key=lambda item: item['stock_code'])
+        print(
+            f"Parsed {len(results)} market financial rows for {compact}",
+            file=sys.stderr,
+        )
+        return results
+    except Exception as e:
+        print(f"Error getting market financial report for {report_period}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def get_financial_report(stock_code: str) -> List[Dict[str, Any]]:
     """
     Fetch A-share financial report history for a single stock — annual + quarterly
@@ -6065,6 +6154,17 @@ def main():
 
             stock_code = sys.argv[2]
             result = get_financial_report(stock_code)
+
+        elif command == "get_market_financial_report":
+            if len(sys.argv) < 3:
+                print(
+                    json.dumps({"error": "Missing report_period for get_market_financial_report"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+            report_period = sys.argv[2]
+            result = get_market_financial_report(report_period)
 
         elif command == "get_analyst_forecast":
             if len(sys.argv) < 3:

@@ -169,7 +169,7 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'data',
     recommendedCron: '0 1 * * 0',
     description:
-      '周日 01:00 断点同步全市场历史财务报告，为 growth / quality_high / earnings_surprise 提供真实事实源。',
+      '周日 01:00 按最新报告期批量同步全市场业绩报表，为 growth / quality_high / earnings_surprise 提供真实事实源。',
   },
   {
     type: 'ANALYST_FORECAST_SYNC',

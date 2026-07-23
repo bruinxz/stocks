@@ -15,6 +15,7 @@ import {
   pickLatestYoyByStock,
   combineGrowth,
   REPORT_LOOKBACK_DAYS,
+  reportIsAvailableAsOf,
 } from '../../src/quant/factors/library/GrowthFactor';
 import { factorRegistry } from '../../src/quant/factors/FactorRegistry';
 import '../../src/quant/factors/library';
@@ -147,6 +148,23 @@ console.log('\n## 纯函数 combineGrowth');
   );
 }
 
+console.log('\n## 公告日 PIT 可见性');
+{
+  assert('旧数据无公告日保持可见', reportIsAvailableAsOf({}, '2026-04-30'));
+  assert(
+    '公告日前不可见',
+    !reportIsAvailableAsOf({ announcement_date: '2026-04-28' }, '2026-04-27')
+  );
+  assert(
+    '公告日当天可见',
+    reportIsAvailableAsOf({ announcement_date: '2026-04-28' }, '2026-04-28')
+  );
+  assert(
+    '异常公告日 fail closed',
+    !reportIsAvailableAsOf({ announcement_date: 'not-a-date' }, '2026-04-30')
+  );
+}
+
 console.log('\n## Batch BA 端到端: FinancialReport 数据源');
 (async () => {
   const Model = require('../../src/models/FinancialReport').FinancialReport;
@@ -232,6 +250,27 @@ console.log('\n## Batch BA 端到端: FinancialReport 数据源');
     '取最新 (2026-03-31): 0.6*1.3 + 0.4*6.5 = 3.38',
     near(out5.get('600519') as number, 0.6 * 1.3 + 0.4 * 6.5)
   );
+
+  // 场景 6: 新全市场源的公告日在 as_of 之后 → 不得前视使用
+  Model.findAll = async () => [
+    {
+      stock_code: '600519',
+      report_date: '2026-03-31',
+      net_profit_yoy: 25,
+      revenue_yoy: 12,
+      raw_payload: { announcement_date: '2026-04-28' },
+    },
+  ];
+  const beforeAnnouncement = await growthFactor.compute({
+    universe: ['600519'],
+    as_of_date: '2026-04-27',
+  } as any);
+  const onAnnouncement = await growthFactor.compute({
+    universe: ['600519'],
+    as_of_date: '2026-04-28',
+  } as any);
+  assert('公告日前 growth 不可见', beforeAnnouncement.size === 0);
+  assert('公告日当天 growth 可见', onAnnouncement.has('600519'));
 
   Model.findAll = origFindAll;
 

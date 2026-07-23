@@ -105,6 +105,17 @@ export function combineGrowth(snap: YoySnap): number | null {
   return 0.6 * np + 0.4 * rev;
 }
 
+/** 新的全市场财报源带公告日；历史计算必须等公告后才可见。旧行没有该字段时保持兼容。 */
+export function reportIsAvailableAsOf(
+  raw_payload: Record<string, any> | null | undefined,
+  as_of_date: string
+): boolean {
+  const announcementDate = raw_payload?.announcement_date;
+  if (announcementDate == null || announcementDate === '') return true;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(announcementDate))) return false;
+  return String(announcementDate) <= as_of_date;
+}
+
 export const growthFactor: Factor = {
   name: 'growth',
   description: '0.6*净利润同比 + 0.4*营收同比；最新一期财报数据 (FinancialReport)',
@@ -117,7 +128,7 @@ export const growthFactor: Factor = {
     const startDate = lookbackStartDate(ctx.as_of_date, REPORT_LOOKBACK_DAYS);
 
     const rows = (await FinancialReport.findAll({
-      attributes: ['stock_code', 'report_date', 'net_profit_yoy', 'revenue_yoy'],
+      attributes: ['stock_code', 'report_date', 'net_profit_yoy', 'revenue_yoy', 'raw_payload'],
       where: {
         stock_code: { [Op.in]: ctx.universe },
         report_date: { [Op.gte]: startDate, [Op.lte]: ctx.as_of_date },
@@ -128,9 +139,12 @@ export const growthFactor: Factor = {
       report_date: string;
       net_profit_yoy: any;
       revenue_yoy: any;
+      raw_payload?: Record<string, any> | null;
     }>;
 
-    const latestByStock = pickLatestYoyByStock(rows);
+    const latestByStock = pickLatestYoyByStock(
+      rows.filter(row => reportIsAvailableAsOf(row.raw_payload, ctx.as_of_date))
+    );
     const universeSet = new Set(ctx.universe);
     for (const [code, snap] of latestByStock.entries()) {
       if (!universeSet.has(code)) continue;

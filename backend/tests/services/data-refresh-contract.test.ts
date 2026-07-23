@@ -97,6 +97,18 @@ const financialReportCli = fs.readFileSync(
   path.join(root, 'backend/src/scripts/sync-financial-report.ts'),
   'utf8'
 );
+const financialReportClient = fs.readFileSync(
+  path.join(root, 'backend/src/data/sources/FinancialReportClient.ts'),
+  'utf8'
+);
+const financialReportService = fs.readFileSync(
+  path.join(root, 'backend/src/data/services/FinancialReportSyncService.ts'),
+  'utf8'
+);
+const akshareHelper = fs.readFileSync(
+  path.join(root, 'backend/python/akshare_helper.py'),
+  'utf8'
+);
 const analystForecastCli = fs.readFileSync(
   path.join(root, 'backend/src/scripts/sync-analyst-forecast.ts'),
   'utf8'
@@ -319,10 +331,32 @@ assert.match(
   /task\.type === 'FINANCIAL_REPORT_SYNC'[\s\S]{0,3200}scenario === 'financial_report_sync'[\s\S]{0,1600}status: ok \? 'COMPLETED' : 'FAILED'[\s\S]{0,1000}throw new Error\(`财务报告同步失败/,
   'financial-report scheduler runs must require a structured child success and propagate failure'
 );
+assert(
+  financialReportCli.includes("DATA_CLI_SYNC_SCHEMA === 'true'") &&
+    financialReportCli.includes(
+      'result.total_upserted > 0 || result.skipped === result.total_stocks'
+    ),
+  'financial-report CLI must be schema-safe and reject a zero-row cold-start false success'
+);
+assert.match(
+  akshareHelper,
+  /def get_market_financial_report[\s\S]{0,1600}stock_yjbb_em[\s\S]{0,2600}'indicator_row': \{'摊薄每股收益\(元\)': eps\}/,
+  'financial-report cold starts must use the all-market quarter endpoint and preserve canonical EPS evidence'
+);
+assert.match(
+  financialReportClient,
+  /fetchMarketPeriod[\s\S]{0,500}get_market_financial_report/,
+  'the TypeScript financial-report client must expose the market-period batch source'
+);
+assert.match(
+  financialReportService,
+  /syncMarketPeriod[\s\S]{0,2600}existing\.debt_ratio[\s\S]{0,1200}start \+= 500/,
+  'market-period writes must preserve richer existing facts and chunk full-market upserts'
+);
 assert.match(
   financialReportCli,
-  /DATA_CLI_SYNC_SCHEMA === 'true'[\s\S]{0,1800}total_upserted > 0 \|\| result\.skipped === result\.total_stocks/,
-  'financial-report CLI must be schema-safe and reject a zero-row cold-start false success'
+  /minimumEffectiveStockCount = Math\.max\(500, Math\.ceil\(listedStockCount \* 0\.2\)\)[\s\S]{0,1800}eligibleEffectiveStockCount >= minimumEffectiveStockCount/,
+  'the financial-report producer must reject narrow or non-listed market coverage'
 );
 assert.match(
   analystForecastCli,

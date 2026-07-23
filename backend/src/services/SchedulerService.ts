@@ -5139,13 +5139,10 @@ class SchedulerService {
         );
       } else if (task.type === 'FINANCIAL_REPORT_SYNC') {
         const compiledScript = path.resolve(__dirname, '..', 'scripts', 'sync-financial-report.js');
-        const args = [
-          compiledScript,
-          '--all',
-          `--interval-ms=${parameters.interval_ms || 500}`,
-          `--refresh-after-days=${parameters.refresh_after_days || 21}`,
-        ];
-        if (parameters.force) args.push('--force');
+        const args = [compiledScript, '--all'];
+        if (parameters.report_period) {
+          args.push(`--report-period=${parameters.report_period}`);
+        }
         const startedAt = Date.now();
         const result = await this.runScriptAsync('/usr/bin/node', args, {
           cwd: path.resolve(__dirname, '..', '..'),
@@ -7067,11 +7064,11 @@ class SchedulerService {
       // cron_expression 全部对齐 cronRegistry.ts 的 recommendedCron.
       // ===========================================================================
       {
-        name: '财务报告全市场断点同步',
+        name: '财务报告全市场批量同步',
         type: 'FINANCIAL_REPORT_SYNC',
         cron_expression: '0 1 * * 0',
         is_active: true,
-        parameters: { interval_ms: 500, refresh_after_days: 21 },
+        parameters: {},
       },
       {
         // BH-2: 周一 03:00 全市场 sync 分析师研报 → 修 analyst_consensus factor std<0.02 真因.
