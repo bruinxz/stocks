@@ -51,6 +51,36 @@ from strategy.materialization.postgres_candidate_store import PostgresCandidateS
 CANDIDATE_SQL = """
 WITH day AS (
   SELECT MAX(trade_date) AS trading_day FROM factor_scores
+), factor_coverage AS (
+  SELECT
+    COUNT(DISTINCT stock_code)::int AS universe_size,
+    GREATEST(
+      500,
+      CEIL(COUNT(DISTINCT stock_code) * 0.20)::int
+    ) AS minimum_dimension_coverage,
+    COUNT(DISTINCT stock_code) FILTER (
+      WHERE factor_name = 'quality' AND raw_value IS NOT NULL
+    )::int AS quality_coverage,
+    COUNT(DISTINCT stock_code) FILTER (
+      WHERE factor_name = 'growth' AND raw_value IS NOT NULL
+    )::int AS growth_coverage,
+    COUNT(DISTINCT stock_code) FILTER (
+      WHERE factor_name = 'value' AND raw_value IS NOT NULL
+    )::int AS valuation_coverage,
+    COUNT(DISTINCT stock_code) FILTER (
+      WHERE factor_name IN ('concept_heat', 'earnings_surprise')
+        AND raw_value IS NOT NULL
+    )::int AS moat_coverage,
+    COUNT(DISTINCT stock_code) FILTER (
+      WHERE factor_name IN ('momentum', 'gradual_breakout', 'money_flow')
+        AND raw_value IS NOT NULL
+    )::int AS trend_coverage,
+    COUNT(DISTINCT stock_code) FILTER (
+      WHERE factor_name IN ('low_vol', 'liquidity')
+        AND raw_value IS NOT NULL
+    )::int AS risk_coverage
+  FROM factor_scores CROSS JOIN day
+  WHERE trade_date = day.trading_day
 ), factor_matrix AS (
   SELECT
     stock_code,
@@ -132,6 +162,7 @@ SELECT
   ) AS total_score
 FROM factor_matrix matrix
 CROSS JOIN day
+CROSS JOIN factor_coverage coverage
 JOIN stocks stock
   ON RIGHT(stock.symbol, 6) = matrix.stock_code
  AND stock.type = 'stock'
@@ -143,6 +174,12 @@ WHERE matrix.quality IS NOT NULL
   AND matrix.moat IS NOT NULL
   AND matrix.trend IS NOT NULL
   AND matrix.risk IS NOT NULL
+  AND coverage.quality_coverage >= coverage.minimum_dimension_coverage
+  AND coverage.growth_coverage >= coverage.minimum_dimension_coverage
+  AND coverage.valuation_coverage >= coverage.minimum_dimension_coverage
+  AND coverage.moat_coverage >= coverage.minimum_dimension_coverage
+  AND coverage.trend_coverage >= coverage.minimum_dimension_coverage
+  AND coverage.risk_coverage >= coverage.minimum_dimension_coverage
   AND stock.is_listed = TRUE
   AND stock.name NOT ILIKE '%%ST%%'
   AND bar.close > 0

@@ -38,6 +38,40 @@ from ai.snapshot.writer import SnapshotWriter
 CN_CANDIDATE_SQL = """
 WITH latest_factor_day AS (
   SELECT COALESCE(%s::date, MAX(trade_date)) AS trading_day FROM factor_scores
+), factor_coverage AS (
+  SELECT
+    COUNT(DISTINCT fs.stock_code)::int AS universe_size,
+    GREATEST(
+      500,
+      CEIL(COUNT(DISTINCT fs.stock_code) * 0.20)::int
+    ) AS minimum_dimension_coverage,
+    COUNT(DISTINCT fs.stock_code) FILTER (
+      WHERE fs.factor_name IN ('quality', 'quality_high')
+        AND fs.raw_value IS NOT NULL
+    )::int AS q_coverage,
+    COUNT(DISTINCT fs.stock_code) FILTER (
+      WHERE fs.factor_name IN (
+        'growth', 'earnings_surprise', 'analyst_consensus'
+      ) AND fs.raw_value IS NOT NULL
+    )::int AS g_coverage,
+    COUNT(DISTINCT fs.stock_code) FILTER (
+      WHERE fs.factor_name = 'value' AND fs.raw_value IS NOT NULL
+    )::int AS v_coverage,
+    COUNT(DISTINCT fs.stock_code) FILTER (
+      WHERE fs.factor_name IN ('momentum', 'money_flow', 'northbound')
+        AND fs.raw_value IS NOT NULL
+    )::int AS m_coverage,
+    COUNT(DISTINCT fs.stock_code) FILTER (
+      WHERE fs.factor_name IN ('gradual_breakout', 'industry_momentum')
+        AND fs.raw_value IS NOT NULL
+    )::int AS t_coverage,
+    COUNT(DISTINCT fs.stock_code) FILTER (
+      WHERE fs.factor_name IN ('low_vol', 'liquidity')
+        AND fs.raw_value IS NOT NULL
+    )::int AS r_coverage
+  FROM factor_scores fs
+  CROSS JOIN latest_factor_day day
+  WHERE fs.trade_date = day.trading_day
 ), factor_matrix AS (
   SELECT
     fs.stock_code,
@@ -104,6 +138,7 @@ WITH latest_factor_day AS (
       matrix.t_score * 0.15 + matrix.r_score * 0.10 AS total_score
   FROM factor_matrix matrix
   CROSS JOIN latest_factor_day day
+  CROSS JOIN factor_coverage coverage
   JOIN stocks stock
     ON RIGHT(stock.symbol, 6) = matrix.stock_code
    AND stock.type = 'stock'
@@ -114,6 +149,12 @@ WITH latest_factor_day AS (
     AND matrix.m_score IS NOT NULL
     AND matrix.t_score IS NOT NULL
     AND matrix.r_score IS NOT NULL
+    AND coverage.q_coverage >= coverage.minimum_dimension_coverage
+    AND coverage.g_coverage >= coverage.minimum_dimension_coverage
+    AND coverage.v_coverage >= coverage.minimum_dimension_coverage
+    AND coverage.m_coverage >= coverage.minimum_dimension_coverage
+    AND coverage.t_coverage >= coverage.minimum_dimension_coverage
+    AND coverage.r_coverage >= coverage.minimum_dimension_coverage
     AND stock.is_listed = TRUE
     AND stock.name NOT ILIKE '%%ST%%'
     AND bar.close > 0

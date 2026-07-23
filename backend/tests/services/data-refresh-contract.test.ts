@@ -277,6 +277,28 @@ assert(
   (liveMultibagger.match(/raw_value IS NOT NULL/g) || []).length >= 6,
   'multibagger candidate scores must exclude neutral factor placeholders'
 );
+assert(
+  liveRecommendations.includes('CEIL(COUNT(DISTINCT fs.stock_code) * 0.20)::int') &&
+    liveRecommendations.includes(
+      'coverage.q_coverage >= coverage.minimum_dimension_coverage'
+    ) &&
+    liveRecommendations.includes(
+      'coverage.r_coverage >= coverage.minimum_dimension_coverage'
+    ) &&
+    (liveRecommendations.match(/>= coverage\.minimum_dimension_coverage/g) || []).length === 6,
+  'recommendations require broad cross-sectional coverage in all six score dimensions'
+);
+assert(
+  liveMultibagger.includes('CEIL(COUNT(DISTINCT stock_code) * 0.20)::int') &&
+    liveMultibagger.includes(
+      'coverage.quality_coverage >= coverage.minimum_dimension_coverage'
+    ) &&
+    liveMultibagger.includes(
+      'coverage.risk_coverage >= coverage.minimum_dimension_coverage'
+    ) &&
+    (liveMultibagger.match(/>= coverage\.minimum_dimension_coverage/g) || []).length === 6,
+  'multibagger candidates require broad cross-sectional coverage in all six score dimensions'
+);
 assert.match(
   liveMultibagger,
   /FROM daily_bars CROSS JOIN day[\s\S]{0,180}time::date <= day\.trading_day/,
