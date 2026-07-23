@@ -1,0 +1,21 @@
+backend/src/api/controllers/BacktestPitController.ts
+  s_ec1e6492779c20::t_e7ba14909dc7a3 6-180,268-276,280
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "93da60302647ee6667ff2cfc52d87b2698ec72c1",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
