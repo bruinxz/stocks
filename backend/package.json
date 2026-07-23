@@ -38,6 +38,8 @@
     "docs:openapi:check": "ts-node --transpile-only src/scripts/check-openapi-drift.ts",
     "db:migrate": "sequelize-cli db:migrate",
     "db:apply-projection-schema": "APPLY_PROJECTION_SCHEMA_MIGRATIONS=1 ts-node --transpile-only src/scripts/apply-projection-schema-migrations.ts && APPLY_GLOBAL_TECH_DAILY_QUOTE_MIGRATION=1 ts-node --transpile-only src/scripts/apply-global-tech-daily-quotes-migration.ts",
+    "db:apply-factor-source-schema": "APPLY_FACTOR_SOURCE_SCHEMA=1 ts-node --transpile-only src/scripts/apply-factor-source-schema.ts",
+    "db:apply-research-loop-schema": "APPLY_RESEARCH_TRADING_LOOP_SCHEMA=1 ts-node --transpile-only src/scripts/apply-research-trading-loop-schema.ts",
     "db:seed": "sequelize-cli db:seed:all",
     "db:reset": "sequelize-cli db:migrate:undo:all && sequelize-cli db:migrate && sequelize-cli db:seed:all",
     "db:backup": "bash ../scripts/backup-db.sh",

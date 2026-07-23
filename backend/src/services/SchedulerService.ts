@@ -3867,23 +3867,22 @@ class SchedulerService {
         // factor_scores 表已生成. 现在加这个 task, cron 配比 IC 早 30 分钟,
         // 确保 IC 跑时 factor_scores 已就位.
         //
-        // 调 compute-factors CLI; date 默认今天, factors 空跑全部 20 个.
+        // 调 compute-factors CLI；未显式指定 date 时由 CLI 使用全市场 80% 覆盖水位，
+        // 禁止把旧行情计算结果标成今天。factors 空时跑注册表全部因子。
         //
         // Batch AH review pt.2 (2026-06-18): 之前用 ts-node 跑 .ts 源在 prod
         // 报 'Cannot find module ./compute-factors.ts' — prod dist 模式 ts-node
         // 是 dev dep 且 .ts 源不复制. 改用 /usr/bin/node 直接跑 dist/scripts/compute-factors.js.
         // __dirname in prod = dist/services, 上一级 = dist, scripts/compute-factors.js 就在 dist 内
         const compiledScript = path.resolve(__dirname, '..', 'scripts', 'compute-factors.js');
-        const date: string =
-          parameters.date ||
-          parameters.trade_date ||
-          moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const requestedDate: string | null = parameters.date || parameters.trade_date || null;
         const factorNames: string[] = Array.isArray(parameters.factor_names)
           ? parameters.factor_names
           : Array.isArray(parameters.factors)
           ? parameters.factors
           : [];
-        const args = [compiledScript, `--date=${date}`];
+        const args = [compiledScript];
+        if (requestedDate) args.push(`--date=${requestedDate}`);
         if (factorNames.length) args.push(`--factors=${factorNames.join(',')}`);
         // 默认 skip 仅在数据缺失时拖整流程的几个事件因子 (用户可在 task params 里 override)
         const skipFactors: string[] = Array.isArray(parameters.skip) ? parameters.skip : [];
@@ -3895,10 +3894,28 @@ class SchedulerService {
           timeoutMs: 30 * 60_000, // 20 个 factor × 上千股, 给 30 min 上限
         });
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-        const ok = r.code === 0;
+        const computeSummary = (r.stdout || '')
+          .trim()
+          .split('\n')
+          .reverse()
+          .map(line => {
+            try {
+              return JSON.parse(line);
+            } catch {
+              return null;
+            }
+          })
+          .find(item => item?.scenario === 'factor_score_compute');
+        const ok =
+          r.code === 0 &&
+          computeSummary?.ok === true &&
+          Number(computeSummary?.total_upserted || 0) > 0 &&
+          Number(computeSummary?.total_effective || 0) > 0 &&
+          Number(computeSummary?.total_failed || 0) === 0;
+        const actualDate = computeSummary?.trade_date || requestedDate || 'unresolved';
         if (ok) {
           logger.info(
-            `[FACTOR_SCORE_COMPUTE] done in ${elapsed}s for date=${date} factors=${
+            `[FACTOR_SCORE_COMPUTE] done in ${elapsed}s for date=${actualDate} factors=${
               factorNames.length || 'all'
             }`
           );
@@ -3911,17 +3928,25 @@ class SchedulerService {
         }
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: factorNames.length || 1,
-          success_count: ok ? factorNames.length || 1 : 0,
-          failed_count: ok ? 0 : 1,
+          completed_items: ok ? factorNames.length || 1 : 0,
+          failed_items: ok ? 0 : 1,
+          status: ok ? 'COMPLETED' : 'FAILED',
+          completed_at: new Date(),
+          error_message: ok ? null : `因子分数生成失败: ${(r.stderr || '').slice(-500)}`,
           result_summary: {
             scenario: 'factor_score_compute',
-            date,
+            requested_date: requestedDate,
+            trade_date: actualDate,
             factor_names: factorNames,
             skip: skipFactors,
             elapsed_seconds: Number(elapsed),
+            compute_summary: computeSummary || null,
             ok,
           },
         });
+        if (!ok) {
+          throw new Error(`因子分数生成失败: requested_date=${requestedDate || 'watermark'}`);
+        }
       } else if (task.type === 'COMPOSITE_REBALANCE') {
         // Sprint 41-A: 组合级策略 (multi_factor_alpha / ensemble_strategy) 的真实
         // BUY/SELL/HOLD 调仓任务. 读最新一日 QuantSignal (raw_factors.target_portfolio_size>0
@@ -5112,6 +5137,56 @@ class SchedulerService {
             } ` +
             `std0=${r.factor_std_zero.length} push=${out.push_attempted}`
         );
+      } else if (task.type === 'FINANCIAL_REPORT_SYNC') {
+        const compiledScript = path.resolve(__dirname, '..', 'scripts', 'sync-financial-report.js');
+        const args = [
+          compiledScript,
+          '--all',
+          `--interval-ms=${parameters.interval_ms || 500}`,
+          `--refresh-after-days=${parameters.refresh_after_days || 21}`,
+        ];
+        if (parameters.force) args.push('--force');
+        const startedAt = Date.now();
+        const result = await this.runScriptAsync('/usr/bin/node', args, {
+          cwd: path.resolve(__dirname, '..', '..'),
+          timeoutMs: 8 * 60 * 60_000,
+        });
+        const elapsedSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(1));
+        const syncSummary = (result.stdout || '')
+          .trim()
+          .split('\n')
+          .reverse()
+          .map(line => {
+            try {
+              return JSON.parse(line);
+            } catch {
+              return null;
+            }
+          })
+          .find(item => item?.scenario === 'financial_report_sync');
+        const ok = result.code === 0 && syncSummary?.ok === true;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: Number(syncSummary?.total_stocks || 1),
+          completed_items: Number(syncSummary?.succeeded || 0),
+          failed_items: Number(syncSummary?.failed || (ok ? 0 : 1)),
+          status: ok ? 'COMPLETED' : 'FAILED',
+          completed_at: new Date(),
+          error_message: ok ? null : `财务报告同步失败: ${(result.stderr || '').slice(-500)}`,
+          result_summary: {
+            scenario: 'financial_report_sync',
+            elapsed_seconds: elapsedSeconds,
+            sync_summary: syncSummary || null,
+            ok,
+          },
+        });
+        if (!ok) {
+          throw new Error(`财务报告同步失败: code=${result.code}`);
+        }
+        logger.info(
+          `[FINANCIAL_REPORT_SYNC] done in ${elapsedSeconds}s upserted=${Number(
+            syncSummary?.total_upserted || 0
+          )}`
+        );
       } else if (task.type === 'ANALYST_FORECAST_SYNC') {
         // BH-2 (2026-06-23): 周一 03:00 全市场 sync 分析师研报
         // 跑 dist/scripts/sync-analyst-forecast.js --all --interval-ms=400
@@ -5125,46 +5200,71 @@ class SchedulerService {
         const pathAF = require('path');
         /* eslint-enable @typescript-eslint/no-var-requires */
         const scriptAF = pathAF.resolve(__dirname, '..', 'scripts', 'sync-analyst-forecast.js');
-        const argsAF = [scriptAF, '--all', '--interval-ms=400'];
+        const argsAF = [
+          scriptAF,
+          '--all',
+          '--interval-ms=400',
+          `--refresh-after-days=${parameters.refresh_after_days || 6}`,
+        ];
         if (parameters.force) argsAF.push('--force');
         const t0AF = Date.now();
-        const rAF = await new Promise<{ code: number | null; stderr: string }>(resolve => {
-          const child = spawnAF('/usr/bin/node', argsAF, {
-            cwd: pathAF.resolve(__dirname, '..', '..'),
-            env: { ...process.env },
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
-          let stderr = '';
-          child.stderr?.on('data', (d: Buffer) => {
-            stderr += d.toString();
-            if (stderr.length > 16 * 1024) stderr = stderr.slice(-16 * 1024); // 16KB tail
-          });
-          const timer = setTimeout(() => {
-            child.kill('SIGTERM');
-            resolve({ code: -1, stderr: stderr + '\n[BJ-5] killed by timeout 4h' });
-          }, 4 * 60 * 60_000);
-          child.on('exit', (code: number | null) => {
-            clearTimeout(timer);
-            resolve({ code, stderr });
-          });
-          child.on('error', (err: Error) => {
-            clearTimeout(timer);
-            resolve({ code: -1, stderr: stderr + '\n' + err.message });
-          });
-        });
+        const rAF = await new Promise<{ code: number | null; stdout: string; stderr: string }>(
+          resolve => {
+            const child = spawnAF('/usr/bin/node', argsAF, {
+              cwd: pathAF.resolve(__dirname, '..', '..'),
+              env: { ...process.env },
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            let stdout = '';
+            let stderr = '';
+            child.stdout?.on('data', (d: Buffer) => {
+              stdout += d.toString();
+              if (stdout.length > 16 * 1024) stdout = stdout.slice(-16 * 1024);
+            });
+            child.stderr?.on('data', (d: Buffer) => {
+              stderr += d.toString();
+              if (stderr.length > 16 * 1024) stderr = stderr.slice(-16 * 1024); // 16KB tail
+            });
+            const timer = setTimeout(() => {
+              child.kill('SIGTERM');
+              resolve({ code: -1, stdout, stderr: stderr + '\n[BJ-5] killed by timeout 4h' });
+            }, 4 * 60 * 60_000);
+            child.on('exit', (code: number | null) => {
+              clearTimeout(timer);
+              resolve({ code, stdout, stderr });
+            });
+            child.on('error', (err: Error) => {
+              clearTimeout(timer);
+              resolve({ code: -1, stdout, stderr: stderr + '\n' + err.message });
+            });
+          }
+        );
         const elapsedAF = ((Date.now() - t0AF) / 1000).toFixed(1);
-        const okAF = rAF.code === 0;
+        const analystSummary = (rAF.stdout || '')
+          .trim()
+          .split('\n')
+          .reverse()
+          .map(line => {
+            try {
+              return JSON.parse(line);
+            } catch {
+              return null;
+            }
+          })
+          .find(item => item?.scenario === 'analyst_forecast_sync');
+        const okAF = rAF.code === 0 && analystSummary?.ok === true;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: 1,
           completed_items: okAF ? 1 : 0,
           failed_items: okAF ? 0 : 1,
-          status: 'COMPLETED',
+          status: okAF ? 'COMPLETED' : 'FAILED',
           completed_at: new Date(),
           error_message: okAF ? null : (rAF.stderr || '').substring(0, 500),
           result_summary: {
             scenario: 'analyst_forecast_sync',
             elapsed_seconds: Number(elapsedAF),
             status: okAF ? 'SUCCESS' : 'FAILED',
+            sync_summary: analystSummary || null,
           },
         });
         if (okAF) {
@@ -5175,6 +5275,7 @@ class SchedulerService {
               rAF.stderr || ''
             ).substring(0, 200)}`
           );
+          throw new Error(`分析师研报同步失败: code=${rAF.code}`);
         }
       } else if (task.type === 'SHAREHOLDER_COUNT_SYNC') {
         // BH-3 (2026-06-23): 周三 02:00 全市场 sync 股东户数 (修 shareholder_concentration std<0.10 真因)
@@ -5314,12 +5415,24 @@ class SchedulerService {
           timeoutMs: 60 * 60_000, // 1h
         });
         const elapsedANN = ((Date.now() - t0ANN) / 1000).toFixed(1);
-        const okANN = rANN.code === 0;
+        const announcementSummary = (rANN.stdout || '')
+          .trim()
+          .split('\n')
+          .reverse()
+          .map(line => {
+            try {
+              return JSON.parse(line);
+            } catch {
+              return null;
+            }
+          })
+          .find(item => item?.scenario === 'announcement_nlp_sync');
+        const okANN = rANN.code === 0 && announcementSummary?.ok === true;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: 1,
           completed_items: okANN ? 1 : 0,
           failed_items: okANN ? 0 : 1,
-          status: 'COMPLETED',
+          status: okANN ? 'COMPLETED' : 'FAILED',
           completed_at: new Date(),
           error_message: okANN ? null : (rANN.stderr || '').substring(0, 500),
           result_summary: {
@@ -5327,6 +5440,7 @@ class SchedulerService {
             elapsed_seconds: Number(elapsedANN),
             status: okANN ? 'SUCCESS' : 'FAILED',
             with_ai: parameters.with_ai === true,
+            sync_summary: announcementSummary || null,
           },
         });
         if (okANN) {
@@ -5337,6 +5451,7 @@ class SchedulerService {
               rANN.stderr || ''
             ).substring(0, 200)}`
           );
+          throw new Error(`公告同步失败: code=${rANN.code}`);
         }
       } else if (task.type === 'KOL_AGGREGATE') {
         // PR-A (2026-06-29): KOL 观点聚合 — sync-kol-opinions.ts CLI 之前从未被
@@ -6952,12 +7067,19 @@ class SchedulerService {
       // cron_expression 全部对齐 cronRegistry.ts 的 recommendedCron.
       // ===========================================================================
       {
+        name: '财务报告全市场断点同步',
+        type: 'FINANCIAL_REPORT_SYNC',
+        cron_expression: '0 1 * * 0',
+        is_active: true,
+        parameters: { interval_ms: 500, refresh_after_days: 21 },
+      },
+      {
         // BH-2: 周一 03:00 全市场 sync 分析师研报 → 修 analyst_consensus factor std<0.02 真因.
         name: '分析师研报全市场 sync (批9补漏)',
         type: 'ANALYST_FORECAST_SYNC',
         cron_expression: '0 3 * * 1',
         is_active: true,
-        parameters: {},
+        parameters: { refresh_after_days: 6 },
       },
       {
         // BH-3: 周三 02:00 全市场 sync 股东户数 → 修 shareholder_concentration factor std<0.10 真因.

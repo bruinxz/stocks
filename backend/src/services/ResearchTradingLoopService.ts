@@ -23,6 +23,23 @@ export const RESEARCH_LOOP_PORTFOLIO_NAME = '研究闭环模拟盘';
 export const RESEARCH_LOOP_INITIAL_CAPITAL = 200000;
 export const RESEARCH_LOOP_MAX_POSITIONS = 6;
 export const RESEARCH_LOOP_HARD_STOP_PCT = 8;
+export const RESEARCH_LOOP_REQUIRED_TABLES = [
+  'ai_recommendation_snapshot',
+  'ai_recommendation_item',
+  'multibagger_universe',
+  'multibagger_candidate_snapshot',
+  'research_trading_loop_runs',
+  'research_trading_loop_decisions',
+] as const;
+
+export class ResearchTradingLoopNotReadyError extends Error {
+  readonly code = 'RESEARCH_TRADING_LOOP_NOT_READY';
+
+  constructor(readonly missing_tables: string[]) {
+    super(`Research trading loop schema is incomplete: ${missing_tables.join(', ')}`);
+    this.name = 'ResearchTradingLoopNotReadyError';
+  }
+}
 
 export type ResearchLoopAction = 'BUY' | 'HOLD' | 'SELL';
 
@@ -120,6 +137,7 @@ export interface ResearchLoopRunRow {
 }
 
 export interface ResearchTradingLoopRepository {
+  assertReady(): Promise<void>;
   ensureLoopPortfolios(): Promise<void>;
   loadLoopPortfolios(user_id?: number): Promise<ResearchLoopPortfolioRow[]>;
   loadResearchBundle(now: Date): Promise<ResearchBundle>;
@@ -374,6 +392,24 @@ export function buildResearchLoopDecisions(input: {
 }
 
 export class SequelizeResearchTradingLoopRepository implements ResearchTradingLoopRepository {
+  async assertReady(): Promise<void> {
+    const rows = await sequelize.query<{ table_name: string }>(
+      `SELECT table_name
+         FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name IN (:table_names)`,
+      {
+        replacements: { table_names: [...RESEARCH_LOOP_REQUIRED_TABLES] },
+        type: QueryTypes.SELECT,
+      }
+    );
+    const existing = new Set(rows.map(row => row.table_name));
+    const missing_tables = RESEARCH_LOOP_REQUIRED_TABLES.filter(name => !existing.has(name));
+    if (missing_tables.length > 0) {
+      throw new ResearchTradingLoopNotReadyError([...missing_tables]);
+    }
+  }
+
   async ensureLoopPortfolios(): Promise<void> {
     await sequelize.query(
       `INSERT INTO paper_trading_portfolios (
@@ -993,6 +1029,7 @@ export class ResearchTradingLoopService {
         users: [],
       };
     }
+    await this.repository.assertReady();
     await this.repository.ensureLoopPortfolios();
     const bundle = await this.repository.loadResearchBundle(now);
     const fresh =
@@ -1091,6 +1128,7 @@ export class ResearchTradingLoopService {
   }
 
   async getDashboard(user_id: number, now = new Date()) {
+    await this.repository.assertReady();
     const bundle = await this.repository.loadResearchBundle(now);
     const dashboard = await this.repository.loadDashboard(user_id);
     const latestRun = dashboard

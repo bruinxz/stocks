@@ -42,22 +42,26 @@ WITH latest_factor_day AS (
   SELECT
     fs.stock_code,
     AVG(fs.percentile) FILTER (
-      WHERE fs.factor_name IN ('quality', 'quality_high')
+      WHERE fs.factor_name IN ('quality', 'quality_high') AND fs.raw_value IS NOT NULL
     ) * 100 AS q_score,
     AVG(fs.percentile) FILTER (
       WHERE fs.factor_name IN (
         'growth', 'earnings_surprise', 'analyst_consensus'
-      )
+      ) AND fs.raw_value IS NOT NULL
     ) * 100 AS g_score,
-    AVG(fs.percentile) FILTER (WHERE fs.factor_name = 'value') * 100 AS v_score,
+    AVG(fs.percentile) FILTER (
+      WHERE fs.factor_name = 'value' AND fs.raw_value IS NOT NULL
+    ) * 100 AS v_score,
     AVG(fs.percentile) FILTER (
       WHERE fs.factor_name IN ('momentum', 'money_flow', 'northbound')
+        AND fs.raw_value IS NOT NULL
     ) * 100 AS m_score,
     AVG(fs.percentile) FILTER (
       WHERE fs.factor_name IN ('gradual_breakout', 'industry_momentum')
+        AND fs.raw_value IS NOT NULL
     ) * 100 AS t_score,
     AVG(fs.percentile) FILTER (
-      WHERE fs.factor_name IN ('low_vol', 'liquidity')
+      WHERE fs.factor_name IN ('low_vol', 'liquidity') AND fs.raw_value IS NOT NULL
     ) * 100 AS r_score,
     MAX(fs.updated_at) AS factor_available_at
   FROM factor_scores fs

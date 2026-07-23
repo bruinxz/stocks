@@ -205,7 +205,7 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
 
 export default function PortfolioOverview() {
   const { selectedPortfolioId, loading: portfolioLoading } = usePortfolio();
-  const { data: loopDashboard } = useResearchTradingLoop();
+  const { data: loopDashboard, error: loopError } = useResearchTradingLoop();
   const [data, setData] = useState<PortfolioLedger | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -276,7 +276,7 @@ export default function PortfolioOverview() {
         </div>
       </div>
 
-      <ResearchLoopStatusStrip dashboard={loopDashboard} focus="portfolio" />
+      <ResearchLoopStatusStrip dashboard={loopDashboard} error={loopError} focus="portfolio" />
 
       {loopDashboard?.research.morning.fresh &&
       loopDashboard.research.multibagger.fresh &&

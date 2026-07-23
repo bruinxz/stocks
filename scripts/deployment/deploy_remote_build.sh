@@ -362,8 +362,31 @@ APPLY_GLOBAL_TECH_DAILY_QUOTE_MIGRATION=1 NODE_ENV=production \
   node dist/scripts/apply-global-tech-daily-quotes-migration.js
 EOF
 
-echo "▶ [6/9] Apply and verify the research trading-loop migration..."
+echo "▶ [6/9] Apply and verify the factor-source schema..."
 ssh_deploy "bash -s" <<EOF
+set -euo pipefail
+CURRENT='$CURRENT'
+cd "\$CURRENT/backend"
+test -f .env
+APPLY_FACTOR_SOURCE_SCHEMA=1 NODE_ENV=production \
+  node dist/scripts/apply-factor-source-schema.js
+EOF
+
+echo "▶ [6/9] Apply and verify the non-destructive research trading-loop schema..."
+ssh_deploy "bash -s" <<EOF
+set -euo pipefail
+CURRENT='$CURRENT'
+cd "\$CURRENT/backend"
+test -f .env
+APPLY_RESEARCH_TRADING_LOOP_SCHEMA=1 NODE_ENV=production \
+  node dist/scripts/apply-research-trading-loop-schema.js
+EOF
+
+# The legacy reset migration truncates every paper portfolio. It remains available as an
+# explicit recovery operation, but a routine deployment must never run it implicitly.
+if [[ "${APPLY_RESEARCH_TRADING_LOOP_RESET:-false}" == "true" ]]; then
+  echo "▶ [6/9] Explicitly reset paper portfolios for the research trading loop..."
+  ssh_deploy "bash -s" <<EOF
 set -euo pipefail
 CURRENT='$CURRENT'
 cd "\$CURRENT/backend"
@@ -371,6 +394,7 @@ test -f .env
 APPLY_RESEARCH_TRADING_LOOP_MIGRATION=1 NODE_ENV=production \
   node dist/scripts/apply-research-trading-loop-migration.js
 EOF
+fi
 
 # ---------------------------------------------------------------------------
 # Restart systemd

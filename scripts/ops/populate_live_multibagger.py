@@ -54,17 +54,24 @@ WITH day AS (
 ), factor_matrix AS (
   SELECT
     stock_code,
-    MAX(percentile) FILTER (WHERE factor_name = 'quality') * 100 AS quality,
-    MAX(percentile) FILTER (WHERE factor_name = 'growth') * 100 AS growth,
-    MAX(percentile) FILTER (WHERE factor_name = 'value') * 100 AS valuation,
+    MAX(percentile) FILTER (
+      WHERE factor_name = 'quality' AND raw_value IS NOT NULL
+    ) * 100 AS quality,
+    MAX(percentile) FILTER (
+      WHERE factor_name = 'growth' AND raw_value IS NOT NULL
+    ) * 100 AS growth,
+    MAX(percentile) FILTER (
+      WHERE factor_name = 'value' AND raw_value IS NOT NULL
+    ) * 100 AS valuation,
     AVG(percentile) FILTER (
-      WHERE factor_name IN ('concept_heat', 'earnings_surprise')
+      WHERE factor_name IN ('concept_heat', 'earnings_surprise') AND raw_value IS NOT NULL
     ) * 100 AS moat,
     AVG(percentile) FILTER (
       WHERE factor_name IN ('momentum', 'gradual_breakout', 'money_flow')
+        AND raw_value IS NOT NULL
     ) * 100 AS trend,
     AVG(percentile) FILTER (
-      WHERE factor_name IN ('low_vol', 'liquidity')
+      WHERE factor_name IN ('low_vol', 'liquidity') AND raw_value IS NOT NULL
     ) * 100 AS risk,
     MAX(updated_at) AS factor_available_at
   FROM factor_scores CROSS JOIN day
@@ -73,15 +80,17 @@ WITH day AS (
 ), latest_bar AS (
   SELECT DISTINCT ON (stock_id)
     stock_id, time::date AS bar_day, close, volume, turnover, updated_at
-  FROM daily_bars
+  FROM daily_bars CROSS JOIN day
   WHERE is_trading_day = TRUE AND is_suspended = FALSE
+    AND time::date <= day.trading_day
   ORDER BY stock_id, time DESC
 ), catalyst AS (
   SELECT DISTINCT ON (stock_code)
     id, stock_code, stock_name, announce_date, original_title, summary,
     url, sentiment, created_at, updated_at
-  FROM announcement_summaries
-  WHERE announce_date >= CURRENT_DATE - INTERVAL '60 days'
+  FROM announcement_summaries CROSS JOIN day
+  WHERE announce_date <= day.trading_day
+    AND announce_date >= day.trading_day - INTERVAL '60 days'
     AND (
       original_title ILIKE ANY(ARRAY[
         '%%扩产%%', '%%产能%%', '%%中标%%', '%%合同%%', '%%收购%%', '%%订单%%'

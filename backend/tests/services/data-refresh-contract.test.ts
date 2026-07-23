@@ -45,6 +45,10 @@ const liveRecommendations = fs.readFileSync(
   path.join(root, 'scripts/ops/populate_live_recommendations.py'),
   'utf8'
 );
+const liveMultibagger = fs.readFileSync(
+  path.join(root, 'scripts/ops/populate_live_multibagger.py'),
+  'utf8'
+);
 const quantDataService = fs.readFileSync(
   path.join(root, 'backend/src/quant/engine/internal/QuantDataService.ts'),
   'utf8'
@@ -79,6 +83,22 @@ const stockFactorService = fs.readFileSync(
 );
 const derivedFactorCli = fs.readFileSync(
   path.join(root, 'backend/src/scripts/sync-derived-factors.ts'),
+  'utf8'
+);
+const computeFactorsCli = fs.readFileSync(
+  path.join(root, 'backend/src/scripts/compute-factors.ts'),
+  'utf8'
+);
+const financialReportCli = fs.readFileSync(
+  path.join(root, 'backend/src/scripts/sync-financial-report.ts'),
+  'utf8'
+);
+const analystForecastCli = fs.readFileSync(
+  path.join(root, 'backend/src/scripts/sync-analyst-forecast.ts'),
+  'utf8'
+);
+const factorSourceMigration = fs.readFileSync(
+  path.join(root, 'backend/scripts/migrations/2026-07-24-factor-source-schema.sql'),
   'utf8'
 );
 const readonlySmoke = fs.readFileSync(
@@ -186,6 +206,11 @@ assert.match(
   'derived-factor coverage may skip only when a factor watermark reaches the target trade date'
 );
 assert.match(
+  stockFactorService,
+  /skipThreshold > 0 \|\| \(requiresRealProvider && skipRealProviderThreshold > 0\)/,
+  'local-derived bootstrap must not be skipped by a real-provider threshold it does not require'
+);
+assert.match(
   scheduler,
   /task\.type === 'DERIVED_FACTOR_SYNC'[\s\S]{0,4200}status: ok \? 'COMPLETED' : 'FAILED'[\s\S]{0,900}throw new Error\(`派生因子同步失败/,
   'derived-factor scheduler runs must finish their execution log and propagate script failures'
@@ -209,6 +234,87 @@ assert.match(
   scheduler,
   /syncSummary[\s\S]{0,900}scenario === 'derived_factor_sync'[\s\S]{0,700}syncSummary\.skipped === true \|\| upsertTotal > 0/,
   'the scheduler must require a structured successful factor-sync summary'
+);
+assert.match(
+  scheduler,
+  /task\.type === 'FACTOR_SCORE_COMPUTE'[\s\S]{0,4200}scenario === 'factor_score_compute'[\s\S]{0,1200}total_upserted[\s\S]{0,1200}status: ok \? 'COMPLETED' : 'FAILED'[\s\S]{0,900}throw new Error\(`因子分数生成失败/,
+  'factor-score scheduler runs must reject missing or zero-row child summaries and propagate failure'
+);
+assert.match(
+  computeFactorsCli,
+  /tradeDate > marketWatermark[\s\S]{0,400}拒绝生成假新鲜因子/,
+  'factor-score CLI must never label scores newer than the broad-market watermark'
+);
+assert.match(
+  computeFactorsCli,
+  /coverage\.covered >= CEIL\(listed\.total \* 0\.80\)/,
+  'factor-score CLI must derive its watermark from broad-market coverage'
+);
+assert.match(
+  computeFactorsCli,
+  /totalEffective > 0[\s\S]{0,700}totalEffective <= 0/,
+  'factor-score CLI must reject all-neutral factor runs'
+);
+assert.match(
+  computeFactorsCli,
+  /FACTOR_CLI_SYNC_SCHEMA === 'true'/,
+  'factor-score CLI schema sync must require explicit opt-in'
+);
+assert.match(
+  derivedFactorCli,
+  /FACTOR_CLI_SYNC_SCHEMA === 'true'/,
+  'derived-factor CLI schema sync must require explicit opt-in'
+);
+assert(
+  (liveRecommendations.match(/raw_value IS NOT NULL/g) || []).length >= 6,
+  'recommendation candidate scores must exclude neutral factor placeholders'
+);
+assert(
+  (liveMultibagger.match(/raw_value IS NOT NULL/g) || []).length >= 6,
+  'multibagger candidate scores must exclude neutral factor placeholders'
+);
+assert.match(
+  liveMultibagger,
+  /FROM daily_bars CROSS JOIN day[\s\S]{0,180}time::date <= day\.trading_day/,
+  'multibagger prices must be point-in-time bounded by the factor day'
+);
+assert.match(
+  liveMultibagger,
+  /FROM announcement_summaries CROSS JOIN day[\s\S]{0,180}announce_date <= day\.trading_day/,
+  'multibagger catalysts must not leak future announcements into historical factor days'
+);
+assert.match(
+  registry,
+  /type: 'FINANCIAL_REPORT_SYNC'[\s\S]{0,180}recommendedCron: '0 1 \* \* 0'/,
+  'financial-report facts need a registered recurring producer'
+);
+assert.match(
+  scheduler,
+  /task\.type === 'FINANCIAL_REPORT_SYNC'[\s\S]{0,3200}scenario === 'financial_report_sync'[\s\S]{0,1600}status: ok \? 'COMPLETED' : 'FAILED'[\s\S]{0,1000}throw new Error\(`财务报告同步失败/,
+  'financial-report scheduler runs must require a structured child success and propagate failure'
+);
+assert.match(
+  financialReportCli,
+  /DATA_CLI_SYNC_SCHEMA === 'true'[\s\S]{0,1800}total_upserted > 0 \|\| result\.skipped === result\.total_stocks/,
+  'financial-report CLI must be schema-safe and reject a zero-row cold-start false success'
+);
+assert.match(
+  analystForecastCli,
+  /scenario: 'analyst_forecast_sync'[\s\S]{0,220}total_upserted[\s\S]{0,500}process\.exit\(ok \? 0 : 1\)/,
+  'analyst forecast CLI must expose a structured summary and reject zero-row cold starts'
+);
+assert.match(
+  scheduler,
+  /task\.type === 'ANALYST_FORECAST_SYNC'[\s\S]{0,4200}scenario === 'analyst_forecast_sync'[\s\S]{0,1200}status: okAF \? 'COMPLETED' : 'FAILED'/,
+  'analyst forecast scheduler must verify the child summary instead of trusting process exit alone'
+);
+assert.match(factorSourceMigration, /CREATE TABLE IF NOT EXISTS financial_reports/);
+assert.match(factorSourceMigration, /CREATE TABLE IF NOT EXISTS analyst_forecasts/);
+assert.match(factorSourceMigration, /CREATE TABLE IF NOT EXISTS announcement_summaries/);
+assert.doesNotMatch(
+  factorSourceMigration,
+  /DELETE FROM|TRUNCATE|INSERT INTO/,
+  'factor source schema bootstrap must not mutate user or market data'
 );
 assert.match(
   stockFactorService,

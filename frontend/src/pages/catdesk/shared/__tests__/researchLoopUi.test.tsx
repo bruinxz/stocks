@@ -88,6 +88,20 @@ describe('research loop shared UI', () => {
     expect(container.textContent).toContain('2026-07-16');
   });
 
+  test('infrastructure failures are visible and suspend automatic trading', async () => {
+    await act(async () =>
+      root.render(
+        <ResearchLoopStatusStrip
+          dashboard={null}
+          error={new Error('研究交易闭环尚未完成初始化，已暂停自动模拟交易')}
+          focus="portfolio"
+        />
+      )
+    );
+    expect(container.textContent).toContain('研究闭环未就绪');
+    expect(container.textContent).toContain('已暂停自动模拟交易');
+  });
+
   test('responsive contract keeps the loop flow and decisions usable on mobile', () => {
     const css = fs.readFileSync(path.resolve(__dirname, '../../catdesk.css'), 'utf8');
     expect(css).toMatch(/\.catdesk-loop-strip\s*\{/);

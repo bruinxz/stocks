@@ -969,7 +969,13 @@ export class StockFactorService {
     const providerPlan = this.getProviderPlan(options);
     const skipThreshold = Number(options.skip_if_coverage_rate_gte || 0);
     const skipRealProviderThreshold = Number(options.skip_if_real_provider_rate_gte ?? 65);
-    if ((skipThreshold > 0 || skipRealProviderThreshold > 0) && stocks.length > 0) {
+    const requiresRealProvider = providerPlan.providers.some(provider =>
+      ['tushare', 'eastmoney', 'baostock'].includes(provider)
+    );
+    if (
+      (skipThreshold > 0 || (requiresRealProvider && skipRealProviderThreshold > 0)) &&
+      stocks.length > 0
+    ) {
       const coverage = await this.getCoverage({
         ...options,
         limit: stocks.length,
@@ -982,9 +988,6 @@ export class StockFactorService {
         Number(coverage.coverage_rate.fundamental || 0)
       );
       const realProviderRate = Number(coverage.source_quality?.real_provider_rate || 0);
-      const requiresRealProvider = providerPlan.providers.some(provider =>
-        ['tushare', 'eastmoney', 'baostock'].includes(provider)
-      );
       const targetFactorDate = String(options.as_of || coverage.latest_trade_date || '').slice(
         0,
         10

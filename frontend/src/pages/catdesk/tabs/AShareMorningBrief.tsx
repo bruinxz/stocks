@@ -58,7 +58,7 @@ export default function AShareMorningBrief() {
     []
   );
   const data = loadResult?.kind === 'ready' ? loadResult.feed : null;
-  const { data: loopDashboard } = useResearchTradingLoop();
+  const { data: loopDashboard, error: loopError } = useResearchTradingLoop();
   const { rows: namedCandidates, loading: namesLoading } = useStockNameHydrationState(
     data?.candidates ?? []
   );
@@ -137,7 +137,7 @@ export default function AShareMorningBrief() {
         }
         updatedAt={data.kpi.updated_at}
       />
-      <ResearchLoopStatusStrip dashboard={loopDashboard} focus="morning" />
+      <ResearchLoopStatusStrip dashboard={loopDashboard} error={loopError} focus="morning" />
       <MorningFilterBar
         sector={filters.sector}
         catalystKind={filters.catalystKind}

@@ -60,8 +60,8 @@ program
   .action(async opts => {
     try {
       await sequelize.authenticate();
-      // 开发模式自动建表/alter (三张因子表若缺则由此创建); 生产走 migration / sync
-      if (process.env.NODE_ENV !== 'production') {
+      // schema 变更必须显式授权；普通数据同步不能顺带 alter 整个业务库。
+      if (process.env.FACTOR_CLI_SYNC_SCHEMA === 'true') {
         await sequelize.sync({ alter: true });
       }
 

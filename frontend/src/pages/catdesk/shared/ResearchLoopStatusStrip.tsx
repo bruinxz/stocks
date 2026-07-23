@@ -1,14 +1,39 @@
-import { CheckCircleOutlined, ClockCircleOutlined, SyncOutlined } from '@ant-design/icons';
+import {
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  SyncOutlined,
+  WarningOutlined,
+} from '@ant-design/icons';
 import { Tag } from 'antd';
 import type { ResearchTradingLoopDashboard } from 'services/researchTradingLoopService';
 
 interface Props {
   dashboard: ResearchTradingLoopDashboard | null | undefined;
+  error?: Error | null;
   focus: 'morning' | 'multibagger' | 'portfolio';
 }
 
-export function ResearchLoopStatusStrip({ dashboard, focus }: Props) {
-  if (!dashboard) return null;
+export function ResearchLoopStatusStrip({ dashboard, error, focus }: Props) {
+  if (!dashboard) {
+    if (!error) return null;
+    return (
+      <section
+        className="catdesk-loop-strip is-unavailable"
+        aria-label="研究交易闭环状态"
+        role="status"
+      >
+        <div className="catdesk-loop-strip__flow">
+          <span className="is-focus">
+            <b>研究闭环未就绪</b>
+            <small>{error.message}</small>
+          </span>
+        </div>
+        <Tag icon={<WarningOutlined />} color="red">
+          已暂停自动模拟交易
+        </Tag>
+      </section>
+    );
+  }
   const { research } = dashboard;
   const fresh = research.morning.fresh && research.multibagger.fresh;
   const run = fresh && dashboard.latest_run?.is_current ? dashboard.latest_run : null;

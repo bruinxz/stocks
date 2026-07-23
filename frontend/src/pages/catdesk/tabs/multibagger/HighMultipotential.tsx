@@ -61,7 +61,7 @@ export default function HighMultipotential() {
 
   const selectedMarket = market;
   const { data, loading, error } = useMultibaggerData(stages, conclusions, selectedMarket);
-  const { data: loopDashboard } = useResearchTradingLoop();
+  const { data: loopDashboard, error: loopError } = useResearchTradingLoop();
   const { data: detailData } = useMultibaggerDetail(selectedSymbol);
   const namedRows = useStockNameHydration(
     data?.rows ?? [],
@@ -123,7 +123,7 @@ export default function HighMultipotential() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
-      <ResearchLoopStatusStrip dashboard={loopDashboard} focus="multibagger" />
+      <ResearchLoopStatusStrip dashboard={loopDashboard} error={loopError} focus="multibagger" />
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <FilterChip<MultibaggerStage>
           options={STAGE_OPTIONS}

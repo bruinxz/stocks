@@ -164,6 +164,14 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
   // 周一 03:00 跑全市场 (--all --interval-ms=400, 5500 票 × ~2s/票 = ~3h, 周末前一日跑完成).
   // CLI 内置 skip-existing 断点续传, 已 sync 过的票仅做 metadata refresh.
   {
+    type: 'FINANCIAL_REPORT_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '0 1 * * 0',
+    description:
+      '周日 01:00 断点同步全市场历史财务报告，为 growth / quality_high / earnings_surprise 提供真实事实源。',
+  },
+  {
     type: 'ANALYST_FORECAST_SYNC',
     category: 'data_sync',
     owner: 'data',

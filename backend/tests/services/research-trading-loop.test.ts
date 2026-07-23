@@ -181,6 +181,7 @@ function testHardPositionCapacity() {
 }
 
 class FakeRepository implements ResearchTradingLoopRepository {
+  ready_count = 0;
   ensure_count = 0;
   claim_count = 0;
   execution_count = 0;
@@ -188,6 +189,9 @@ class FakeRepository implements ResearchTradingLoopRepository {
   portfolio_load_count = 0;
   stale = false;
 
+  async assertReady() {
+    this.ready_count += 1;
+  }
   async ensureLoopPortfolios() {
     this.ensure_count += 1;
   }
@@ -274,6 +278,7 @@ async function testFreshnessAndIdempotency() {
     now: new Date('2026-07-22T00:00:00.000Z'),
   });
   assert.equal(closed.reason, 'market_closed');
+  assert.equal(closedRepo.ready_count, 0, '非交易时段不需要探测研究闭环结构');
   assert.equal(closedRepo.ensure_count, 0, '非交易时段不得创建或执行账户');
 }
 
@@ -293,6 +298,14 @@ function testPipelineContracts() {
   );
   const migration = fs.readFileSync(
     path.join(root, 'backend/scripts/migrations/2026-07-22-research-trading-loop.sql'),
+    'utf8'
+  );
+  const schemaMigration = fs.readFileSync(
+    path.join(root, 'backend/scripts/migrations/2026-07-24-research-trading-loop-schema.sql'),
+    'utf8'
+  );
+  const runtimeMigration = fs.readFileSync(
+    path.join(root, 'scripts/deployment/runtime_schema_migration.js'),
     'utf8'
   );
   const deployment = fs.readFileSync(
@@ -319,6 +332,11 @@ function testPipelineContracts() {
     /runtime_data_migrations[\s\S]{0,4000}TRUNCATE TABLE paper_trading_portfolios/
   );
   assert.match(migration, /uq_research_loop_active_portfolio_per_user/);
+  assert.match(schemaMigration, /CREATE TABLE IF NOT EXISTS research_trading_loop_runs/);
+  assert.match(schemaMigration, /CREATE TABLE IF NOT EXISTS research_trading_loop_decisions/);
+  assert.doesNotMatch(schemaMigration, /TRUNCATE|DELETE FROM|INSERT INTO paper_trading_portfolios/);
+  assert.match(runtimeMigration, /2026-07-24-research-trading-loop-schema\.sql/);
+  assert.doesNotMatch(runtimeMigration, /2026-07-22-research-trading-loop\.sql/);
   const migrationRetirementBlock = migration.slice(migration.indexOf('-- 旧自动跟单'));
   const schedulerRetirementBlock = scheduler.slice(scheduler.indexOf('// 研究闭环上线后'));
   for (const retiredType of [
@@ -356,7 +374,11 @@ function testPipelineContracts() {
   );
   assert.match(
     deployment,
-    /APPLY_RESEARCH_TRADING_LOOP_MIGRATION=1[\s\S]{0,120}apply-research-trading-loop-migration\.js/
+    /APPLY_RESEARCH_TRADING_LOOP_SCHEMA=1[\s\S]{0,120}apply-research-trading-loop-schema\.js/
+  );
+  assert.match(
+    deployment,
+    /if \[\[ "\$\{APPLY_RESEARCH_TRADING_LOOP_RESET:-false\}" == "true" \]\][\s\S]{0,400}APPLY_RESEARCH_TRADING_LOOP_MIGRATION=1/
   );
 }
 

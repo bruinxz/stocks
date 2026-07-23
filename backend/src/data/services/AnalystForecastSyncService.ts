@@ -38,8 +38,10 @@ export interface SyncStockResult {
 }
 
 export interface SyncStocksOptions {
-  /** 已有任意一条 analyst report 的股票跳过整批，默认 true */
+  /** 最近 refreshAfterDays 内已刷新过的股票跳过，默认 true */
   skipExisting?: boolean;
+  /** 允许重新抓取前的最短天数，默认 6 天（适配周度任务） */
+  refreshAfterDays?: number;
   /** 同步间 sleep 毫秒（友好 AKShare 限流），默认 200 */
   intervalMs?: number;
 }
@@ -173,6 +175,7 @@ export class AnalystForecastSyncService {
   ): Promise<SyncStocksResult> {
     const skipExisting = options.skipExisting ?? process.env.ANALYST_FORECAST_SKIP_EXISTING !== '0';
     const intervalMs = options.intervalMs ?? 200;
+    const refreshAfterMs = Math.max(1, Number(options.refreshAfterDays ?? 6)) * 86_400_000;
 
     const details: SyncStockResult[] = [];
     let succeeded = 0;
@@ -182,9 +185,13 @@ export class AnalystForecastSyncService {
     for (let i = 0; i < stockCodes.length; i++) {
       const code = stockCodes[i];
       if (skipExisting) {
-        const existing = await AnalystForecast.count({ where: { stock_code: code } });
-        if (existing > 0) {
-          logger.info(`AnalystForecast: skip stock=${code} (${existing} rows already present)`);
+        const latest = await AnalystForecast.findOne({
+          attributes: ['updated_at'],
+          where: { stock_code: code },
+          order: [['updated_at', 'DESC']],
+        });
+        if (latest?.updated_at && Date.now() - latest.updated_at.getTime() < refreshAfterMs) {
+          logger.info(`AnalystForecast: skip recently refreshed stock=${code}`);
           details.push({
             stock_code: code,
             fetched: 0,

@@ -59,7 +59,7 @@ program
   .action(async opts => {
     try {
       await sequelize.authenticate();
-      if (process.env.NODE_ENV !== 'production') {
+      if (process.env.DATA_CLI_SYNC_SCHEMA === 'true') {
         await sequelize.sync({ alter: true });
       }
 
@@ -103,11 +103,21 @@ program
             );
           }
         }
+        const ok = result.failed === 0;
+        process.stdout.write(
+          `${JSON.stringify({ scenario: 'announcement_nlp_sync', ok, ...result })}\n`
+        );
+        if (!ok) throw new Error(`${result.failed} announcement backfill day(s) failed`);
       } else {
         // === 单日模式 ===
         const date = opts.date || todayIso();
         const result = await service.syncDate(date, syncOptions);
         logger.info(JSON.stringify(result, null, 2));
+        const ok = !result.error;
+        process.stdout.write(
+          `${JSON.stringify({ scenario: 'announcement_nlp_sync', ok, ...result })}\n`
+        );
+        if (!ok) throw new Error(result.error);
       }
 
       await sequelize.close();

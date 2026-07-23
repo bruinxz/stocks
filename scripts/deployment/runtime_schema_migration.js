@@ -42,6 +42,9 @@ const RUNTIME_SCHEMA_TABLES = [
   'quant_fusion_audits',
   'task_parameter_audit_logs',
   'realtime_quotes',
+  'financial_reports',
+  'analyst_forecasts',
+  'announcement_summaries',
 ];
 
 const CRITICAL_RUNTIME_SCHEMA_TABLES = [
@@ -66,11 +69,24 @@ const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'research_trading_loop_runs',
   'research_trading_loop_decisions',
   'task_parameter_audit_logs',
+  'financial_reports',
+  'analyst_forecasts',
+  'announcement_summaries',
 ];
 
-function readResearchTradingLoopMigration() {
+function readFactorSourceSchemaMigration() {
   return fs.readFileSync(
-    path.resolve(__dirname, '../../backend/scripts/migrations/2026-07-22-research-trading-loop.sql'),
+    path.resolve(__dirname, '../../backend/scripts/migrations/2026-07-24-factor-source-schema.sql'),
+    'utf8'
+  );
+}
+
+function readResearchTradingLoopSchemaMigration() {
+  return fs.readFileSync(
+    path.resolve(
+      __dirname,
+      '../../backend/scripts/migrations/2026-07-24-research-trading-loop-schema.sql'
+    ),
     'utf8'
   );
 }
@@ -190,9 +206,11 @@ function buildRuntimeSchemaMigrationSQL(appDbUser = 'stock_admin') {
     ];
     DROP TABLE IF EXISTS webhook_fallback_logs;
 
-    -- 一次性重建“早报 + 高倍 + 持仓”研究闭环。迁移文件内部使用 marker 保证
-    -- 后续部署只做幂等 DDL，不会再次清空已经产生的新交易。
-    ${readResearchTradingLoopMigration()}
+    -- 因子原始事实表只补结构，不隐式抓取或伪造任何财务数据。
+    ${readFactorSourceSchemaMigration()}
+
+    -- 只补研究闭环运行账本结构；常规部署不得隐式重置用户模拟组合。
+    ${readResearchTradingLoopSchemaMigration()}
 
     -- 线上历史库曾由 postgres / stock_admin 混合建表，导致应用启动时无法 ALTER/CREATE。
     -- 这里不改业务数据；优先修复 owner，若维护角色不是 superuser/member，则降级为 grant/create 权限。

@@ -32,6 +32,9 @@ export const RUNTIME_SCHEMA_TABLES = [
   'stock_fundamental_factors',
   'stock_money_flow_factors',
   'stock_valuation_factors',
+  'financial_reports',
+  'analyst_forecasts',
+  'announcement_summaries',
   'quant_backtest_tasks',
   'quant_backtest_results',
   'quant_backtest_trades',
@@ -65,6 +68,9 @@ export const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'stock_fundamental_factors',
   'stock_money_flow_factors',
   'stock_valuation_factors',
+  'financial_reports',
+  'analyst_forecasts',
+  'announcement_summaries',
   'realtime_quotes',
   'paper_trading_portfolios',
   'paper_trading_trades',
@@ -207,6 +213,18 @@ export const RUNTIME_SCHEMA_REQUIRED_COLUMNS: Record<
   stock_valuation_factors: {
     critical: true,
     columns: ['symbol', 'factor_date', 'source'],
+  },
+  financial_reports: {
+    critical: true,
+    columns: ['report_date', 'stock_code', 'net_profit_yoy', 'revenue_yoy', 'roe'],
+  },
+  analyst_forecasts: {
+    critical: true,
+    columns: ['report_date', 'stock_code', 'analyst_firm', 'forecast_eps_y1'],
+  },
+  announcement_summaries: {
+    critical: true,
+    columns: ['announce_date', 'stock_code', 'original_title', 'summary', 'priority'],
   },
   realtime_quotes: {
     critical: true,

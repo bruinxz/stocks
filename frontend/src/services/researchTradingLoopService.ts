@@ -61,13 +61,28 @@ export interface ResearchTradingLoopDashboard {
   };
 }
 
+export class ResearchTradingLoopRequestError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | null,
+    readonly missing_tables: string[]
+  ) {
+    super(message);
+    this.name = 'ResearchTradingLoopRequestError';
+  }
+}
+
 export async function getResearchTradingLoopDashboard(
   signal?: AbortSignal
 ): Promise<ResearchTradingLoopDashboard> {
   const response = await authenticatedFetch('/api/research-trading-loop/dashboard', { signal });
   const body = await response.json();
   if (!response.ok || !body?.success) {
-    throw new Error(body?.message || `research loop ${response.status}`);
+    throw new ResearchTradingLoopRequestError(
+      body?.message || `research loop ${response.status}`,
+      typeof body?.code === 'string' ? body.code : null,
+      Array.isArray(body?.missing_tables) ? body.missing_tables.map(String) : []
+    );
   }
   return body.data as ResearchTradingLoopDashboard;
 }

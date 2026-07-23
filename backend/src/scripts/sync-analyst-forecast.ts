@@ -53,12 +53,13 @@ program
   .option('--all', '全 A 股（仅 stocks 表中 is_listed=true 的）', false)
   .option('--listed-before <date>', '与 --all 配合，过滤上市日早于该日（YYYY-MM-DD）')
   .option('--interval-ms <n>', '每只股票之间 sleep ms', (v: string) => parseInt(v, 10), 200)
+  .option('--refresh-after-days <n>', '最近 N 天已刷新则跳过', (v: string) => parseInt(v, 10), 6)
   .option('--force', '覆盖已有数据，禁用断点续传', false)
   .action(async opts => {
     try {
       await sequelize.authenticate();
-      // 开发模式自动建表/alter；生产应改走 migration
-      if (process.env.NODE_ENV !== 'production') {
+      // schema 变更必须显式授权；普通数据同步不能顺带 alter 整个业务库。
+      if (process.env.DATA_CLI_SYNC_SCHEMA === 'true') {
         await sequelize.sync({ alter: true });
       }
 
@@ -101,12 +102,14 @@ program
       const result = await service.syncStocks(stockCodes, {
         skipExisting: !opts.force,
         intervalMs: opts.intervalMs,
+        refreshAfterDays: opts.refreshAfterDays,
       });
 
       logger.info(
         `[sync-analyst-forecast] stocks=${result.total_stocks} ` +
           `succeeded=${result.succeeded} skipped=${result.skipped} failed=${result.failed}`
       );
+      const totalUpserted = result.details.reduce((sum, item) => sum + item.upserted, 0);
 
       // print a compact per-stock summary for ≤ 50 stocks; otherwise just totals
       if (result.details.length <= 50) {
@@ -127,7 +130,17 @@ program
         }
       }
 
-      process.exit(result.failed > 0 ? 1 : 0);
+      const ok =
+        result.failed === 0 && (totalUpserted > 0 || result.skipped === result.total_stocks);
+      process.stdout.write(
+        `${JSON.stringify({
+          scenario: 'analyst_forecast_sync',
+          ok,
+          total_upserted: totalUpserted,
+          ...result,
+        })}\n`
+      );
+      process.exit(ok ? 0 : 1);
     } catch (error) {
       logger.error(`sync-analyst-forecast failed: ${(error as Error).message}`);
       process.exit(1);
