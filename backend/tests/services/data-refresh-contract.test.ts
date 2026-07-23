@@ -393,8 +393,8 @@ assert.match(
 );
 assert.match(
   derivedFactorCli,
-  /provider === 'eastmoney'[\s\S]{0,240}processedCoverage < 80[\s\S]{0,220}低于 80% 完成门槛/,
-  'an explicit EastMoney market sync must reject partial-coverage false success'
+  /\['eastmoney', 'baostock', 'tushare'\]\.includes\(provider\)[\s\S]{0,500}realProcessed \/ realRequested[\s\S]{0,350}realProcessed <= 0 \|\| \(realRequested >= 100 && realCoverage < 80\)/,
+  'an explicit real-provider sync must reject fallback-only or partial-coverage false success'
 );
 assert.match(
   stockFactorService,

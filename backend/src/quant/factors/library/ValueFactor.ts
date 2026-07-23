@@ -6,7 +6,10 @@
  *   - PB 越低 → 1/PB 越大 → 越价值
  *   - 两者等权相加（两个比率本身已经是 "便宜度"，无量纲一致）
  *
- * 数据源：StockValuationFactor 表
+ * 数据源：
+ *   1. StockValuationFactor 表的真实 PE-TTM / PB（优先）
+ *   2. 缺失时，用 FinancialReport 的累计 EPS / 每股净资产和当日收盘价计算
+ *      年化盈利收益率 + 净资产收益率；公告日前不可见，避免历史前视
  *   - 字段：symbol（带 .SH/.SZ 后缀）、factor_date、pe_ttm、pb
  *   - 选 (symbol, factor_date <= as_of_date) 的最新一条
  *
@@ -23,10 +26,59 @@ import { Factor } from '../types';
 import { factorRegistry } from '../FactorRegistry';
 import { stripSuffix, isFiniteNumber, lookbackStartDate } from './_helpers';
 import { StockValuationFactor } from '../../../models/StockValuationFactor';
+import { FinancialReport } from '../../../models/FinancialReport';
+import { DailyBar } from '../../../models/DailyBar';
+import { Stock } from '../../../models/Stock';
+
+const FINANCIAL_REPORT_LOOKBACK_DAYS = 200;
+
+export function annualizeCumulativeEps(eps: unknown, report_date: string): number | null {
+  if (eps == null || eps === '') return null;
+  const parsed = Number(eps);
+  if (!isFiniteNumber(parsed) || parsed <= 0) return null;
+  const suffix = String(report_date).slice(5, 10);
+  const multiplier =
+    suffix === '03-31' ? 4 : suffix === '06-30' ? 2 : suffix === '09-30' ? 4 / 3 : 1;
+  return parsed * multiplier;
+}
+
+export function financialReportValueProxy(input: {
+  report_date: string;
+  raw_payload?: Record<string, any> | null;
+  close: unknown;
+  as_of_date: string;
+}): number | null {
+  const rawPayload = input.raw_payload || {};
+  const announcementDate = rawPayload.announcement_date;
+  if (
+    announcementDate &&
+    (!/^\d{4}-\d{2}-\d{2}$/.test(String(announcementDate)) ||
+      String(announcementDate) > input.as_of_date)
+  ) {
+    return null;
+  }
+  const marketRow = rawPayload.market_report_row || {};
+  const eps = rawPayload.indicator_row?.['摊薄每股收益(元)'] ?? marketRow['每股收益'];
+  const annualizedEps = annualizeCumulativeEps(eps, input.report_date);
+  const bookValueRaw = marketRow['每股净资产'];
+  const bookValue = bookValueRaw == null || bookValueRaw === '' ? NaN : Number(bookValueRaw);
+  const close = input.close == null || input.close === '' ? NaN : Number(input.close);
+  if (
+    annualizedEps == null ||
+    !isFiniteNumber(bookValue) ||
+    bookValue <= 0 ||
+    !isFiniteNumber(close) ||
+    close <= 0
+  ) {
+    return null;
+  }
+  // annualized EPS / price = 1/annualized PE; BVPS / price = 1/PB.
+  return annualizedEps / close + bookValue / close;
+}
 
 export const valueFactor: Factor = {
   name: 'value',
-  description: 'PE-TTM 倒数 + PB 倒数 合成的价值因子（越大越便宜）',
+  description: 'PE-TTM 倒数 + PB 倒数；缺失时由已公告每股指标与当日收盘价推导',
   category: 'value',
 
   async compute(ctx) {
@@ -71,6 +123,85 @@ export const valueFactor: Factor = {
       if (pe <= 0 || pb <= 0) continue; // 亏损 / 异常负值 → 价值不可计算，留稀疏
 
       out.set(code, 1 / pe + 1 / pb);
+    }
+
+    const missingCodes = ctx.universe.filter(code => !out.has(code));
+    if (!missingCodes.length) return out;
+
+    const reportStart = lookbackStartDate(ctx.as_of_date, FINANCIAL_REPORT_LOOKBACK_DAYS);
+    const reportRows = (await FinancialReport.findAll({
+      attributes: ['stock_code', 'report_date', 'raw_payload'],
+      where: {
+        stock_code: { [Op.in]: missingCodes },
+        report_date: { [Op.gte]: reportStart, [Op.lte]: ctx.as_of_date },
+      },
+      raw: true,
+    })) as unknown as Array<{
+      stock_code: string;
+      report_date: string;
+      raw_payload?: Record<string, any> | null;
+    }>;
+    const latestReportByCode = new Map<string, (typeof reportRows)[number]>();
+    for (const row of reportRows) {
+      const announcementDate = row.raw_payload?.announcement_date;
+      if (
+        announcementDate &&
+        (!/^\d{4}-\d{2}-\d{2}$/.test(String(announcementDate)) ||
+          String(announcementDate) > ctx.as_of_date)
+      ) {
+        continue;
+      }
+      const current = latestReportByCode.get(row.stock_code);
+      if (!current || row.report_date > current.report_date) {
+        latestReportByCode.set(row.stock_code, row);
+      }
+    }
+    if (!latestReportByCode.size) return out;
+
+    const stocks = (await Stock.findAll({
+      attributes: ['id', 'symbol'],
+      where: { is_listed: true, type: 'stock' },
+      raw: true,
+    })) as unknown as Array<{ id: number; symbol: string }>;
+    const stockByCode = new Map(
+      stocks
+        .map(stock => [stripSuffix(stock.symbol), stock] as const)
+        .filter(([code]) => latestReportByCode.has(code))
+    );
+    const stockIds = [...stockByCode.values()].map(stock => stock.id);
+    if (!stockIds.length) return out;
+
+    const dayStart = new Date(`${ctx.as_of_date}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+    const bars = (await DailyBar.findAll({
+      attributes: ['stock_id', 'time', 'close'],
+      where: {
+        stock_id: { [Op.in]: stockIds },
+        time: { [Op.gte]: dayStart, [Op.lt]: dayEnd },
+        is_trading_day: true,
+        is_suspended: false,
+      },
+      order: [
+        ['stock_id', 'ASC'],
+        ['time', 'DESC'],
+      ],
+      raw: true,
+    })) as unknown as Array<{ stock_id: number; time: Date; close: any }>;
+    const closeByStockId = new Map<number, any>();
+    for (const bar of bars) {
+      if (!closeByStockId.has(bar.stock_id)) closeByStockId.set(bar.stock_id, bar.close);
+    }
+
+    for (const [code, report] of latestReportByCode.entries()) {
+      const stock = stockByCode.get(code);
+      if (!stock) continue;
+      const proxy = financialReportValueProxy({
+        report_date: report.report_date,
+        raw_payload: report.raw_payload,
+        close: closeByStockId.get(stock.id),
+        as_of_date: ctx.as_of_date,
+      });
+      if (proxy != null) out.set(code, proxy);
     }
 
     return out;

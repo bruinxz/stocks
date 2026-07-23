@@ -98,10 +98,6 @@ program
         (sum: number, value: any) => sum + Number(value || 0),
         0
       );
-      const processedCoverage =
-        summary.requested_stock_count > 0
-          ? (summary.processed_stock_count / summary.requested_stock_count) * 100
-          : 0;
       if (!summary.skipped && summary.requested_stock_count > 0 && totalUpserts <= 0) {
         const providerErrors = Object.entries(summary.provider_results).flatMap(
           ([name, providerResult]: [string, any]) =>
@@ -113,16 +109,20 @@ program
           }`
         );
       }
-      if (
-        !summary.skipped &&
-        provider === 'eastmoney' &&
-        scope === 'market' &&
-        summary.requested_stock_count >= 100 &&
-        processedCoverage < 80
-      ) {
-        throw new Error(
-          `东方财富全市场因子覆盖仅 ${processedCoverage.toFixed(2)}%，低于 80% 完成门槛`
-        );
+      const explicitRealProvider = ['eastmoney', 'baostock', 'tushare'].includes(provider);
+      if (!summary.skipped && explicitRealProvider) {
+        const providerResult = (summary.provider_results as Record<string, any>)[provider] || {};
+        const realRequested = Number(providerResult.requested || 0);
+        const realProcessed = Number(providerResult.processed || 0);
+        const realCoverage = realRequested > 0 ? (realProcessed / realRequested) * 100 : 0;
+        if (
+          realRequested > 0 &&
+          (realProcessed <= 0 || (realRequested >= 100 && realCoverage < 80))
+        ) {
+          throw new Error(
+            `${provider} 真实源因子覆盖仅 ${realCoverage.toFixed(2)}%，低于 80% 完成门槛`
+          );
+        }
       }
 
       if ((result as any).skipped) {
