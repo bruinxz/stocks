@@ -1,0 +1,23 @@
+scripts/ops/populate_live_multibagger.py
+  s_ec1e6492779c20::t_cad60baa2e9c2c 54-83,165,177-182
+scripts/ops/populate_live_recommendations.py
+  s_ec1e6492779c20::t_cb5e887f1361d9 41-74,141,152-157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5de97fac3b4c8359170ec93390d9de3c0323182e",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
