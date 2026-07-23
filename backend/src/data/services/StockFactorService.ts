@@ -972,10 +972,7 @@ export class StockFactorService {
     const requiresRealProvider = providerPlan.providers.some(provider =>
       ['tushare', 'eastmoney', 'baostock'].includes(provider)
     );
-    if (
-      (skipThreshold > 0 || (requiresRealProvider && skipRealProviderThreshold > 0)) &&
-      stocks.length > 0
-    ) {
+    if (skipThreshold > 0 && stocks.length > 0) {
       const coverage = await this.getCoverage({
         ...options,
         limit: stocks.length,

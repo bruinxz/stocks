@@ -391,7 +391,7 @@ export class EastMoneyClient {
     options: { chunkSize?: number; limit?: number } = {}
   ): Promise<EastMoneyQuoteSnapshot[]> {
     const normalizedCodes = [...new Set((codes || []).map(normalizeSymbol).filter(Boolean))];
-    const limit = Math.min(Math.max(Number(options.limit || normalizedCodes.length), 1), 2000);
+    const limit = Math.min(Math.max(Number(options.limit || normalizedCodes.length), 1), 6000);
     const queue = normalizedCodes.slice(0, limit);
     const chunkSize = Math.min(Math.max(Number(options.chunkSize || 80), 10), 120);
     const results: EastMoneyQuoteSnapshot[] = [];
@@ -420,26 +420,34 @@ export class EastMoneyClient {
 
     for (let start = 0; start < queue.length; start += chunkSize) {
       const chunk = queue.slice(start, start + chunkSize);
-      const response = await this.client.get('/api/qt/ulist.np/get', {
-        params: {
-          fltt: 2,
-          invt: 2,
-          fields,
-          secids: chunk.map(symbol => this.toSecId(symbol)).join(','),
-        },
-      });
-      const responseData = this.unwrapResponse(response);
-      const rows = responseData.data?.diff || [];
-      if (!Array.isArray(rows)) continue;
-      for (const row of rows) {
-        const snapshot = this.buildQuoteListSnapshot(row);
-        if (
-          snapshot?.current_price !== undefined ||
-          snapshot?.pe_ttm !== undefined ||
-          snapshot?.pb !== undefined
-        ) {
-          results.push(snapshot);
+      try {
+        const response = await this.client.get('/api/qt/ulist.np/get', {
+          params: {
+            fltt: 2,
+            invt: 2,
+            fields,
+            secids: chunk.map(symbol => this.toSecId(symbol)).join(','),
+          },
+        });
+        const responseData = this.unwrapResponse(response);
+        const rows = responseData.data?.diff || [];
+        if (!Array.isArray(rows)) continue;
+        for (const row of rows) {
+          const snapshot = this.buildQuoteListSnapshot(row);
+          if (
+            snapshot?.current_price !== undefined ||
+            snapshot?.pe_ttm !== undefined ||
+            snapshot?.pb !== undefined
+          ) {
+            results.push(snapshot);
+          }
         }
+      } catch (error) {
+        logger.warn(
+          `EastMoney batch chunk failed start=${start} size=${chunk.length}: ${
+            (error as any)?.message || error
+          }`
+        );
       }
     }
 
@@ -456,21 +464,25 @@ export class EastMoneyClient {
     } = {}
   ): Promise<EastMoneyQuoteSnapshot[]> {
     const normalizedCodes = [...new Set((codes || []).map(normalizeSymbol).filter(Boolean))];
-    const limit = Math.min(Math.max(Number(options.limit || normalizedCodes.length), 1), 1000);
+    // 全市场因子同步明确支持约 5,500 只 A 股。旧的 1,000 硬上限会让调用方
+    // requested=全市场、实际只处理前 1,000 只，造成覆盖率长期卡在 18%。
+    const limit = Math.min(Math.max(Number(options.limit || normalizedCodes.length), 1), 6000);
     const queue = normalizedCodes.slice(0, limit);
     const preferBatch = options.preferBatch !== false;
+    let batchSnapshots: EastMoneyQuoteSnapshot[] = [];
+    let singleQueue = queue;
     if (preferBatch && queue.length > 0) {
       try {
-        const batchSnapshots = await this.getQuoteSnapshotsByBatch(queue, {
+        batchSnapshots = await this.getQuoteSnapshotsByBatch(queue, {
           limit,
           chunkSize: options.chunkSize,
         });
         const bySymbol = new Map(batchSnapshots.map(item => [normalizeSymbol(item.symbol), item]));
         const missing = queue.filter(symbol => !bySymbol.has(normalizeSymbol(symbol)));
-        if (
-          !missing.length ||
-          batchSnapshots.length >= Math.max(1, Math.floor(queue.length * 0.8))
-        ) {
+        if (!missing.length) {
+          return batchSnapshots;
+        }
+        if (batchSnapshots.length >= Math.max(1, Math.floor(queue.length * 0.8))) {
           if (missing.length) {
             logger.warn(
               `EastMoney batch quote snapshots partial: requested=${queue.length}, received=${batchSnapshots.length}, missing=${missing.length}`
@@ -478,8 +490,15 @@ export class EastMoneyClient {
           }
           return batchSnapshots;
         }
+        if (queue.length > 500) {
+          logger.warn(
+            `EastMoney batch quote snapshots below coverage gate; refusing ${missing.length} single-request fallbacks`
+          );
+          return batchSnapshots;
+        }
+        singleQueue = missing;
         logger.warn(
-          `EastMoney batch quote snapshots incomplete, fallback single requests: requested=${queue.length}, received=${batchSnapshots.length}`
+          `EastMoney batch quote snapshots incomplete, fallback ${missing.length} single requests: requested=${queue.length}, received=${batchSnapshots.length}`
         );
       } catch (error) {
         logger.warn(
@@ -490,18 +509,18 @@ export class EastMoneyClient {
       }
     }
     const concurrency = Math.min(Math.max(Number(options.concurrency || 6), 1), 12);
-    const results: EastMoneyQuoteSnapshot[] = [];
+    const results: EastMoneyQuoteSnapshot[] = [...batchSnapshots];
     let cursor = 0;
 
     const worker = async () => {
-      while (cursor < queue.length) {
-        const symbol = queue[cursor++];
+      while (cursor < singleQueue.length) {
+        const symbol = singleQueue[cursor++];
         const snapshot = await this.getQuoteSnapshot(symbol);
         if (snapshot) results.push(snapshot);
       }
     };
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(concurrency, singleQueue.length) }, worker));
     return results;
   }
 

@@ -81,6 +81,10 @@ const stockFactorService = fs.readFileSync(
   path.join(root, 'backend/src/data/services/StockFactorService.ts'),
   'utf8'
 );
+const eastMoneyClient = fs.readFileSync(
+  path.join(root, 'backend/src/data/sources/EastMoneyClient.ts'),
+  'utf8'
+);
 const derivedFactorCli = fs.readFileSync(
   path.join(root, 'backend/src/scripts/sync-derived-factors.ts'),
   'utf8'
@@ -207,8 +211,8 @@ assert.match(
 );
 assert.match(
   stockFactorService,
-  /skipThreshold > 0 \|\| \(requiresRealProvider && skipRealProviderThreshold > 0\)/,
-  'local-derived bootstrap must not be skipped by a real-provider threshold it does not require'
+  /if \(skipThreshold > 0 && stocks\.length > 0\)/,
+  'provider quality is only a secondary skip gate; low total coverage must never skip a bootstrap'
 );
 assert.match(
   scheduler,
@@ -320,6 +324,21 @@ assert.match(
   stockFactorService,
   /recordProviderResult[\s\S]{0,600}upserts\?\.valuation[\s\S]{0,900}recordProviderResult\('eastmoney'/,
   'top-level factor-sync counts must include real-provider writes'
+);
+assert.match(
+  eastMoneyClient,
+  /options\.limit \|\| normalizedCodes\.length[\s\S]{0,80}6000/,
+  'EastMoney batch snapshots must not truncate a full-market factor request at 1,000 stocks'
+);
+assert.match(
+  eastMoneyClient,
+  /batch chunk failed[\s\S]{0,3000}queue\.length > 500[\s\S]{0,300}refusing \$\{missing\.length\} single-request fallbacks/,
+  'full-market batch failures must stay chunk-isolated and must not explode into thousands of single requests'
+);
+assert.match(
+  derivedFactorCli,
+  /provider === 'eastmoney'[\s\S]{0,240}processedCoverage < 80[\s\S]{0,220}低于 80% 完成门槛/,
+  'an explicit EastMoney market sync must reject partial-coverage false success'
 );
 assert.match(
   stockFactorService,

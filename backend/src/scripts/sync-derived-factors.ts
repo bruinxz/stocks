@@ -98,6 +98,10 @@ program
         (sum: number, value: any) => sum + Number(value || 0),
         0
       );
+      const processedCoverage =
+        summary.requested_stock_count > 0
+          ? (summary.processed_stock_count / summary.requested_stock_count) * 100
+          : 0;
       if (!summary.skipped && summary.requested_stock_count > 0 && totalUpserts <= 0) {
         const providerErrors = Object.entries(summary.provider_results).flatMap(
           ([name, providerResult]: [string, any]) =>
@@ -107,6 +111,17 @@ program
           `因子同步零落盘，拒绝记录假成功${
             providerErrors.length ? `：${providerErrors.slice(0, 5).join(' | ')}` : ''
           }`
+        );
+      }
+      if (
+        !summary.skipped &&
+        provider === 'eastmoney' &&
+        scope === 'market' &&
+        summary.requested_stock_count >= 100 &&
+        processedCoverage < 80
+      ) {
+        throw new Error(
+          `东方财富全市场因子覆盖仅 ${processedCoverage.toFixed(2)}%，低于 80% 完成门槛`
         );
       }
 
