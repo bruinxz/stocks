@@ -21,6 +21,7 @@ const RUNTIME_SCHEMA_TABLES = [
   'paper_trading_snapshots',
   'research_trading_loop_runs',
   'research_trading_loop_decisions',
+  'daily_attribution_reports',
   'black_swan_events',
   'black_swan_postmortem_reports',
   'risk_alerts',
@@ -70,6 +71,7 @@ const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'paper_trading_trades',
   'research_trading_loop_runs',
   'research_trading_loop_decisions',
+  'daily_attribution_reports',
   'black_swan_events',
   'black_swan_postmortem_reports',
   'task_parameter_audit_logs',
@@ -107,6 +109,16 @@ function readBlackSwanSchemaMigrations() {
       )
     )
     .join('\n');
+}
+
+function readDailyAttributionSchemaMigration() {
+  return fs.readFileSync(
+    path.resolve(
+      __dirname,
+      '../../backend/scripts/migrations/2026-06-23-daily-attribution-reports.sql'
+    ),
+    'utf8'
+  );
 }
 
 function sqlLiteral(value) {
@@ -232,6 +244,9 @@ function buildRuntimeSchemaMigrationSQL(appDbUser = 'stock_admin') {
 
     -- 黑天鹅复盘任务默认启用；两张事实表缺失时不得继续以 COMPLETED 假成功空跑。
     ${readBlackSwanSchemaMigrations()}
+
+    -- 17:00 归因任务的唯一持久化事实表；缺表时不得继续以 COMPLETED 假成功。
+    ${readDailyAttributionSchemaMigration()}
 
     -- 线上历史库曾由 postgres / stock_admin 混合建表，导致应用启动时无法 ALTER/CREATE。
     -- 这里不改业务数据；优先修复 owner，若维护角色不是 superuser/member，则降级为 grant/create 权限。

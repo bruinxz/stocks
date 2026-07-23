@@ -348,12 +348,8 @@ export function normalizeAttributionDate(d: unknown): string {
   if (typeof d === 'string' && d.length >= 10 && DATE_RE.test(d.slice(0, 10))) {
     return d.slice(0, 10);
   }
-  // 默认 = UTC 今日 (cron 在 Asia/Shanghai 注册, 17:00 触发时 UTC ≈ 09:00 同日)
-  const now = new Date();
-  const y = now.getUTCFullYear();
-  const m = String(now.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(now.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  // 手动补跑可能发生在上海凌晨，此时 UTC 仍是前一日；统一按业务时区取日界线。
+  return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 /** 与 IndustryAttributionService 同款 — 空/null 归 '其它'. */

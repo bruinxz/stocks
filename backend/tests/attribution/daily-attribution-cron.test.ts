@@ -735,6 +735,16 @@ function prevDayString(date: string): string {
       /\[DAILY_ATTRIBUTION_GENERATE\]/.test(schedulerSrc)
     );
     assert(
+      '[5.b.6] SchedulerService 不得把组合归因失败标成 COMPLETED',
+      /const attributionFailed = attrSummary\.failed_count > 0[\s\S]{0,700}status: attributionFailed \? 'FAILED' : 'COMPLETED'/m.test(
+        schedulerSrc
+      )
+    );
+    assert(
+      '[5.b.7] SchedulerService 必须把组合归因失败传播到任务状态',
+      /if \(attributionFailed\) \{[\s\S]{0,160}throw new Error/m.test(schedulerSrc)
+    );
+    assert(
       '[5.c.1] SchedulerService defaultTasks 含 DAILY_ATTRIBUTION_GENERATE seed',
       /name:\s*['"]每日归因报告生成['"][\s\S]*?type:\s*'DAILY_ATTRIBUTION_GENERATE'/m.test(
         schedulerSrc

@@ -398,6 +398,16 @@ function testPipelineContracts() {
     '半迁移的旧账户必须在执行前归一化为唯一研究闭环盘'
   );
   assert.match(
+    loopService,
+    /INSERT INTO paper_trading_snapshots[\s\S]{0,900}baseline_day\.snapshot_day[\s\S]{0,900}ON CONFLICT \(portfolio_id, date\) DO NOTHING/,
+    '新研究闭环盘必须锚定上一完整交易日的全现金基线，首日归因不能因缺前快照而跳过'
+  );
+  assert.match(
+    loopService,
+    /bar\.time < \(NOW\(\) AT TIME ZONE 'Asia\/Shanghai'\)::date[\s\S]{0,100}ORDER BY bar\.time DESC[\s\S]{0,40}LIMIT 1/,
+    '基线日界线必须使用上海日期，凌晨启动时不能少退一个交易日'
+  );
+  assert.match(
     globalSync,
     /refresh_multibagger_cn_a[\s\S]{0,200}populate_live_multibagger\.py|populate_live_multibagger\.py[\s\S]{0,300}refresh_multibagger_cn_a/
   );

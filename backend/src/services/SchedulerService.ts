@@ -3214,13 +3214,16 @@ class SchedulerService {
           portfolio_ids: explicitIds.length > 0 ? explicitIds : undefined,
           dry_run: dryRunAttr,
         });
+        const attributionFailed = attrSummary.failed_count > 0;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: attrSummary.total_portfolios,
           completed_items: attrSummary.persisted_count,
           failed_items: attrSummary.failed_count,
-          status: 'COMPLETED',
+          status: attributionFailed ? 'FAILED' : 'COMPLETED',
           completed_at: new Date(),
-          error_message: null,
+          error_message: attributionFailed
+            ? `${attrSummary.failed_count} 个组合归因或持久化失败`
+            : null,
           result_summary: {
             scenario: 'daily_attribution_generate',
             date: attrSummary.date,
@@ -3260,6 +3263,9 @@ class SchedulerService {
                   : '')
               : '')
         );
+        if (attributionFailed) {
+          throw new Error(`${attrSummary.failed_count} 个组合归因或持久化失败`);
+        }
       } else if (task.type === 'AI_DIARY_GENERATE') {
         // US-091 PM-020 — 工作日 18:00 (DAILY_ATTRIBUTION_GENERATE 17:00 之后) 给所有
         // active user 生成 ≤ 500 字 AI 投资日记并 upsert ai_diary_entries.
@@ -4358,8 +4364,11 @@ class SchedulerService {
         }
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: portfolios.length,
-          success_count: ok,
-          failed_count: failed,
+          completed_items: ok,
+          failed_items: failed,
+          status: failed > 0 ? 'FAILED' : 'COMPLETED',
+          completed_at: new Date(),
+          error_message: failed > 0 ? `${failed} 个模拟组合快照生成失败` : null,
           result_summary: {
             scenario: 'paper_trading_daily_snapshot',
             total: portfolios.length,
@@ -4368,6 +4377,9 @@ class SchedulerService {
           },
         });
         logger.info(`[PAPER_TRADING_DAILY_SNAPSHOT] ${ok}/${portfolios.length} OK`);
+        if (failed > 0) {
+          throw new Error(`${failed} 个模拟组合快照生成失败`);
+        }
       } else if (task.type === 'BLACK_SWAN_POSTMORTEM') {
         // US-102 PR-013 — 每 30min 巡最近 24h BlackSwanEvent (PR-010) → 生成
         // BlackSwanPostmortemReport (PR-012). 4 段中本 cron 只填第 1 段

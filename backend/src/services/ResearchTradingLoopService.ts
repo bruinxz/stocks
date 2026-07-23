@@ -500,6 +500,42 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
           )`,
       { replacements: { name: RESEARCH_LOOP_PORTFOLIO_NAME } }
     );
+
+    // A freshly provisioned research-loop account has no previous EOD snapshot, but the
+    // 17:00 attribution contract requires a baseline + today's 16:00 snapshot. Anchor the
+    // initial all-cash state to the latest completed market session. This is an observed
+    // account fact (cash/total_value at provisioning), not a fabricated historical return.
+    await sequelize.query(
+      `WITH baseline_day AS (
+         SELECT bar.time::date AS snapshot_day
+           FROM daily_bars bar
+          WHERE bar.is_trading_day = TRUE
+            AND bar.time < (NOW() AT TIME ZONE 'Asia/Shanghai')::date
+          ORDER BY bar.time DESC
+          LIMIT 1
+       )
+       INSERT INTO paper_trading_snapshots (
+         portfolio_id, date, total_value, current_cash, position_value, created_at, updated_at
+       )
+       SELECT portfolio.id,
+              baseline_day.snapshot_day,
+              portfolio.total_value,
+              portfolio.current_cash,
+              GREATEST(portfolio.total_value - portfolio.current_cash, 0),
+              NOW(),
+              NOW()
+         FROM paper_trading_portfolios portfolio
+         CROSS JOIN baseline_day
+        WHERE portfolio.portfolio_type = 'research_loop'
+          AND portfolio.is_active = TRUE
+          AND baseline_day.snapshot_day IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+              FROM paper_trading_snapshots snapshot
+             WHERE snapshot.portfolio_id = portfolio.id
+          )
+       ON CONFLICT (portfolio_id, date) DO NOTHING`
+    );
   }
 
   async loadLoopPortfolios(user_id?: number): Promise<ResearchLoopPortfolioRow[]> {
