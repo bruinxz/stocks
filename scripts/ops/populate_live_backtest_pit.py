@@ -121,6 +121,8 @@ WHERE RIGHT(stock.symbol, 6) = ANY(%s)
 
 def _load_env(path: Path) -> dict[str, str]:
     values = dict(os.environ)
+    if not path.exists():
+        return values
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#") and "=" in stripped:

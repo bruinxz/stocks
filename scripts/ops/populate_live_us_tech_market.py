@@ -10,6 +10,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import time
+from typing import Callable
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -46,10 +48,14 @@ UNIVERSE = {
     "TSLA": ("Tesla", "stock", "ai_robotics", False, True),
     "AAPL": ("Apple", "stock", "broad_technology", False, True),
 }
+MAX_CAPTURE_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = (1.0, 4.0)
 
 
 def _load_env(path: Path) -> dict[str, str]:
     values = dict(os.environ)
+    if not path.exists():
+        return values
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#") and "=" in stripped:
@@ -152,6 +158,56 @@ def _rows(symbol: str, days: int, available_at: datetime) -> list[dict]:
     return output
 
 
+def _capture_universe(
+    days: int,
+    available_at: datetime,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[list[dict], list[dict[str, object]], list[str]]:
+    """Capture all symbols, retrying only transiently failed symbols.
+
+    A failed symbol is never replaced with a stored or synthetic quote. Retries use lower
+    concurrency to recover from provider throttling while preserving the all-or-nothing
+    completeness gate in ``main``.
+    """
+
+    remaining = set(UNIVERSE)
+    rows_by_symbol: dict[str, list[dict]] = {}
+    attempt_errors: list[dict[str, object]] = []
+
+    for attempt in range(1, MAX_CAPTURE_ATTEMPTS + 1):
+        if not remaining:
+            break
+        if attempt > 1:
+            sleep(RETRY_BACKOFF_SECONDS[attempt - 2])
+        workers = min(5 if attempt == 1 else 2, len(remaining))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            pending = {
+                executor.submit(_rows, symbol, days, available_at): symbol
+                for symbol in sorted(remaining)
+            }
+            for future in as_completed(pending):
+                symbol = pending[future]
+                try:
+                    rows_by_symbol[symbol] = future.result()
+                except Exception as error:
+                    attempt_errors.append(
+                        {
+                            "symbol": symbol,
+                            "attempt": attempt,
+                            "error": str(error)[:200],
+                        }
+                    )
+        remaining.difference_update(rows_by_symbol)
+
+    rows = [
+        row
+        for symbol in UNIVERSE
+        for row in rows_by_symbol.get(symbol, [])
+    ]
+    return rows, attempt_errors, sorted(remaining)
+
+
 INSERT_SQL = """
 INSERT INTO global_tech_daily_quote (
   market_scope, exchange, symbol, instrument_name, instrument_type, theme,
@@ -194,22 +250,8 @@ def main() -> int:
         raise SystemExit("--days must be between 7 and 30")
 
     available_at = datetime.now(timezone.utc).replace(microsecond=0)
-    rows: list[dict] = []
-    failures: list[dict[str, str]] = []
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        pending = {
-            executor.submit(_rows, symbol, args.days, available_at): symbol
-            for symbol in UNIVERSE
-        }
-        for future in as_completed(pending):
-            symbol = pending[future]
-            try:
-                rows.extend(future.result())
-            except Exception as error:
-                failures.append({"symbol": symbol, "error": str(error)[:200]})
-
+    rows, attempt_errors, missing = _capture_universe(args.days, available_at)
     successful_symbols = {row["symbol"] for row in rows}
-    missing = sorted(set(UNIVERSE) - successful_symbols)
     if missing:
         raise RuntimeError(f"US technology capture incomplete: {','.join(missing)}")
 
@@ -229,7 +271,7 @@ def main() -> int:
                 "quote_count": len(rows),
                 "inserted_or_updated": inserted,
                 "successful_symbols": sorted(successful_symbols),
-                "failures": failures,
+                "attempt_errors": attempt_errors,
                 "latest_trading_day": max(row["trading_day"] for row in rows).isoformat(),
             },
             ensure_ascii=False,

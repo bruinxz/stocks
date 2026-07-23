@@ -234,6 +234,8 @@ NASDAQ_HEADERS = {
 
 def _load_env(path: Path) -> dict[str, str]:
     values = dict(os.environ)
+    if not path.exists():
+        return values
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
