@@ -21,6 +21,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'paper_trading_snapshots',
   'research_trading_loop_runs',
   'research_trading_loop_decisions',
+  'black_swan_events',
+  'black_swan_postmortem_reports',
   'risk_alerts',
   'trading_journals',
   'portfolio_simulations',
@@ -68,6 +70,8 @@ const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'paper_trading_trades',
   'research_trading_loop_runs',
   'research_trading_loop_decisions',
+  'black_swan_events',
+  'black_swan_postmortem_reports',
   'task_parameter_audit_logs',
   'financial_reports',
   'analyst_forecasts',
@@ -89,6 +93,20 @@ function readResearchTradingLoopSchemaMigration() {
     ),
     'utf8'
   );
+}
+
+function readBlackSwanSchemaMigrations() {
+  return [
+    '2026-06-20-black-swan-events.sql',
+    '2026-06-20-black-swan-postmortem-reports.sql',
+  ]
+    .map(fileName =>
+      fs.readFileSync(
+        path.resolve(__dirname, '../../backend/scripts/migrations', fileName),
+        'utf8'
+      )
+    )
+    .join('\n');
 }
 
 function sqlLiteral(value) {
@@ -211,6 +229,9 @@ function buildRuntimeSchemaMigrationSQL(appDbUser = 'stock_admin') {
 
     -- 只补研究闭环运行账本结构；常规部署不得隐式重置用户模拟组合。
     ${readResearchTradingLoopSchemaMigration()}
+
+    -- 黑天鹅复盘任务默认启用；两张事实表缺失时不得继续以 COMPLETED 假成功空跑。
+    ${readBlackSwanSchemaMigrations()}
 
     -- 线上历史库曾由 postgres / stock_admin 混合建表，导致应用启动时无法 ALTER/CREATE。
     -- 这里不改业务数据；优先修复 owner，若维护角色不是 superuser/member，则降级为 grant/create 权限。

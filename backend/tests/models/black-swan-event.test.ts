@@ -14,7 +14,7 @@
  *   - JSONB 字段类型签名 + 默认值
  *   - 索引含 (event_type, signature, detected_at) UNIQUE — idempotent 不变量
  *   - migration up/down 形态 (CREATE/DROP, IF NOT EXISTS / IF EXISTS, BEGIN/COMMIT 完整)
- *   - 表达式索引 (detected_at::date) 真生效 (与 BlackSwanWatchdog 30min cron 兼容)
+ *   - 固定 Asia/Shanghai 日界线的表达式索引真生效 (与 BlackSwanWatchdog 30min cron 兼容)
  *   - META-GUARD: model 已挂 database.ts + models/index.ts (与 AIDiaryEntry / DailyAttributionReport
  *     同款两处必挂模式)
  *
@@ -412,10 +412,11 @@ assert(
   /resolved_reason\s+VARCHAR/i.test(migrationUpSrc),
 );
 assert('[7.18] up 含 metadata JSONB NOT NULL', /metadata\s+JSONB\s+NOT NULL/i.test(migrationUpSrc));
-// 关键: 表达式索引 (detected_at::date) — 避免 TIMESTAMPTZ 毫秒级永不重复让 UNIQUE 失效
+// 关键: 先固定 Asia/Shanghai 再取 date；TIMESTAMPTZ 直接 ::date 不是 immutable，
+// PostgreSQL 会拒绝创建表达式索引。
 assert(
-  '[7.19] up 含 UNIQUE INDEX black_swan_events_type_sig_detected_uniq with detected_at::date 表达式',
-  /CREATE UNIQUE INDEX IF NOT EXISTS black_swan_events_type_sig_detected_uniq[\s\S]*?\(event_type,\s*signature,\s*\(detected_at::date\)\)/i.test(
+  '[7.19] up 含 UNIQUE INDEX black_swan_events_type_sig_detected_uniq with Asia/Shanghai date 表达式',
+  /CREATE UNIQUE INDEX IF NOT EXISTS black_swan_events_type_sig_detected_uniq[\s\S]*?event_type,[\s\S]*?signature,[\s\S]*?detected_at AT TIME ZONE 'Asia\/Shanghai'[\s\S]*?::date/i.test(
     migrationUpSrc,
   ),
 );

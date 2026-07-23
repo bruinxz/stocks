@@ -22,7 +22,7 @@
 --   - scope VARCHAR(20)           — symbol / sector / market / portfolio
 --   - symbol VARCHAR(20)          — scope=symbol 时必填 (e.g. '600519.SH')
 --   - signature VARCHAR(255)      — BlackSwanWatchdog.signatureForEvent 输出
---                                    与 (event_type, detected_at::date) 组成业务唯一键
+--                                    与 (event_type, 上海交易日) 组成业务唯一键
 --   - title VARCHAR(200)          — 事件中文标题 (≤ 100 字 cap 由 detector 守)
 --   - description TEXT            — 事件描述 (≤ 500 字 cap 由 detector 守)
 --   - detail JSONB                — 事件 detail snapshot (per-event_type schema)
@@ -33,9 +33,10 @@
 --   - metadata JSONB              — 调用 metadata (cron_run_id / linked_risk_alert_ids[] ...)
 --
 -- 索引:
---   - UNIQUE(event_type, signature, (detected_at::date))
+--   - UNIQUE(event_type, signature, 上海交易日)
 --                                 — 同 type 同 signature 同日只一行 (cron 30min 巡多次去重)
---                                   注意: 用表达式索引 (detected_at::date) 而非裸 detected_at
+--                                   注意: 用固定 Asia/Shanghai 日界线的表达式索引
+--                                         而非裸 detected_at
 --                                         (后者为 TIMESTAMPTZ, 毫秒级永远不重复, UNIQUE 失效).
 --   - (event_type) / (severity) / (scope) / (status) / (symbol) — 多维查询
 --   - (detected_at)               — 按时间排序最近 N 条
@@ -76,10 +77,15 @@ CREATE TABLE IF NOT EXISTS black_swan_events (
   updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- 业务唯一键: (event_type, signature, detected_at::date) — 同 type 同 sig 同日只一行
--- 表达式索引 (detected_at::date) 兼容 cron 30min 内多次 detect 同一事件 (DATE truncation)
+-- 业务唯一键: (event_type, signature, 上海交易日) — 同 type 同 sig 同日只一行。
+-- TIMESTAMPTZ 直接 ::date 依赖 session timezone，不满足 PostgreSQL 表达式索引的
+-- IMMUTABLE 约束；先固定到 Asia/Shanghai 再取 date，既可建索引也符合 A 股日界线。
 CREATE UNIQUE INDEX IF NOT EXISTS black_swan_events_type_sig_detected_uniq
-  ON black_swan_events (event_type, signature, (detected_at::date));
+  ON black_swan_events (
+    event_type,
+    signature,
+    ((detected_at AT TIME ZONE 'Asia/Shanghai')::date)
+  );
 
 CREATE INDEX IF NOT EXISTS idx_black_swan_events_event_type
   ON black_swan_events (event_type);
@@ -106,7 +112,7 @@ COMMENT ON COLUMN black_swan_events.event_type IS '事件类型: ST / SUSPENDED 
 COMMENT ON COLUMN black_swan_events.severity IS '严重度: low / medium / high / critical (与 RiskAlert.level 对齐)';
 COMMENT ON COLUMN black_swan_events.scope IS '影响面: symbol / sector / market / portfolio';
 COMMENT ON COLUMN black_swan_events.symbol IS 'scope=symbol 时必填 (e.g. "600519.SH"); 其它 scope 为 NULL';
-COMMENT ON COLUMN black_swan_events.signature IS 'BlackSwanWatchdog.signatureForEvent 输出; 与 (event_type, detected_at::date) 组成业务唯一键';
+COMMENT ON COLUMN black_swan_events.signature IS 'BlackSwanWatchdog.signatureForEvent 输出; 与 (event_type, Asia/Shanghai 交易日) 组成业务唯一键';
 COMMENT ON COLUMN black_swan_events.title IS '事件中文标题 (≤ 100 字 cap 由 detector 守)';
 COMMENT ON COLUMN black_swan_events.description IS '事件描述详情 (≤ 500 字 cap 由 detector 守)';
 COMMENT ON COLUMN black_swan_events.detail IS '事件 detail snapshot (与 BlackSwanWatchdog.BlackSwanTrigger.detail 对齐, per-event_type schema)';

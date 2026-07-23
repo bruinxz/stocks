@@ -4422,6 +4422,7 @@ class SchedulerService {
           );
         } else {
           logger.warn(`[BLACK_SWAN_POSTMORTEM] FAIL ${bpResult.error || 'unknown_error'}`);
+          throw new Error(`BLACK_SWAN_POSTMORTEM failed: ${bpResult.error || 'unknown_error'}`);
         }
       } else if (task.type === 'BLACK_SWAN_BASELINE') {
         // US-103 PR-014 — 每 30min 扫 partial postmortem → 算 4 baseline
@@ -4483,6 +4484,7 @@ class SchedulerService {
           );
         } else {
           logger.warn(`[BLACK_SWAN_BASELINE] FAIL ${blResult.error || 'unknown_error'}`);
+          throw new Error(`BLACK_SWAN_BASELINE failed: ${blResult.error || 'unknown_error'}`);
         }
       } else if (task.type === 'BLACK_SWAN_TIMELINE') {
         // US-104 PR-015 — 每 30min 扫 partial postmortem → 把事件前 N 天
@@ -4550,6 +4552,7 @@ class SchedulerService {
           );
         } else {
           logger.warn(`[BLACK_SWAN_TIMELINE] FAIL ${tlResult.error || 'unknown_error'}`);
+          throw new Error(`BLACK_SWAN_TIMELINE failed: ${tlResult.error || 'unknown_error'}`);
         }
       } else if (task.type === 'BLACK_SWAN_IMPROVEMENT') {
         // US-105 PR-016 — 每 30min 扫 partial postmortem → 从已填段
@@ -4619,6 +4622,7 @@ class SchedulerService {
           );
         } else {
           logger.warn(`[BLACK_SWAN_IMPROVEMENT] FAIL ${imprResult.error || 'unknown_error'}`);
+          throw new Error(`BLACK_SWAN_IMPROVEMENT failed: ${imprResult.error || 'unknown_error'}`);
         }
       } else if (task.type === 'BLACK_SWAN_QUARTERLY_SUMMARY') {
         // US-134 PR-019 — 每季首日 09:05 把上一季全量 BlackSwanEvent 聚合

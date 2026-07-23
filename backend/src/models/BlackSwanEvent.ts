@@ -26,10 +26,10 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
  *       - ops 看板 → "近 90 天严重事件数 / 类型分布 / 平均恢复时长" 全靠本表;
  *       - PR-014 counterfactual baseline → 引用具体事件 id 跑情景模拟.
  *
- * **(event_type, signature, detected_at::date) 业务唯一**:
+ * **(event_type, signature, Asia/Shanghai 交易日) 业务唯一**:
  *   - PRD US-099 AC: 字段含 (id, detected_at, event_type, severity, scope).
  *   - 同一事件 cron 重跑必须 idempotent (PR-011 cron 30min 巡一次, 同 ST event 30min 内
- *     会重复 detect); 用 (event_type, signature, detected_at::date) 作复合唯一键.
+ *     会重复 detect); 用 (event_type, signature, 上海交易日) 作复合唯一键.
  *   - signature 字段语义沿用 BlackSwanWatchdog.signatureForEvent (ST::SYM / SUSPENDED::SYM
  *     / NEWS::SYM::KW::HASH / SHAREHOLDER_REDUCTION::SYM::WINDOW), PR-011 cron 调它生成.
  *   - 不同日跑 (跨午夜)  → 重新落一行新事件 (业务上是新一天的同 type 事件); 这是与
@@ -83,7 +83,7 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
  *
  * **signature 字段** (业务键的字符串签名):
  *   - 同 BlackSwanWatchdog.signatureForEvent 输出, e.g. 'ST::600519' / 'NEWS::600519::立案::abc12345'
- *   - 落库 + INDEX 让 detector cron 用 (event_type, signature, detected_at::date) 三件套
+ *   - 落库 + INDEX 让 detector cron 用 (event_type, signature, 上海交易日) 三件套
  *     去重 → 同 type 同 signature 同日只一行
  *
  * **source 字段** (检测来源):
@@ -181,7 +181,7 @@ export class BlackSwanEvent extends Model {
     field: 'signature',
     defaultValue: '',
     comment:
-      'BlackSwanWatchdog.signatureForEvent 输出 (e.g. "ST::600519" / "NEWS::600519::立案::abc12345"); 与 (event_type, detected_at::date) 组成业务唯一键',
+      'BlackSwanWatchdog.signatureForEvent 输出 (e.g. "ST::600519" / "NEWS::600519::立案::abc12345"); 与 (event_type, Asia/Shanghai 交易日) 组成业务唯一键',
   })
   declare signature: string;
 
