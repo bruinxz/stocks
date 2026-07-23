@@ -1,0 +1,23 @@
+backend/src/services/ResearchTradingLoopService.ts
+  s_ec1e6492779c20::t_dfc3e1a73a39a7 182-196,1069-1071,1077-1096,1161-1165
+backend/tests/services/research-trading-loop.test.ts
+  s_ec1e6492779c20::t_0ae6cb7ef283b4 9,184-209,218,248-249,257-258,312-320,429
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f845ba90b1701795658763e59660b0b72b4a596b",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
