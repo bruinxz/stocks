@@ -1,0 +1,37 @@
+backend/python/akshare_helper.py
+  s_ec1e6492779c20::t_0a097dc75b6322 2532-2620,6158-6168
+backend/src/constants/cronRegistry.ts
+  s_ec1e6492779c20::t_72370a9a29de7c 172
+backend/src/data/services/FinancialReportSyncService.ts
+  s_ec1e6492779c20::t_245e7b100c9fa3 28-36,61,74,109-208
+backend/src/data/sources/FinancialReportClient.ts
+  s_ec1e6492779c20::t_2bbb29b6119db9 9,39-51
+backend/src/quant/factors/library/GrowthFactor.ts
+  s_ec1e6492779c20::t_81f57c60360e04 108-118,131,142,145-147
+backend/src/scripts/sync-financial-report.ts
+  s_ec1e6492779c20::t_0a2a66f3274449 4,18-19,30-85,94,121-137
+backend/src/services/SchedulerService.ts
+  s_ec1e6492779c20::t_fafd21fe04e1b2 5142-5145,7067,7071
+backend/tests/factors/GrowthFactor.test.ts
+  s_ec1e6492779c20::t_2297fc312e31b1 18,151-167,254-274
+backend/tests/services/data-refresh-contract.test.ts
+  s_ec1e6492779c20::t_b0fcaa45140aff 100-111,334-355,358-359
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "6252cb3bf33a41518cd0cfb390fe45972da5886d",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
