@@ -1,0 +1,29 @@
+backend/scripts/migrations/2026-07-24-factor-pit-replay.sql
+  s_ec1e6492779c20::t_d115f5621ff2bb 1-35
+backend/src/models/FactorScore.ts
+  s_ec1e6492779c20::t_9f1ddbe76099b4 116-123
+backend/src/quant/factors/FactorPipeline.ts
+  s_ec1e6492779c20::t_ac53fb78038a65 47-53,146-149,189-193,246,259-260,271-272,279-286
+scripts/ops/prepare_backtest_pit_factors.py
+  s_ec1e6492779c20::t_9e150b6c4ae0b9 1-276
+scripts/ops/sync_global_markets_daily.py
+  s_ec1e6492779c20::t_bbcc5999fab22f 34-38,437-447
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "440764164e9f628016329442104aa81e88afef18",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
