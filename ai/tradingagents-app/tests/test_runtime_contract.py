@@ -79,6 +79,9 @@ class VendoredRuntimeContractTest(unittest.TestCase):
 
         self.assertIn('os.makedirs(self.config["data_cache_dir"]', graph)
         self.assertNotIn('self.config["project_dir"], "dataflows/data_cache"', graph)
+        self.assertIn("guard_company_news", graph)
+        self.assertIn("state_log_path = self._log_state", graph)
+        self.assertIn("return str(log_path)", graph)
         self.assertIn("TRADINGAGENTS_DATA_CACHE_DIR", local_cache)
         self.assertIn("ProtectSystem=strict", unit)
         self.assertIn("ReadWritePaths=/opt/stocks/shared/tradingagents", unit)

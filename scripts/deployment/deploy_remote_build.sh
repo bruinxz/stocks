@@ -342,6 +342,16 @@ APPLY_REALTIME_QUOTE_DEDUP_MIGRATION=1 NODE_ENV=production \
   node dist/scripts/apply-realtime-quote-dedup-migration.js
 EOF
 
+echo "▶ [6/9] Apply and verify the AI analysis-report archive schema..."
+ssh_deploy "bash -s" <<EOF
+set -euo pipefail
+CURRENT='$CURRENT'
+cd "\$CURRENT/backend"
+test -f .env
+APPLY_AI_STOCK_ANALYSIS_REPORT_MIGRATION=1 NODE_ENV=production \
+  node dist/scripts/apply-ai-stock-analysis-reports-migration.js
+EOF
+
 echo "▶ [6/9] Apply and verify page projection schema migrations..."
 ssh_deploy "bash -s" <<EOF
 set -euo pipefail

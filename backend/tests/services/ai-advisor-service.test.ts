@@ -160,16 +160,20 @@ async function testConstants() {
 // ---------------------------------------------------------------------------
 
 async function testNormalizeAnalysisDimensions() {
-  assertEqual(
-    'normalize empty → defaults all 5',
-    normalizeAnalysisDimensions(undefined),
-    ['fundamental', 'technical', 'capital', 'news', 'sentiment']
-  );
-  assertEqual(
-    'normalize empty array → defaults all 5',
-    normalizeAnalysisDimensions([]),
-    ['fundamental', 'technical', 'capital', 'news', 'sentiment']
-  );
+  assertEqual('normalize empty → defaults all 5', normalizeAnalysisDimensions(undefined), [
+    'fundamental',
+    'technical',
+    'capital',
+    'news',
+    'sentiment',
+  ]);
+  assertEqual('normalize empty array → defaults all 5', normalizeAnalysisDimensions([]), [
+    'fundamental',
+    'technical',
+    'capital',
+    'news',
+    'sentiment',
+  ]);
   assertEqual(
     'normalize lowercase subset',
     normalizeAnalysisDimensions(['fundamental', 'technical']),
@@ -211,12 +215,36 @@ async function testNormalizeRecommendation() {
   assertEqual('recommendation empty → unknown', normalizeRecommendation(''), 'unknown');
   assertEqual('recommendation null → unknown', normalizeRecommendation(null), 'unknown');
   assertEqual('recommendation undefined → unknown', normalizeRecommendation(undefined), 'unknown');
-  assertEqual('recommendation 强烈买入 → strong_buy', normalizeRecommendation('强烈买入'), 'strong_buy');
-  assertEqual('recommendation 重点推荐 → strong_buy', normalizeRecommendation('重点推荐'), 'strong_buy');
-  assertEqual('recommendation STRONG_BUY → strong_buy', normalizeRecommendation('STRONG_BUY'), 'strong_buy');
-  assertEqual('recommendation strong-buy → strong_buy', normalizeRecommendation('strong-buy'), 'strong_buy');
-  assertEqual('recommendation 强烈卖出 → strong_sell', normalizeRecommendation('强烈卖出'), 'strong_sell');
-  assertEqual('recommendation 强烈减持 → strong_sell', normalizeRecommendation('强烈减持'), 'strong_sell');
+  assertEqual(
+    'recommendation 强烈买入 → strong_buy',
+    normalizeRecommendation('强烈买入'),
+    'strong_buy'
+  );
+  assertEqual(
+    'recommendation 重点推荐 → strong_buy',
+    normalizeRecommendation('重点推荐'),
+    'strong_buy'
+  );
+  assertEqual(
+    'recommendation STRONG_BUY → strong_buy',
+    normalizeRecommendation('STRONG_BUY'),
+    'strong_buy'
+  );
+  assertEqual(
+    'recommendation strong-buy → strong_buy',
+    normalizeRecommendation('strong-buy'),
+    'strong_buy'
+  );
+  assertEqual(
+    'recommendation 强烈卖出 → strong_sell',
+    normalizeRecommendation('强烈卖出'),
+    'strong_sell'
+  );
+  assertEqual(
+    'recommendation 强烈减持 → strong_sell',
+    normalizeRecommendation('强烈减持'),
+    'strong_sell'
+  );
   assertEqual('recommendation 买入 → buy', normalizeRecommendation('买入'), 'buy');
   assertEqual('recommendation BUY → buy', normalizeRecommendation('BUY'), 'buy');
   assertEqual('recommendation 加仓 → buy', normalizeRecommendation('加仓'), 'buy');
@@ -253,15 +281,11 @@ async function testBuildKeyPoints() {
     },
     dims
   );
-  assertEqual(
-    'buildKeyPoints accepts structured key_points dict',
-    kp1,
-    {
-      fundamental: ['ROE 25%', '营收 +15%'],
-      technical: ['MACD 金叉'],
-      capital: ['北向连续买入'],
-    }
-  );
+  assertEqual('buildKeyPoints accepts structured key_points dict', kp1, {
+    fundamental: ['ROE 25%', '营收 +15%'],
+    technical: ['MACD 金叉'],
+    capital: ['北向连续买入'],
+  });
 
   // 2) detail subfield map (no key_points) → 智能映射
   const kp2 = buildKeyPoints(
@@ -272,34 +296,22 @@ async function testBuildKeyPoints() {
     },
     dims
   );
-  assertEqual(
-    'buildKeyPoints maps subfields',
-    kp2,
-    {
-      fundamental: ['基本面：营收稳定'],
-      technical: ['技术面：MACD 金叉'],
-      capital: ['资金面：主力净流入'],
-    }
-  );
+  assertEqual('buildKeyPoints maps subfields', kp2, {
+    fundamental: ['基本面：营收稳定'],
+    technical: ['技术面：MACD 金叉'],
+    capital: ['资金面：主力净流入'],
+  });
 
   // 3) detail 是 string → 当 fundamental（dim 中含 fundamental）
   const kp3 = buildKeyPoints('A whole-text rationale', ['fundamental', 'technical']);
-  assertEqual(
-    'buildKeyPoints fallback string → fundamental only',
-    kp3,
-    {
-      fundamental: ['A whole-text rationale'],
-      technical: [],
-    }
-  );
+  assertEqual('buildKeyPoints fallback string → fundamental only', kp3, {
+    fundamental: ['A whole-text rationale'],
+    technical: [],
+  });
 
   // 4) detail null → 全空 keys
   const kp4 = buildKeyPoints(null, ['fundamental', 'technical']);
-  assertEqual(
-    'buildKeyPoints null → empty maps',
-    kp4,
-    { fundamental: [], technical: [] }
-  );
+  assertEqual('buildKeyPoints null → empty maps', kp4, { fundamental: [], technical: [] });
 
   // 5) detail.key_points 的 dimension 不在 dims 中 → 忽略
   const kp5 = buildKeyPoints(
@@ -331,11 +343,10 @@ async function testBuildKeyPoints() {
 
   // 7) detail 是 string 但 dims 不含 fundamental → 全空
   const kp7 = buildKeyPoints('text', ['technical', 'news']);
-  assertEqual(
-    'buildKeyPoints string fallback respects dims (no fundamental → empty)',
-    kp7,
-    { technical: [], news: [] }
-  );
+  assertEqual('buildKeyPoints string fallback respects dims (no fundamental → empty)', kp7, {
+    technical: [],
+    news: [],
+  });
 
   // 8) sentiment maps to multiple subfields (sentiment / mood / kol_summary)
   const kp8 = buildKeyPoints(
@@ -344,11 +355,7 @@ async function testBuildKeyPoints() {
     },
     ['sentiment']
   );
-  assertEqual(
-    'buildKeyPoints sentiment maps to kol_summary',
-    kp8,
-    { sentiment: ['雪球热度上升'] }
-  );
+  assertEqual('buildKeyPoints sentiment maps to kol_summary', kp8, { sentiment: ['雪球热度上升'] });
 
   // 9) news 字段也接受 announcements
   const kp9 = buildKeyPoints(
@@ -357,11 +364,9 @@ async function testBuildKeyPoints() {
     },
     ['news']
   );
-  assertEqual(
-    'buildKeyPoints news maps to announcements',
-    kp9,
-    { news: ['Q3 业绩预告', '股权激励'] }
-  );
+  assertEqual('buildKeyPoints news maps to announcements', kp9, {
+    news: ['Q3 业绩预告', '股权激励'],
+  });
 
   // 10) 生产 TradingAgents 形态：detail={}，完整论证只在 rationale。
   const productionRationale = [
@@ -372,10 +377,13 @@ async function testBuildKeyPoints() {
     '#### （3）AI赛道逻辑缺乏基本面验证，确定性不足',
     'AI手机备案利好虽为行业趋势，但公司未披露AI订单占比、中报业绩预告等硬数据。',
   ].join('\n');
-  const kp10 = buildKeyPoints(
-    { detail: {}, rationale: productionRationale },
-    ['fundamental', 'technical', 'capital', 'news', 'sentiment']
-  );
+  const kp10 = buildKeyPoints({ detail: {}, rationale: productionRationale }, [
+    'fundamental',
+    'technical',
+    'capital',
+    'news',
+    'sentiment',
+  ]);
   assert(
     'buildKeyPoints extracts all requested dimensions from rationale when detail is empty',
     Object.values(kp10).every(points => points.length > 0),
@@ -397,15 +405,10 @@ async function testBuildAnalysisSummary() {
   const dims: AnalysisDimension[] = ['fundamental', 'technical'];
 
   // 1) full case：含 stock_name + recommendation + confidence + risk
-  const sum1 = buildAnalysisSummary(
-    'sh.600519',
-    '贵州茅台',
-    'buy',
-    85,
-    '中',
-    dims,
-    { fundamental: ['核心要点 F'], technical: ['核心要点 T'] }
-  );
+  const sum1 = buildAnalysisSummary('sh.600519', '贵州茅台', 'buy', 85, '中', dims, {
+    fundamental: ['核心要点 F'],
+    technical: ['核心要点 T'],
+  });
   assert(
     'summary contains stock header',
     sum1.includes('sh.600519') && sum1.includes('贵州茅台'),
@@ -422,7 +425,11 @@ async function testBuildAnalysisSummary() {
     fundamental: ['F'],
     technical: ['T'],
   });
-  assert('summary handles null stock_name', sum2.includes('sh.600519') && !sum2.includes('null'), sum2);
+  assert(
+    'summary handles null stock_name',
+    sum2.includes('sh.600519') && !sum2.includes('null'),
+    sum2
+  );
 
   // 3) dim 有 multiple key_points → 多行
   const sum3 = buildAnalysisSummary('sh.000001', '平安银行', 'sell', 70, null, dims, {
@@ -441,11 +448,7 @@ async function testBuildAnalysisSummary() {
 
   // 5) unknown recommendation 显示中文 label
   const sum5 = buildAnalysisSummary('sh.600519', null, 'unknown', null, null, [], {});
-  assert(
-    'summary unknown recommendation label',
-    sum5.includes('暂无明确建议'),
-    sum5
-  );
+  assert('summary unknown recommendation label', sum5.includes('暂无明确建议'), sum5);
 
   // 6) confidence 0.5 → 不显示（must be finite number, but rounded down to 1 displayed as 1）
   const sum6 = buildAnalysisSummary('sh.000001', null, 'buy', 92.3, null, [], {});
@@ -567,11 +570,7 @@ async function testBuildResultFromPayload() {
   );
   assertEqual('FAILED → status', r3.status, 'failed');
   assertEqual('FAILED → recommendation unknown', r3.recommendation, 'unknown');
-  assert(
-    'FAILED → error 文案落库',
-    (r3.error || '').includes('TradingAgents'),
-    r3.error || ''
-  );
+  assert('FAILED → error 文案落库', (r3.error || '').includes('TradingAgents'), r3.error || '');
 
   // 4) data 完全缺失 (没有 data 字段) → 也走 FAILED 分支
   const r4 = buildResultFromPayload({ status: 'COMPLETED' } as any, baseCtx);
@@ -586,10 +585,72 @@ async function testBuildResultFromPayload() {
   assertEqual('async → task_id', r5.task_id, 'task-xyz');
   assertEqual('async → summary empty', r5.summary, '');
 
+  // 异步请求的远端失败必须保留真实错误，不能伪装成无 task_id 的 pending。
+  const r5Failed = buildResultFromPayload(
+    { status: 'FAILED', data: { error: 'connect ECONNREFUSED 127.0.0.1:8000' } },
+    { ...baseCtx, is_async: true }
+  );
+  assertEqual('async FAILED → status=failed', r5Failed.status, 'failed');
+  assert(
+    'async FAILED → preserves remote error',
+    (r5Failed.error || '').includes('ECONNREFUSED'),
+    r5Failed.error || ''
+  );
+
+  const r5MissingTask = buildResultFromPayload(
+    { status: 'PENDING' },
+    { ...baseCtx, is_async: true }
+  );
+  assertEqual('async PENDING missing task_id → failed', r5MissingTask.status, 'failed');
+  assert(
+    'async PENDING missing task_id → actionable error',
+    (r5MissingTask.error || '').includes('task_id'),
+    r5MissingTask.error || ''
+  );
+
   // 6) status=RUNNING（异步 in flight）→ pending
   const r6 = buildResultFromPayload({ status: 'RUNNING', task_id: 'task-r' }, baseCtx);
   assertEqual('RUNNING → status=pending', r6.status, 'pending');
   assertEqual('RUNNING → task_id', r6.task_id, 'task-r');
+
+  const r6Processing = buildResultFromPayload({ status: 'PROCESSING', task_id: 'task-p' }, baseCtx);
+  assertEqual('PROCESSING → status=pending', r6Processing.status, 'pending');
+
+  const r6RejectedNews = buildResultFromPayload(
+    {
+      status: 'COMPLETED',
+      data: {
+        decision: 'HOLD',
+        key_points: {
+          fundamental: ['基本面有数据'],
+          technical: ['技术面有数据'],
+          capital: ['资金面有数据'],
+          news: ['错误关联的公司事件'],
+          sentiment: ['情绪面有数据'],
+        },
+        detail: {
+          evidence_audit: {
+            company_news: {
+              status: 'rejected',
+              reason: 'explicit_company_attribution_mismatch',
+            },
+          },
+        },
+      },
+    },
+    baseCtx
+  );
+  assertEqual('rejected company news → partial', r6RejectedNews.status, 'partial');
+  assert(
+    'rejected company news → explicit isolation error',
+    (r6RejectedNews.error || '').includes('归属冲突'),
+    r6RejectedNews.error || ''
+  );
+  assertEqual(
+    'rejected company news → evidence audit archived',
+    (r6RejectedNews.metadata.tradingagents_evidence_audit as any)?.company_news?.status,
+    'rejected'
+  );
 
   // 7) data.confidence 兜底 (data.confidence_score 缺失但 data.confidence 在)
   const r7 = buildResultFromPayload(
@@ -674,6 +735,12 @@ async function testNormalizeTradingAgentsError() {
     normalizeTradingAgentsError({ message: 'oops' }),
     'oops'
   );
+  const refusedMsg = normalizeTradingAgentsError('connect ECONNREFUSED 127.0.0.1:8000');
+  assert(
+    'normalize local TradingAgents connection refusal → actionable message',
+    refusedMsg.includes('服务暂不可用') && refusedMsg.includes('ECONNREFUSED'),
+    refusedMsg
+  );
   // KeyError: '日期' 特殊文案
   const dateMsg = normalizeTradingAgentsError("KeyError: '日期'");
   assert(
@@ -684,11 +751,7 @@ async function testNormalizeTradingAgentsError() {
 
   // 'Cannot calculate requested indicators' 特殊文案
   const indMsg = normalizeTradingAgentsError('Cannot calculate requested indicators');
-  assert(
-    'normalize indicator failure → 友好中文',
-    indMsg.includes('技术指标计算失败'),
-    indMsg
-  );
+  assert('normalize indicator failure → 友好中文', indMsg.includes('技术指标计算失败'), indMsg);
 }
 
 // ---------------------------------------------------------------------------
@@ -713,11 +776,7 @@ async function testAnalyzeSingleStock_HappyPath() {
   assertEqual('happy: stock_name resolved', result.stock_name, '贵州茅台');
   assertEqual('happy: persisted=true', result.persisted, true);
   assertEqual('happy: 1 save captured', state.saves.length, 1);
-  assertEqual(
-    'happy: persisted report_id matches',
-    state.saves[0].report_id,
-    result.report_id
-  );
+  assertEqual('happy: persisted report_id matches', state.saves[0].report_id, result.report_id);
   assertEqual('happy: user_id in metadata', state.saves[0].metadata.user_id, 7);
   assert(
     'happy: summary 包含建议 + 维度',
@@ -748,11 +807,7 @@ async function testAnalyzeSingleStock_Partial() {
   const result = await service.analyzeSingleStock('sh.000001');
   assertEqual('partial: status=partial', result.status, 'partial');
   assertEqual('partial: recommendation=hold', result.recommendation, 'hold');
-  assert(
-    'partial: error 字段提示',
-    (result.error || '').includes('部分维度'),
-    result.error || ''
-  );
+  assert('partial: error 字段提示', (result.error || '').includes('部分维度'), result.error || '');
   assertEqual('partial: persisted=true', result.persisted, true);
   // capital/news/sentiment 的 key_points 应为 []
   assertEqual('partial: capital empty', result.key_points.capital, []);
@@ -872,11 +927,7 @@ async function testAnalyzeSingleStock_RemoteThrowDoubleDefense() {
   const result = await service.analyzeSingleStock('sh.600519');
   // 双重防御：DataSource throw 时也走 failed 分支不抛
   assertEqual('remote throw → status=failed', result.status, 'failed');
-  assert(
-    'remote throw → error 描述',
-    (result.error || '').length > 0,
-    result.error || ''
-  );
+  assert('remote throw → error 描述', (result.error || '').length > 0, result.error || '');
 }
 
 async function testAnalyzeSingleStock_TaskLabelMetadata() {
@@ -913,11 +964,7 @@ async function testAnalyzeSingleStock_StockCodeNormalization() {
     result.stock_code.includes('600519'),
     result.stock_code
   );
-  assert(
-    'analyze: report_id 含 600519',
-    result.report_id.includes('600519'),
-    result.report_id
-  );
+  assert('analyze: report_id 含 600519', result.report_id.includes('600519'), result.report_id);
 }
 
 // ---------------------------------------------------------------------------

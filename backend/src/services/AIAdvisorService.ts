@@ -50,6 +50,10 @@ export function normalizeTradingAgentsError(error: any): string {
 
   if (!message) return 'TradingAgents 远端任务失败，未返回具体原因';
 
+  if (message.includes('ECONNREFUSED') && message.includes('127.0.0.1:8000')) {
+    return '本机 TradingAgents 分析服务暂不可用（ECONNREFUSED 127.0.0.1:8000），请稍后重试。';
+  }
+
   if (
     message === "'日期'" ||
     message.includes("KeyError: '日期'") ||
@@ -539,8 +543,43 @@ export function buildResultFromPayload(
 ): AnalyzeSingleStockResult {
   const statusRaw = String(payload?.status || '').toUpperCase();
 
+  const failedResult = (error: string): AnalyzeSingleStockResult => ({
+    report_id: ctx.report_id,
+    stock_code: ctx.stock_code,
+    stock_name: ctx.stock_name,
+    dimensions: ctx.dimensions,
+    summary: '',
+    recommendation: 'unknown',
+    confidence_score: null,
+    risk_level: null,
+    key_points: Object.fromEntries(ctx.dimensions.map(d => [d, []])) as Record<string, string[]>,
+    status: 'failed',
+    task_id: payload?.task_id || null,
+    target_date: ctx.target_date,
+    error,
+    generated_at: ctx.now.toISOString(),
+    metadata: { ...ctx.metadata, raw_status: statusRaw },
+    persisted: false,
+  });
+
+  // 远端连接错误会被 DataSource 规范化为 FAILED payload。必须先于异步分支处理，
+  // 否则 is_async=true 会把真实 ECONNREFUSED 掩盖成一个没有 task_id 的 pending 任务。
+  if (statusRaw === 'FAILED') {
+    return failedResult(
+      normalizeTradingAgentsError(payload?.data || payload) ||
+        'TradingAgents 返回了未识别的失败响应'
+    );
+  }
+
+  const isRemoteInFlight = ['PENDING', 'RUNNING', 'PROCESSING'].includes(statusRaw);
+  const hasTaskId = typeof payload?.task_id === 'string' && payload.task_id.trim().length > 0;
+
+  if (isRemoteInFlight && !hasTaskId) {
+    return failedResult('TradingAgents 异步响应缺少 task_id，无法继续轮询');
+  }
+
   // 异步任务（TradingAgents 后台跑）
-  if (ctx.is_async || statusRaw === 'PENDING' || statusRaw === 'RUNNING') {
+  if (isRemoteInFlight || (ctx.is_async && hasTaskId && !payload?.data)) {
     return {
       report_id: ctx.report_id,
       stock_code: ctx.stock_code,
@@ -562,28 +601,11 @@ export function buildResultFromPayload(
   }
 
   // 失败 payload
-  if (statusRaw === 'FAILED' || !payload?.data) {
+  if (!payload?.data) {
     const err =
       normalizeTradingAgentsError(payload?.data || payload) ||
       'TradingAgents 返回了未识别的响应结构';
-    return {
-      report_id: ctx.report_id,
-      stock_code: ctx.stock_code,
-      stock_name: ctx.stock_name,
-      dimensions: ctx.dimensions,
-      summary: '',
-      recommendation: 'unknown',
-      confidence_score: null,
-      risk_level: null,
-      key_points: Object.fromEntries(ctx.dimensions.map(d => [d, []])) as Record<string, string[]>,
-      status: 'failed',
-      task_id: payload?.task_id || null,
-      target_date: ctx.target_date,
-      error: err,
-      generated_at: ctx.now.toISOString(),
-      metadata: { ...ctx.metadata, raw_status: statusRaw },
-      persisted: false,
-    };
+    return failedResult(err);
   }
 
   // 成功 payload
@@ -591,8 +613,21 @@ export function buildResultFromPayload(
   const recommendation = normalizeRecommendation(data.decision);
   const keyPoints = buildKeyPoints(data, ctx.dimensions);
   const filledDims = ctx.dimensions.filter(d => (keyPoints[d] || []).length > 0).length;
+  const evidenceAudit =
+    data.detail && typeof data.detail === 'object' && !Array.isArray(data.detail)
+      ? data.detail.evidence_audit
+      : null;
+  const companyNewsEvidenceStatus = String(
+    evidenceAudit?.company_news?.status || ''
+  ).toLowerCase();
+  const socialNewsEvidenceStatus = String(evidenceAudit?.social_news?.status || '').toLowerCase();
+  const rejectedCompanyNews =
+    ctx.dimensions.includes('news') && companyNewsEvidenceStatus === 'rejected';
+  const rejectedSocialNews =
+    ctx.dimensions.includes('sentiment') && socialNewsEvidenceStatus === 'rejected';
+  const rejectedEvidence = rejectedCompanyNews || rejectedSocialNews;
   const status: 'completed' | 'partial' =
-    filledDims === ctx.dimensions.length ? 'completed' : 'partial';
+    filledDims === ctx.dimensions.length && !rejectedEvidence ? 'completed' : 'partial';
 
   const confidence = Number.isFinite(data.confidence_score)
     ? Number(data.confidence_score)
@@ -625,12 +660,18 @@ export function buildResultFromPayload(
     status,
     task_id: payload?.task_id || null,
     target_date: ctx.target_date,
-    error: status === 'partial' ? '部分维度缺失关键要点（key_points 不完整）' : null,
+    error:
+      status === 'partial'
+        ? rejectedEvidence
+          ? '公司新闻证据存在证券归属冲突，相关事件已隔离，未用于交易判断'
+          : '部分维度缺失关键要点（key_points 不完整）'
+        : null,
     generated_at: ctx.now.toISOString(),
     metadata: {
       ...ctx.metadata,
       raw_status: statusRaw || 'COMPLETED',
       ...(sourceRationale ? { tradingagents_rationale: sourceRationale } : {}),
+      ...(evidenceAudit ? { tradingagents_evidence_audit: evidenceAudit } : {}),
     },
     persisted: false,
   };

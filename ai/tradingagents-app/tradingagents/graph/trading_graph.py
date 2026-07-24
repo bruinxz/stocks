@@ -38,6 +38,7 @@ from .setup import GraphSetup
 from .propagation import Propagator
 from .reflection import Reflector
 from .signal_processing import SignalProcessor
+from .evidence_guard import guard_company_news
 
 
 class TradingAgentsGraph:
@@ -61,6 +62,7 @@ class TradingAgentsGraph:
         self.debug = debug
         self.config = config or DEFAULT_CONFIG
         self.callbacks = callbacks or []
+        self.evidence_audit: Dict[str, Dict[str, str]] = {}
 
         # Update the interface's config
         set_config(self.config)
@@ -344,9 +346,17 @@ class TradingAgentsGraph:
                 if a_type == "market":
                     merged_state["market_report"] = get_val(final_chunk, "market_report")
                 elif a_type == "social":
-                    merged_state["sentiment_report"] = get_val(final_chunk, "sentiment_report")
+                    guarded_sentiment, audit = guard_company_news(
+                        get_val(final_chunk, "sentiment_report"), company_name
+                    )
+                    merged_state["sentiment_report"] = guarded_sentiment
+                    self.evidence_audit["social_news"] = audit
                 elif a_type == "news":
-                    merged_state["news_report"] = get_val(final_chunk, "news_report")
+                    guarded_news, audit = guard_company_news(
+                        get_val(final_chunk, "news_report"), company_name
+                    )
+                    merged_state["news_report"] = guarded_news
+                    self.evidence_audit["company_news"] = audit
                 elif a_type == "fundamentals":
                     merged_state["fundamentals_report"] = get_val(final_chunk, "fundamentals_report")
                     
@@ -388,9 +398,17 @@ class TradingAgentsGraph:
                 if a_type == "market":
                     merged_state["market_report"] = final_analyst_state.get("market_report", "")
                 elif a_type == "social":
-                    merged_state["sentiment_report"] = final_analyst_state.get("sentiment_report", "")
+                    guarded_sentiment, audit = guard_company_news(
+                        final_analyst_state.get("sentiment_report", ""), company_name
+                    )
+                    merged_state["sentiment_report"] = guarded_sentiment
+                    self.evidence_audit["social_news"] = audit
                 elif a_type == "news":
-                    merged_state["news_report"] = final_analyst_state.get("news_report", "")
+                    guarded_news, audit = guard_company_news(
+                        final_analyst_state.get("news_report", ""), company_name
+                    )
+                    merged_state["news_report"] = guarded_news
+                    self.evidence_audit["company_news"] = audit
                 elif a_type == "fundamentals":
                     merged_state["fundamentals_report"] = final_analyst_state.get("fundamentals_report", "")
 
@@ -403,7 +421,9 @@ class TradingAgentsGraph:
         self.curr_state = final_state
 
         # Log state
-        self._log_state(trade_date, final_state)
+        state_log_path = self._log_state(trade_date, final_state)
+        if not log_file_path:
+            log_file_path = state_log_path
 
         # Return final state, processed decision, full rationale, and log path
         return final_state, self.process_signal(final_state["final_trade_decision"]), final_state["final_trade_decision"], log_file_path
@@ -438,6 +458,7 @@ class TradingAgentsGraph:
             },
             "investment_plan": final_state["investment_plan"],
             "final_trade_decision": final_state["final_trade_decision"],
+            "evidence_audit": self.evidence_audit,
         }
 
         # Save to file
@@ -447,6 +468,7 @@ class TradingAgentsGraph:
         log_path = directory / f"full_states_log_{trade_date}.json"
         with open(log_path, "w", encoding="utf-8") as f:
             json.dump(self.log_states_dict[str(trade_date)], f, indent=4)
+        return str(log_path)
 
     def reflect_and_remember(self, returns_losses):
         """Reflect on decisions and update memory based on returns."""

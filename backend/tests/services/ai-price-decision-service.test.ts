@@ -420,6 +420,28 @@ async function testAsyncService(): Promise<void> {
   equal('异步提交返回 task_id', submitted.task_id, 'task-async-1');
   equal('异步提交只调用一次分析入口', analyzeCalls, 1);
 
+  let archiveFailure = '';
+  const unarchivedService = new AIPriceDecisionService(
+    {
+      async analyzeSingleStock() {
+        return { ...stored, persisted: false };
+      },
+      async getTaskStatus() {
+        throw new Error('不应轮询未归档任务');
+      },
+    } as any,
+    dataSource
+  );
+  try {
+    await unarchivedService.submitAsync('sh.600519', {
+      user_id: 23,
+      position_state: 'watching',
+    });
+  } catch (error: any) {
+    archiveFailure = String(error?.message || error);
+  }
+  assert('异步任务未归档时立即失败', archiveFailure.includes('报告归档失败'));
+
   const completed = await service.getAsyncResult('task-async-1', 23);
   equal('异步轮询完成', completed?.task_phase, 'completed');
   equal('异步轮询保留真实耗时', completed?.elapsed_time, 842.5);

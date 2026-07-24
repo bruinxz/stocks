@@ -1131,6 +1131,18 @@ async function initializeApp() {
           console.warn('Failed to sync AIInvestmentSignal table:', aiSignalSyncError.message);
         }
 
+        // 全量 alter 可能先被任意历史表阻断；主动分析仍必须能归档并供轮询查询。
+        try {
+          console.log('Attempting to sync AIStockAnalysisReport table separately...');
+          const AIStockAnalysisReportModel = sequelize.models.AIStockAnalysisReport;
+          if (AIStockAnalysisReportModel) {
+            await AIStockAnalysisReportModel.sync();
+            console.log('AIStockAnalysisReport table synced successfully');
+          }
+        } catch (aiReportSyncError) {
+          console.warn('Failed to sync AIStockAnalysisReport table:', aiReportSyncError.message);
+        }
+
         try {
           console.log('Attempting to sync BudgetPolicyVersionSnapshot table separately...');
           const BudgetPolicyVersionSnapshotModel = sequelize.models.BudgetPolicyVersionSnapshot;

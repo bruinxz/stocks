@@ -50,6 +50,10 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
     { fields: ['recommendation'] },
     { fields: ['status'] },
     { fields: ['user_id'] },
+    {
+      fields: ['task_id', 'user_id'],
+      name: 'ai_stock_analysis_reports_task_user_idx',
+    },
     { fields: ['engine_variant'] },
     { fields: ['shadow_of_report_id'] },
   ],

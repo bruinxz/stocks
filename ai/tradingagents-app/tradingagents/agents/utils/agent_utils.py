@@ -41,7 +41,12 @@ def build_instrument_context(ticker: str) -> str:
     return (
         f"The instrument to analyze is `{ticker}`. "
         "Use this exact ticker in every tool call, report, and recommendation, "
-        "preserving any exchange suffix (e.g. `.TO`, `.L`, `.HK`, `.T`)."
+        "preserving any exchange suffix (e.g. `.TO`, `.L`, `.HK`, `.T`). "
+        "Evidence rule: never attribute a company-specific event to this instrument unless "
+        "the tool evidence clearly names this exact ticker or company. A keyword hit, a "
+        "multi-stock list, or a source that admits a ticker/company mismatch is not evidence. "
+        "Discard mismatched items completely and state that verified evidence is unavailable; "
+        "do not repeat the rejected event in debates or the final recommendation."
     )
 
 def create_msg_delete():

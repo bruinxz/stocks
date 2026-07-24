@@ -733,6 +733,9 @@ export class AIPriceDecisionService {
     if (analysis.status !== 'pending' || !analysis.task_id) {
       throw new Error(analysis.error || 'TradingAgents 未返回可轮询的异步任务 ID');
     }
+    if (!analysis.persisted) {
+      throw new Error('AI 会审任务已提交，但报告归档失败，无法安全轮询；请稍后重试');
+    }
 
     const metadata: Record<string, unknown> = {
       ...(analysis.metadata || {}),
