@@ -1,0 +1,21 @@
+backend/src/portfolio/internal/PaperTradingAutomationService.ts
+  s_ec1e6492779c20::t_96aa8ccf577bb9 395-396,1344,1356,1388,1393-1406,1418
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1dee2dca6ce3d36f3f8926821d030c12e2aa43fe",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
