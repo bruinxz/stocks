@@ -1,0 +1,23 @@
+frontend/src/pages/catdesk/shared/__tests__/useResearchTradingLoop.test.tsx
+  s_ec1e6492779c20::t_7f5acbf71a29d3 1-64
+frontend/src/pages/catdesk/tabs/PortfolioOverview.tsx
+  s_ec1e6492779c20::t_5b98fcd1225c2f 24-27,239,242-266,272-283,378-387
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7ab66c6b9d980c042eeb2d7fa87677e5b13035a6",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
