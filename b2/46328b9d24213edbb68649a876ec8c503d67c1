@@ -1,0 +1,29 @@
+backend/src/index.ts
+  s_ec1e6492779c20::t_2e4407b3d77122 537-538,998-1002
+backend/tests/services/operational-feed-runtime-schema-contract.test.ts
+  s_ec1e6492779c20::t_c0731831cf9478 1-36
+backend/scripts/migrations/2026-07-24-market-news.sql
+  s_ec1e6492779c20::t_2e4b55e76848b9 1-30
+scripts/deployment/runtime_schema_migration.js
+  s_ec1e6492779c20::t_843d2a674bbae1 51-52,83-84,135-145,276-278
+scripts/tests/runtime_schema_health_check.js
+  s_ec1e6492779c20::t_89d2ca6dd9ff83 60-61,89-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b246328b9d24213edbb68649a876ec8c503d67c1",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
