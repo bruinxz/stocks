@@ -7,7 +7,7 @@
  *   1. db          — Sequelize `SELECT 1` (1500ms 超时)
  *   2. redis       — redisLock.healthCheck() 调底层 `PING` (1500ms 超时)
  *   3. tradingAgents — GET 本机 vendored TradingAgents /health (3000ms 超时)
- *   4. akshare     — python3 -c "import akshare; print(akshare.__version__)" (5000ms 超时)
+ *   4. akshare     — 使用 PYTHON_PATH 执行 `import akshare` (5000ms 超时)
  *   5. feishu      — 检查业务 / OPS / 实盘三类 webhook 是否至少一类配置；
  *                    若未配 → 'not_configured'；配了 → 不实际发请求避免噪音 → 'ok' (配置存在)。
  *                    说明：Feishu webhook 不能用空载 GET 探活，发送会推真实消息 → noise。
@@ -270,7 +270,10 @@ export function buildDefaultProbeFns(deps: DefaultProbeDeps): HealthProbeFns {
     probeAkshare: () =>
       deps.pythonProbeOverride
         ? deps.pythonProbeOverride(akshareTimeout)
-        : probeAkshareViaPythonCached(akshareTimeout),
+        : probeAkshareViaPythonCached(
+            akshareTimeout,
+            env.PYTHON_PATH || env.PYTHON_BIN || 'python3'
+          ),
 
     probeFeishu: async () => determineFeishuStatus(env),
 
@@ -286,27 +289,38 @@ export function buildDefaultProbeFns(deps: DefaultProbeDeps): HealthProbeFns {
  * 'import akshare' 每次都跑, 内存堆积 + zombie 风险 + 5s timeout 概率叠加.
  * akshare 版本不会 sub-minute 改, 60s cache 足够安全; cache miss 兜底仍走真 spawn.
  */
-let akshareCache: { ts: number; status: DependencyStatus } | null = null;
+let akshareCache: { ts: number; pythonPath: string; status: DependencyStatus } | null = null;
 const AKSHARE_CACHE_TTL_MS = 60_000;
 
-export function probeAkshareViaPythonCached(timeoutMs: number): Promise<DependencyStatus> {
-  if (akshareCache && Date.now() - akshareCache.ts < AKSHARE_CACHE_TTL_MS) {
+export function probeAkshareViaPythonCached(
+  timeoutMs: number,
+  pythonPath = process.env.PYTHON_PATH || process.env.PYTHON_BIN || 'python3'
+): Promise<DependencyStatus> {
+  if (
+    akshareCache &&
+    akshareCache.pythonPath === pythonPath &&
+    Date.now() - akshareCache.ts < AKSHARE_CACHE_TTL_MS
+  ) {
     return Promise.resolve(akshareCache.status);
   }
-  return probeAkshareViaPython(timeoutMs).then(status => {
-    akshareCache = { ts: Date.now(), status };
+  return probeAkshareViaPython(timeoutMs, pythonPath).then(status => {
+    akshareCache = { ts: Date.now(), pythonPath, status };
     return status;
   });
 }
 
 /**
- * AKShare 探活 —— 不调真实 endpoint 避免被限速；只 `python3 -c "import akshare"`
+ * AKShare 探活 —— 不调真实 endpoint 避免被限速；只用业务配置的 Python 执行
+ * `-c "import akshare"`
  * 校验 Python 环境 + akshare 包安装。失败 (Python 缺失 / pip 包未装 / import error)
  * 全部归到 'fail'。
  *
  * 与 timeout wrapper 双重保护：底层 spawn 超时返回 'fail'；wrapper 在更高一层兜底。
  */
-export function probeAkshareViaPython(timeoutMs: number): Promise<DependencyStatus> {
+export function probeAkshareViaPython(
+  timeoutMs: number,
+  pythonPath = process.env.PYTHON_PATH || process.env.PYTHON_BIN || 'python3'
+): Promise<DependencyStatus> {
   return new Promise<DependencyStatus>(resolve => {
     let settled = false;
     const finish = (status: DependencyStatus): void => {
@@ -326,7 +340,7 @@ export function probeAkshareViaPython(timeoutMs: number): Promise<DependencyStat
     }, timeoutMs);
 
     try {
-      child = spawn('python3', ['-c', 'import akshare'], {
+      child = spawn(pythonPath, ['-c', 'import akshare'], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       child.on('exit', code => {

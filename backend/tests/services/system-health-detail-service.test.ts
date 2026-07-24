@@ -27,6 +27,9 @@ import {
   DependencyStatus,
   HealthProbeFns,
 } from '../../src/services/SystemHealthDetailService';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
 
 let passed = 0;
 let failed = 0;
@@ -493,6 +496,21 @@ async function testBuildDefaultProbeFns(): Promise<void> {
 // =============================================================================
 async function testProbeAkshareViaPython(): Promise<void> {
   console.log('--- probeAkshareViaPython ---');
+
+  const fixtureDir = mkdtempSync(path.join(tmpdir(), 'akshare-health-probe-'));
+  const healthyPython = path.join(fixtureDir, 'configured-python');
+  writeFileSync(healthyPython, '#!/bin/sh\nexit 0\n', 'utf8');
+  chmodSync(healthyPython, 0o700);
+
+  try {
+    assertEqual(
+      '使用配置的 Python 可执行文件',
+      await probeAkshareViaPython(5000, healthyPython),
+      'ok'
+    );
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
 
   // 不实际启 python（避免测试环境缺包污染结果）；只验证超时分支
   // 用 1ms 超时确保即使 spawn 启动了也来不及完成 → fail
