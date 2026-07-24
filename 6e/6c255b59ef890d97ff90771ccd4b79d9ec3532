@@ -1,0 +1,27 @@
+backend/src/data/services/RealtimeQuoteService.ts
+  s_ec1e6492779c20::t_40a86203746cea 3,355-373,381
+backend/src/services/SchedulerService.ts
+  s_ec1e6492779c20::t_1a781211892cfb 12,4357-4408,4434
+backend/tests/services/daily-attribution-runtime-schema-contract.test.ts
+  s_ec1e6492779c20::t_7eb57139f0ac21 55-59
+backend/tests/services/realtime-quote-latest.test.ts
+  s_ec1e6492779c20::t_80318ddf683f6d 1-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "6e6c255b59ef890d97ff90771ccd4b79d9ec3532",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
