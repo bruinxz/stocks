@@ -534,6 +534,8 @@ import { FundTopHolding } from './models/FundTopHolding';
 import { StockValuationFactor } from './models/StockValuationFactor';
 import { StockFundamentalFactor } from './models/StockFundamentalFactor';
 import { StockMoneyFlowFactor } from './models/StockMoneyFlowFactor';
+import { MarketNews } from './models/MarketNews';
+import { UserFeedback } from './models/UserFeedback';
 import { killSwitchService } from './live-trading/services/KillSwitchService';
 import { bridgeCommandExpiryService } from './live-trading/services/BridgeCommandExpiryService';
 // main 上 QuantStrategyService 位于 quant/engine/internal/，dev_lym 旧路径 quant/services/ 已不存在
@@ -993,6 +995,11 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
     { model: StockValuationFactor, label: 'StockValuationFactor' },
     { model: StockFundamentalFactor, label: 'StockFundamentalFactor' },
     { model: StockMoneyFlowFactor, label: 'StockMoneyFlowFactor' },
+    // RSS ingestion / event detection and the feedback sweep are scheduled
+    // operational paths. Sync them independently so an unrelated model-sync
+    // warning cannot leave either task permanently broken.
+    { model: MarketNews, label: 'MarketNews' },
+    { model: UserFeedback, label: 'UserFeedback' },
   ];
 
   const results = [];

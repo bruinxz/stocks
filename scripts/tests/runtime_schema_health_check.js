@@ -57,6 +57,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'quant_fusion_audits',
   'task_parameter_audit_logs',
   'realtime_quotes',
+  'market_news',
+  'user_feedbacks',
 ];
 
 const CRITICAL_RUNTIME_SCHEMA_TABLES = [
@@ -84,6 +86,8 @@ const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'analyst_forecasts',
   'announcement_summaries',
   'task_parameter_audit_logs',
+  'market_news',
+  'user_feedbacks',
 ];
 
 function readEnvFile(filePath) {

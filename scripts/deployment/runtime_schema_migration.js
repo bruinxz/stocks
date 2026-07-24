@@ -48,6 +48,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'financial_reports',
   'analyst_forecasts',
   'announcement_summaries',
+  'market_news',
+  'user_feedbacks',
 ];
 
 const CRITICAL_RUNTIME_SCHEMA_TABLES = [
@@ -78,6 +80,8 @@ const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'financial_reports',
   'analyst_forecasts',
   'announcement_summaries',
+  'market_news',
+  'user_feedbacks',
 ];
 
 function readFactorSourceSchemaMigration() {
@@ -126,6 +130,17 @@ function readDailyAttributionSchemaMigration() {
     ),
     'utf8'
   );
+}
+
+function readOperationalFeedSchemaMigrations() {
+  return ['2026-07-24-market-news.sql', '2026-06-21-user-feedbacks.sql']
+    .map(fileName =>
+      fs.readFileSync(
+        path.resolve(__dirname, '../../backend/scripts/migrations', fileName),
+        'utf8'
+      )
+    )
+    .join('\n');
 }
 
 function sqlLiteral(value) {
@@ -257,6 +272,9 @@ function buildRuntimeSchemaMigrationSQL(appDbUser = 'stock_admin') {
 
     -- 17:00 归因任务的唯一持久化事实表；缺表时不得继续以 COMPLETED 假成功。
     ${readDailyAttributionSchemaMigration()}
+
+    -- 新闻同步、利好检测与用户反馈巡检的运行时依赖；只补结构，不写业务事实。
+    ${readOperationalFeedSchemaMigrations()}
 
     -- 线上历史库曾由 postgres / stock_admin 混合建表，导致应用启动时无法 ALTER/CREATE。
     -- 这里不改业务数据；优先修复 owner，若维护角色不是 superuser/member，则降级为 grant/create 权限。
