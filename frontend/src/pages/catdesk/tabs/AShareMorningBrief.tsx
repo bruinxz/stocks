@@ -103,7 +103,7 @@ export default function AShareMorningBrief() {
     [selectedRow]
   );
 
-  if (loading)
+  if (loading && !loadResult)
     return (
       <LoadingState
         title="正在整理 A 股早报"
@@ -111,7 +111,7 @@ export default function AShareMorningBrief() {
         mood="working"
       />
     );
-  if (error) return <ErrorState message="数据加载失败" />;
+  if (error && !loadResult) return <ErrorState message="数据加载失败" />;
   if (loadResult?.kind === 'not_generated')
     return <EmptyState title="当前尚未生成 A 股推荐快照" variant="simple" />;
   if (loadResult?.kind === 'unavailable')
@@ -140,6 +140,11 @@ export default function AShareMorningBrief() {
         updatedAt={data.kpi.updated_at}
       />
       <ResearchLoopStatusStrip dashboard={loopDashboard} error={loopError} focus="morning" />
+      {error ? (
+        <div className="catdesk-refresh-warning" role="status">
+          候选自动刷新失败，当前保留上一次成功快照。
+        </div>
+      ) : null}
       <MorningFilterBar
         sector={filters.sector}
         catalystKind={filters.catalystKind}

@@ -1595,6 +1595,14 @@
   margin: 0;
 }
 
+.catdesk-refresh-warning {
+  padding: 9px 12px;
+  border-left: 3px solid var(--cd-accent);
+  color: var(--cd-text-secondary);
+  background: color-mix(in srgb, var(--cd-sun) 10%, var(--cd-paper));
+  font-size: 12px;
+}
+
 .catdesk-loop-targets {
   display: flex;
   flex: 1 0 100%;

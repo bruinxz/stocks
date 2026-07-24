@@ -124,6 +124,11 @@ export default function HighMultipotential() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
       <ResearchLoopStatusStrip dashboard={loopDashboard} error={loopError} focus="multibagger" />
+      {error ? (
+        <div className="catdesk-refresh-warning" role="status">
+          候选自动刷新失败，当前保留上一次成功快照。
+        </div>
+      ) : null}
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <FilterChip<MultibaggerStage>
           options={STAGE_OPTIONS}
