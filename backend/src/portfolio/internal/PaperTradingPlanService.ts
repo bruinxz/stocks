@@ -191,6 +191,7 @@ class PaperTradingPlanService {
       riskCheck = await paperTradingAutomationService.runRiskCheck({
         user_id: options.user_id,
         username: options.username,
+        portfolio_id: options.portfolio_id,
         portfolio_name: options.portfolio_name,
         initial_capital: options.initial_capital,
         force_new_portfolio: options.force_new_portfolio,
@@ -219,6 +220,7 @@ class PaperTradingPlanService {
       entryPreview = await paperTradingAutomationService.autoBuyFromSignals({
         user_id: options.user_id,
         username: options.username,
+        portfolio_id: options.portfolio_id,
         portfolio_name: options.portfolio_name,
         initial_capital: options.initial_capital,
         force_new_portfolio: options.force_new_portfolio,

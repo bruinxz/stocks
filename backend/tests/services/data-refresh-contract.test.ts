@@ -122,6 +122,10 @@ const readonlySmoke = fs.readFileSync(
   path.join(root, 'scripts/tests/smoke_readonly_core.js'),
   'utf8'
 );
+const paperTradingPlanService = fs.readFileSync(
+  path.join(root, 'backend/src/portfolio/internal/PaperTradingPlanService.ts'),
+  'utf8'
+);
 const retiredBaostockFactorTask = fs.readFileSync(
   path.join(root, 'backend/scripts/migrations/2026-07-17-retire-legacy-baostock-factor-sync.sql'),
   'utf8'
@@ -449,6 +453,16 @@ assert.match(
   ),
   /generatePlan\(\{[\s\S]{0,180}portfolio_id: options\.portfolio_id[\s\S]{0,100}portfolio_name: options\.portfolio_name/,
   'tuning candidates must forward explicit portfolio scope into plan generation'
+);
+assert.match(
+  paperTradingPlanService,
+  /runRiskCheck\(\{[\s\S]{0,180}portfolio_id: options\.portfolio_id/,
+  'trading-plan risk preview must preserve explicit portfolio scope'
+);
+assert.match(
+  paperTradingPlanService,
+  /autoBuyFromSignals\(\{[\s\S]{0,180}portfolio_id: options\.portfolio_id/,
+  'trading-plan entry preview must preserve explicit portfolio scope'
 );
 assert.match(
   scheduler,
