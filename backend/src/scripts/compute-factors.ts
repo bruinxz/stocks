@@ -34,6 +34,16 @@ import '../quant/factors/library';
 
 const program = new Command();
 
+export const HISTORICAL_PIT_REPLAY_SOURCE = 'historical_pit_replay@1.0.0';
+export const HISTORICAL_PIT_FACTORS = [
+  'quality',
+  'growth',
+  'value',
+  'momentum',
+  'gradual_breakout',
+  'low_vol',
+] as const;
+
 program
   .name('compute-factors')
   .description('按交易日批量计算因子并入库 (factor_scores)')
@@ -42,6 +52,10 @@ program
   .option('--skip <names>', '逗号分隔的因子黑名单')
   .option('--universe <codes>', '逗号分隔的股票代码列表（无市场前缀）；不传 = 全 A 股 active')
   .option('--lookback <n>', '回看天数（默认 250）')
+  .option(
+    '--historical-pit-replay',
+    '按历史上市范围重建六维 PIT 截面，并保留实际入库时间与历史信息截止时刻'
+  )
   .action(async opts => {
     try {
       await sequelize.authenticate();
@@ -66,13 +80,30 @@ program
 
       const factorNames = parseList(opts.factors);
       const skipFactors = parseList(opts.skip);
-      const universe = parseList(opts.universe);
+      let universe = parseList(opts.universe);
       const lookbackDays = opts.lookback ? parseInt(opts.lookback, 10) : undefined;
+      const historicalPitReplay = opts.historicalPitReplay === true;
+
+      if (historicalPitReplay) {
+        if (universe.length > 0 || skipFactors.length > 0) {
+          throw new Error('历史 PIT 重放不允许自定义 universe 或 skip，避免产生不完整截面');
+        }
+        const requested = new Set(factorNames);
+        if (
+          requested.size !== HISTORICAL_PIT_FACTORS.length ||
+          HISTORICAL_PIT_FACTORS.some(name => !requested.has(name))
+        ) {
+          throw new Error(`历史 PIT 重放必须完整计算: ${HISTORICAL_PIT_FACTORS.join(',')}`);
+        }
+        universe = await loadHistoricalUniverse(tradeDate);
+      }
 
       const result = await factorPipeline.runForDate(tradeDate, factorNames, {
         universe: universe.length ? universe : undefined,
         skipFactors,
         lookbackDays,
+        source: historicalPitReplay ? HISTORICAL_PIT_REPLAY_SOURCE : 'pipeline',
+        pit_replay_as_of_utc: historicalPitReplay ? new Date(`${tradeDate}T07:05:00.000Z`) : null,
       });
 
       logger.info(
@@ -98,19 +129,40 @@ program
         0
       );
 
+      const minimumHistoricalCoverage = Math.max(500, Math.ceil(result.universe_size * 0.2));
+      const incompleteHistoricalFactors = historicalPitReplay
+        ? result.factor_results
+            .filter(
+              factor =>
+                factor.error || factor.skipped || factor.effective < minimumHistoricalCoverage
+            )
+            .map(factor => factor.factor_name)
+        : [];
+      const ok =
+        result.total_failed === 0 &&
+        result.total_upserted > 0 &&
+        totalEffective > 0 &&
+        incompleteHistoricalFactors.length === 0;
+
       process.stdout.write(
         `${JSON.stringify({
-          scenario: 'factor_score_compute',
-          ok: result.total_failed === 0 && result.total_upserted > 0 && totalEffective > 0,
+          scenario: historicalPitReplay ? 'historical_pit_factor_replay' : 'factor_score_compute',
+          ok,
           market_watermark: marketWatermark,
           total_effective: totalEffective,
+          ...(historicalPitReplay
+            ? {
+                source: HISTORICAL_PIT_REPLAY_SOURCE,
+                pit_replay_as_of_utc: `${tradeDate}T07:05:00.000Z`,
+                minimum_effective_per_factor: minimumHistoricalCoverage,
+                incomplete_factors: incompleteHistoricalFactors,
+              }
+            : {}),
           ...result,
         })}\n`
       );
 
-      process.exit(
-        result.total_failed > 0 || result.total_upserted <= 0 || totalEffective <= 0 ? 1 : 0
-      );
+      process.exit(ok ? 0 : 1);
     } catch (error) {
       logger.error(`compute-factors failed: ${(error as Error).message}`);
       process.exit(1);
@@ -152,6 +204,24 @@ async function loadAShareMarketWatermark(): Promise<string | null> {
   if (!row?.trade_date) return null;
   if (typeof row.trade_date === 'string') return row.trade_date.slice(0, 10);
   return row.trade_date.toISOString().slice(0, 10);
+}
+
+async function loadHistoricalUniverse(asOfDate: string): Promise<string[]> {
+  const rows = await sequelize.query<{ stock_code: string }>(
+    `SELECT DISTINCT RIGHT(symbol, 6) AS stock_code
+       FROM stocks
+      WHERE type = 'stock'
+        AND listing_date IS NOT NULL
+        AND listing_date <= :as_of_date
+        AND (delisting_date IS NULL OR delisting_date > :as_of_date)
+        AND RIGHT(symbol, 6) ~ '^[0-9]{6}$'
+      ORDER BY stock_code`,
+    { replacements: { as_of_date: asOfDate }, type: QueryTypes.SELECT }
+  );
+  if (rows.length < 500) {
+    throw new Error(`历史 PIT 股票范围异常: ${asOfDate} 仅 ${rows.length} 只`);
+  }
+  return rows.map(row => row.stock_code);
 }
 
 program.parseAsync(process.argv);

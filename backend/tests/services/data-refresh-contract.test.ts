@@ -93,6 +93,10 @@ const computeFactorsCli = fs.readFileSync(
   path.join(root, 'backend/src/scripts/compute-factors.ts'),
   'utf8'
 );
+const pitFactorReplay = fs.readFileSync(
+  path.join(root, 'scripts/ops/prepare_backtest_pit_factors.py'),
+  'utf8'
+);
 const financialReportCli = fs.readFileSync(
   path.join(root, 'backend/src/scripts/sync-financial-report.ts'),
   'utf8'
@@ -274,7 +278,7 @@ assert.match(
 );
 assert.match(
   computeFactorsCli,
-  /totalEffective > 0[\s\S]{0,700}totalEffective <= 0/,
+  /const ok =[\s\S]{0,300}totalEffective > 0[\s\S]{0,1200}process\.exit\(ok \? 0 : 1\)/,
   'factor-score CLI must reject all-neutral factor runs'
 );
 assert.match(
@@ -465,12 +469,23 @@ assert.match(
 );
 assert.match(
   globalSync,
+  /prepare_backtest_pit_factors\.py[\s\S]{0,260}prepare_backtest_pit_factors_cn_a[\s\S]{0,900}populate_live_backtest_pit\.py/,
+  'global refresh must build audited historical factor slices before PIT snapshots'
+);
+assert.match(
+  pitFactorReplay,
+  /FACTOR_NAMES[\s\S]{0,500}"quality"[\s\S]{0,500}"low_vol"/,
+  'PIT factor preparation must request the complete six-dimension replay'
+);
+assert.match(pitFactorReplay, /--historical-pit-replay/);
+assert.match(
+  globalSync,
   /populate_live_backtest_pit\.py[\s\S]{0,260}refresh_backtest_pit_cn_a/,
   'global refresh must materialize the backtest evidence page instead of leaving its table permanently empty'
 );
 assert.match(
   globalSync,
-  /OPTIONAL_STEPS = \{"refresh_stock_security_lifecycle", "refresh_backtest_pit_cn_a"\}/,
+  /OPTIONAL_STEPS = \{[\s\S]{0,180}"refresh_stock_security_lifecycle"[\s\S]{0,180}"prepare_backtest_pit_factors_cn_a"[\s\S]{0,180}"refresh_backtest_pit_cn_a"/,
   'PIT evidence must be explicitly classified as an optional projection'
 );
 assert.match(

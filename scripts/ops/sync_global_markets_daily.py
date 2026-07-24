@@ -31,7 +31,11 @@ REPO_ROOT = (
     if repo_root_override
     else Path(__file__).resolve().parents[2]
 ).resolve()
-OPTIONAL_STEPS = {"refresh_stock_security_lifecycle", "refresh_backtest_pit_cn_a"}
+OPTIONAL_STEPS = {
+    "refresh_stock_security_lifecycle",
+    "prepare_backtest_pit_factors_cn_a",
+    "refresh_backtest_pit_cn_a",
+}
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -428,6 +432,17 @@ def main() -> int:
             lifecycle_args.append("--dry-run")
         results.append(
             _run("refresh_stock_security_lifecycle", lifecycle_args, 240)
+        )
+
+        pit_factor_args = [
+            "scripts/ops/prepare_backtest_pit_factors.py",
+            "--env-file",
+            str(args.env_file),
+        ]
+        if args.dry_run:
+            pit_factor_args.append("--dry-run")
+        results.append(
+            _run("prepare_backtest_pit_factors_cn_a", pit_factor_args, 1200)
         )
 
         pit_args = [

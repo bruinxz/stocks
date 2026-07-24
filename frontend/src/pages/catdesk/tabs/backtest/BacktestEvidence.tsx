@@ -17,6 +17,7 @@ import { BacktestEvidenceBlockers } from './BacktestEvidenceBlockers';
 import { buildBacktestSidebarSections } from './BacktestSidebarSections';
 import {
   BACKTEST_STRATEGY_MARKET_SCOPES,
+  BACKTEST_STRATEGY_LABELS,
   coerceBacktestMarketScope,
   type BacktestMarketScope,
   type BacktestStrategy,
@@ -25,12 +26,10 @@ import {
 const { RangePicker } = DatePicker;
 
 const STRATEGY_OPTIONS: { value: BacktestStrategy; label: string }[] = [
-  { value: 'us_preferred', label: '美股优选' },
-  { value: 'multibagger', label: '高倍潜力' },
-  { value: 'japan_blue_chip', label: '日本蓝筹' },
-  { value: 'korea_semiconductor_chain', label: '韩国半导体链' },
-  { value: 'japan_multibagger', label: '日本高倍潜力' },
-  { value: 'korea_multibagger', label: '韩国高倍潜力' },
+  ...Object.entries(BACKTEST_STRATEGY_LABELS).map(([value, label]) => ({
+    value: value as BacktestStrategy,
+    label,
+  })),
 ];
 
 const MARKET_SCOPE_LABEL: Record<BacktestMarketScope, string> = {

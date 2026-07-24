@@ -40,6 +40,17 @@ async function assertFactorSourceSchema(): Promise<void> {
   ) {
     throw new Error('Factor source schema verification failed');
   }
+  const replayColumns = await sequelize.query<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'factor_scores'
+        AND column_name IN ('available_at_utc', 'pit_replay_as_of_utc')`,
+    { type: QueryTypes.SELECT }
+  );
+  if (new Set(replayColumns.map(row => row.column_name)).size !== 2) {
+    throw new Error('Factor PIT replay schema verification failed');
+  }
 }
 
 async function main(): Promise<void> {
@@ -47,11 +58,14 @@ async function main(): Promise<void> {
     throw new Error('Explicit factor source schema opt-in is required');
   }
   await sequelize.authenticate();
-  const migrationPath = path.resolve(
-    process.cwd(),
-    'scripts/migrations/2026-07-24-factor-source-schema.sql'
-  );
-  await sequelize.query(fs.readFileSync(migrationPath, 'utf8'));
+  for (const filename of [
+    '2026-07-24-factor-source-schema.sql',
+    '2026-07-24-factor-availability.sql',
+    '2026-07-24-factor-pit-replay.sql',
+  ]) {
+    const migrationPath = path.resolve(process.cwd(), 'scripts/migrations', filename);
+    await sequelize.query(fs.readFileSync(migrationPath, 'utf8'));
+  }
   await assertFactorSourceSchema();
   console.log('factor source schema: READY');
 }

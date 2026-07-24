@@ -98,7 +98,15 @@ WITH recent AS (
     ) AS risk
   FROM factor_scores
   WHERE trade_date = %s::date
-    AND available_at_utc <= (%s::date::text || 'T15:00:00Z')::timestamptz
+    AND (
+      available_at_utc <= (%s::date::text || 'T15:00:00Z')::timestamptz
+      OR (
+        source = 'historical_pit_replay@1.0.0'
+        AND pit_replay_as_of_utc IS NOT NULL
+        AND pit_replay_as_of_utc
+            <= (%s::date::text || 'T15:00:00Z')::timestamptz
+      )
+    )
   GROUP BY stock_code
 )
 SELECT
@@ -154,38 +162,91 @@ WITH stock_master AS (
          COUNT(DISTINCT fs.stock_code)::int AS universe_size,
          COUNT(DISTINCT fs.stock_code) FILTER (
            WHERE fs.factor_name IN ('quality', 'quality_high') AND fs.raw_value IS NOT NULL
-             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+             AND (
+               fs.available_at_utc
+                   <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               OR (
+                 fs.source = 'historical_pit_replay@1.0.0'
+                 AND fs.pit_replay_as_of_utc IS NOT NULL
+                 AND fs.pit_replay_as_of_utc
+                     <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               )
+             )
          )::int AS q_coverage,
          COUNT(DISTINCT fs.stock_code) FILTER (
            WHERE fs.factor_name IN ('growth', 'earnings_surprise', 'analyst_consensus')
              AND fs.raw_value IS NOT NULL
-             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+             AND (
+               fs.available_at_utc
+                   <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               OR (
+                 fs.source = 'historical_pit_replay@1.0.0'
+                 AND fs.pit_replay_as_of_utc IS NOT NULL
+                 AND fs.pit_replay_as_of_utc
+                     <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               )
+             )
          )::int AS g_coverage,
          COUNT(DISTINCT fs.stock_code) FILTER (
            WHERE fs.factor_name = 'value' AND fs.raw_value IS NOT NULL
-             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+             AND (
+               fs.available_at_utc
+                   <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               OR (
+                 fs.source = 'historical_pit_replay@1.0.0'
+                 AND fs.pit_replay_as_of_utc IS NOT NULL
+                 AND fs.pit_replay_as_of_utc
+                     <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               )
+             )
          )::int AS v_coverage,
          COUNT(DISTINCT fs.stock_code) FILTER (
            WHERE fs.factor_name IN ('momentum', 'money_flow', 'northbound')
              AND fs.raw_value IS NOT NULL
-             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+             AND (
+               fs.available_at_utc
+                   <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               OR (
+                 fs.source = 'historical_pit_replay@1.0.0'
+                 AND fs.pit_replay_as_of_utc IS NOT NULL
+                 AND fs.pit_replay_as_of_utc
+                     <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               )
+             )
          )::int AS m_coverage,
          COUNT(DISTINCT fs.stock_code) FILTER (
            WHERE fs.factor_name IN ('gradual_breakout', 'industry_momentum')
              AND fs.raw_value IS NOT NULL
-             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+             AND (
+               fs.available_at_utc
+                   <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               OR (
+                 fs.source = 'historical_pit_replay@1.0.0'
+                 AND fs.pit_replay_as_of_utc IS NOT NULL
+                 AND fs.pit_replay_as_of_utc
+                     <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               )
+             )
          )::int AS t_coverage,
          COUNT(DISTINCT fs.stock_code) FILTER (
            WHERE fs.factor_name IN ('low_vol', 'liquidity') AND fs.raw_value IS NOT NULL
-             AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                 <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+             AND (
+               fs.available_at_utc
+                   <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               OR (
+                 fs.source = 'historical_pit_replay@1.0.0'
+                 AND fs.pit_replay_as_of_utc IS NOT NULL
+                 AND fs.pit_replay_as_of_utc
+                     <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+               )
+             )
          )::int AS r_coverage
     FROM factor_scores fs
+   WHERE fs.factor_name IN (
+     'quality', 'quality_high', 'growth', 'earnings_surprise', 'analyst_consensus',
+     'value', 'momentum', 'money_flow', 'northbound', 'gradual_breakout',
+     'industry_momentum', 'low_vol', 'liquidity'
+   )
    GROUP BY fs.trade_date
 ), factor_history AS (
   SELECT COUNT(*) FILTER (
@@ -228,13 +289,17 @@ WHERE RIGHT(stock.symbol, 6) = ANY(%s)
 
 def _load_env(path: Path) -> dict[str, str]:
     values = dict(os.environ)
-    if not path.exists():
-        return values
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            key, value = stripped.split("=", 1)
-            values.setdefault(key, value.strip().strip('"').strip("'"))
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                key, value = stripped.split("=", 1)
+                values.setdefault(key, value.strip().strip('"').strip("'"))
+    values.setdefault("DB_HOST", "localhost")
+    values.setdefault("DB_PORT", "5432")
+    values.setdefault("DB_NAME", "stock_backtest")
+    values.setdefault("DB_USER", "postgres")
+    values.setdefault("DB_PASSWORD", "postgres")
     return values
 
 
@@ -370,6 +435,7 @@ def _read_inputs(
                 cursor.execute(
                     RANK_SQL,
                     (
+                        signal_day,
                         signal_day,
                         signal_day,
                         signal_day,

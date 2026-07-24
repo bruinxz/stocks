@@ -4,7 +4,11 @@ import {
   buildBacktestListUrl,
   buildBacktestSnapshotUrl,
 } from '../backtestUrls';
-import { coerceBacktestMarketScope, type BacktestSnapshotSlot } from '../types';
+import {
+  BACKTEST_STRATEGY_LABELS,
+  coerceBacktestMarketScope,
+  type BacktestSnapshotSlot,
+} from '../types';
 
 describe('backtest PIT URLs', () => {
   test('generic list URLs always include explicit CN A or US market_scope', () => {
@@ -81,5 +85,9 @@ describe('backtest PIT URLs', () => {
     expect(coerceBacktestMarketScope('us_preferred', 'us')).toBe('us');
     expect(coerceBacktestMarketScope('japan_blue_chip', 'us')).toBe('jp');
     expect(coerceBacktestMarketScope('korea_multibagger', 'jp')).toBe('kr');
+  });
+
+  test('generic strategy uses one market-neutral label across selector and ledger', () => {
+    expect(BACKTEST_STRATEGY_LABELS.us_preferred).toBe('全球优选');
   });
 });

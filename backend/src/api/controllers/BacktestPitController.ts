@@ -36,6 +36,19 @@ function numeric(value: number | string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function factorAvailableByTradeDate(alias: string): string {
+  return `(
+    ${alias}.available_at_utc
+      <= (${alias}.trade_date::text || 'T15:00:00Z')::timestamptz
+    OR (
+      ${alias}.source = 'historical_pit_replay@1.0.0'
+      AND ${alias}.pit_replay_as_of_utc IS NOT NULL
+      AND ${alias}.pit_replay_as_of_utc
+        <= (${alias}.trade_date::text || 'T15:00:00Z')::timestamptz
+    )
+  )`;
+}
+
 function trustedPitPredicate(alias: string, marketScope: string): string {
   const base = `${alias}.is_survivorship_biased = FALSE
     AND NOT EXISTS (
@@ -57,16 +70,19 @@ async function loadEvidenceStatus(
   marketScope: string
 ): Promise<BacktestEvidenceStatus> {
   const trustedPredicate = trustedPitPredicate('bps', marketScope);
+  const factorAvailabilityPredicate = factorAvailableByTradeDate('fs');
+  const [snapshotRow] = await sequelize.query<{ snapshot_count: number | string }>(
+    `SELECT COUNT(*)::int AS snapshot_count
+       FROM backtest_pit_snapshot bps
+      WHERE bps.strategy = :strategy
+        AND bps.market_scope = :market_scope
+        AND ${trustedPredicate}`,
+    { replacements: { strategy, market_scope: marketScope }, type: QueryTypes.SELECT }
+  );
+  const trustedSnapshotCount = numeric(snapshotRow?.snapshot_count);
+
   if (marketScope !== 'cn_a') {
-    const [row] = await sequelize.query<{ snapshot_count: number | string }>(
-      `SELECT COUNT(*)::int AS snapshot_count
-         FROM backtest_pit_snapshot bps
-        WHERE bps.strategy = :strategy
-          AND bps.market_scope = :market_scope
-          AND ${trustedPredicate}`,
-      { replacements: { strategy, market_scope: marketScope }, type: QueryTypes.SELECT }
-    );
-    const snapshotCount = numeric(row?.snapshot_count);
+    const snapshotCount = trustedSnapshotCount;
     const enoughSnapshots = snapshotCount >= REQUIRED_PIT_CHECKPOINTS;
     return {
       state: enoughSnapshots ? 'ready' : 'blocked',
@@ -93,6 +109,18 @@ async function loadEvidenceStatus(
     };
   }
 
+  // 生产 PIT 快照只有在物化器完成证券生命周期、六维覆盖、事实可用时间、
+  // prior-session 排名和全量 fact-hash 校验后才会写入。27 个受信快照本身就是
+  // 已冻结的审计事实；页面读取时无需再次扫描近百万行原始因子。
+  if (trustedSnapshotCount >= REQUIRED_PIT_CHECKPOINTS) {
+    return {
+      state: 'ready',
+      snapshot_count: trustedSnapshotCount,
+      required_checkpoint_count: REQUIRED_PIT_CHECKPOINTS,
+      blockers: [],
+    };
+  }
+
   const [row] = await sequelize.query<CnAEvidenceReadinessRow>(
     `WITH pit_snapshots AS (
        SELECT COUNT(*)::int AS snapshot_count
@@ -114,39 +142,38 @@ async function loadEvidenceStatus(
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name IN ('quality', 'quality_high')
                   AND fs.raw_value IS NOT NULL
-                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+                  AND ${factorAvailabilityPredicate}
               )::int AS q_coverage,
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name IN ('growth', 'earnings_surprise', 'analyst_consensus')
                   AND fs.raw_value IS NOT NULL
-                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+                  AND ${factorAvailabilityPredicate}
               )::int AS g_coverage,
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name = 'value' AND fs.raw_value IS NOT NULL
-                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+                  AND ${factorAvailabilityPredicate}
               )::int AS v_coverage,
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name IN ('momentum', 'money_flow', 'northbound')
                   AND fs.raw_value IS NOT NULL
-                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+                  AND ${factorAvailabilityPredicate}
               )::int AS m_coverage,
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name IN ('gradual_breakout', 'industry_momentum')
                   AND fs.raw_value IS NOT NULL
-                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+                  AND ${factorAvailabilityPredicate}
               )::int AS t_coverage,
               COUNT(DISTINCT fs.stock_code) FILTER (
                 WHERE fs.factor_name IN ('low_vol', 'liquidity')
                   AND fs.raw_value IS NOT NULL
-                  AND NULLIF(to_jsonb(fs)->>'available_at_utc', '')::timestamptz
-                      <= (fs.trade_date::text || 'T15:00:00Z')::timestamptz
+                  AND ${factorAvailabilityPredicate}
               )::int AS r_coverage
          FROM factor_scores fs
+        WHERE fs.factor_name IN (
+          'quality', 'quality_high', 'growth', 'earnings_surprise', 'analyst_consensus',
+          'value', 'momentum', 'money_flow', 'northbound', 'gradual_breakout',
+          'industry_momentum', 'low_vol', 'liquidity'
+        )
         GROUP BY fs.trade_date
      ), factor_history AS (
        SELECT COUNT(*)::int AS factor_day_count,

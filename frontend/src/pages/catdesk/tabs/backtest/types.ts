@@ -9,6 +9,15 @@ export const BACKTEST_STRATEGIES = [
 
 export type BacktestStrategy = (typeof BACKTEST_STRATEGIES)[number];
 
+export const BACKTEST_STRATEGY_LABELS: Record<BacktestStrategy, string> = {
+  us_preferred: '全球优选',
+  multibagger: '高倍潜力',
+  japan_blue_chip: '日本蓝筹',
+  korea_semiconductor_chain: '韩国半导体链',
+  japan_multibagger: '日本高倍潜力',
+  korea_multibagger: '韩国高倍潜力',
+};
+
 export const BACKTEST_MARKET_SCOPES = ['cn_a', 'us', 'jp', 'kr'] as const;
 
 export type BacktestMarketScope = (typeof BACKTEST_MARKET_SCOPES)[number];

@@ -1,6 +1,6 @@
 import React from 'react';
 import { TableColumn, type TableColumnDef } from 'shared/components/TableColumn';
-import type { BacktestSnapshotSlot } from './types';
+import { BACKTEST_STRATEGY_LABELS, type BacktestSnapshotSlot } from './types';
 import { MARKET_SCOPE_LABELS } from '../../shared/uiLabels';
 
 interface SnapshotTableProps {
@@ -22,17 +22,7 @@ const columns: TableColumnDef<BacktestSnapshotSlot>[] = [
     title: '策略',
     ariaLabel: '策略配置',
     sortable: true,
-    render: (_, row) => {
-      const labels: Record<string, string> = {
-        us_preferred: '全球优选',
-        multibagger: '高倍潜力',
-        japan_blue_chip: '日本蓝筹',
-        korea_semiconductor_chain: '韩国半导体链',
-        japan_multibagger: '日本高倍潜力',
-        korea_multibagger: '韩国高倍潜力',
-      };
-      return labels[row.strategy] ?? row.strategy;
-    },
+    render: (_, row) => BACKTEST_STRATEGY_LABELS[row.strategy] ?? row.strategy,
   },
   {
     key: 'market_scope',

@@ -98,6 +98,13 @@ function readFactorAvailabilityMigration() {
   );
 }
 
+function readFactorPitReplayMigration() {
+  return fs.readFileSync(
+    path.resolve(__dirname, '../../backend/scripts/migrations/2026-07-24-factor-pit-replay.sql'),
+    'utf8'
+  );
+}
+
 function readResearchTradingLoopSchemaMigration() {
   return fs.readFileSync(
     path.resolve(
@@ -263,6 +270,9 @@ function buildRuntimeSchemaMigrationSQL(appDbUser = 'stock_admin') {
 
     -- 只用真实写入时间补 availability；严禁把历史 factor_date 伪装成当时已可用。
     ${readFactorAvailabilityMigration()}
+
+    -- 历史重放截止时刻与真实写入时刻分栏，禁止回填时篡改 availability。
+    ${readFactorPitReplayMigration()}
 
     -- 只补研究闭环运行账本结构；常规部署不得隐式重置用户模拟组合。
     ${readResearchTradingLoopSchemaMigration()}

@@ -25,6 +25,7 @@ import { Factor } from '../types';
 import { factorRegistry } from '../FactorRegistry';
 import { stripSuffix, isFiniteNumber, lookbackStartDate } from './_helpers';
 import { StockFundamentalFactor } from '../../../models/StockFundamentalFactor';
+import { FinancialReport } from '../../../models/FinancialReport';
 
 const FIVE_YEARS_DAYS = 365 * 5;
 
@@ -67,12 +68,13 @@ export const qualityFactor: Factor = {
         latestDebt: null,
         latestDebtDate: '',
       };
-      const roe = Number(r.roe);
+      const roe = r.roe == null || r.roe === '' ? NaN : Number(r.roe);
       if (isFiniteNumber(roe)) {
         cur.roeSum += roe;
         cur.roeCount += 1;
       }
-      const debt = Number(r.debt_asset_ratio);
+      const debt =
+        r.debt_asset_ratio == null || r.debt_asset_ratio === '' ? NaN : Number(r.debt_asset_ratio);
       if (isFiniteNumber(debt) && r.factor_date > cur.latestDebtDate) {
         cur.latestDebt = debt;
         cur.latestDebtDate = r.factor_date;
@@ -81,6 +83,7 @@ export const qualityFactor: Factor = {
     }
 
     const universeSet = new Set(ctx.universe);
+    const resolvedCodes = new Set<string>();
     for (const [symbol, a] of agg.entries()) {
       const code = stripSuffix(symbol);
       if (!universeSet.has(code)) continue;
@@ -93,6 +96,51 @@ export const qualityFactor: Factor = {
       const debt = a.latestDebt ?? 0;
 
       out.set(code, avgRoe - 0.3 * debt);
+      resolvedCodes.add(code);
+    }
+
+    // 全市场财务源按公告日保留历史可见性。旧 SFF 数据大量 roe=NULL，不能再
+    // 让 Number(null) 把整张截面伪造成 0；对缺失股票使用截至当日已公告报告
+    // 的年化 ROE 均值，仍维持“长期盈利质量”的原始业务含义。
+    const missingCodes = ctx.universe.filter(code => !resolvedCodes.has(code));
+    if (missingCodes.length) {
+      const reports = (await FinancialReport.findAll({
+        attributes: ['stock_code', 'report_date', 'roe', 'raw_payload'],
+        where: {
+          stock_code: { [Op.in]: missingCodes },
+          report_date: { [Op.gte]: startDate, [Op.lte]: ctx.as_of_date },
+        },
+        raw: true,
+      })) as unknown as Array<{
+        stock_code: string;
+        report_date: string;
+        roe: unknown;
+        raw_payload?: Record<string, any> | null;
+      }>;
+      const reportAgg = new Map<string, { sum: number; count: number }>();
+      for (const report of reports) {
+        const announcementDate = report.raw_payload?.announcement_date;
+        if (
+          announcementDate &&
+          (!/^\d{4}-\d{2}-\d{2}$/.test(String(announcementDate)) ||
+            String(announcementDate) > ctx.as_of_date)
+        ) {
+          continue;
+        }
+        const rawRoe = report.roe == null || report.roe === '' ? NaN : Number(report.roe);
+        if (!isFiniteNumber(rawRoe)) continue;
+        const suffix = report.report_date.slice(5, 10);
+        const annualizer =
+          suffix === '03-31' ? 4 : suffix === '06-30' ? 2 : suffix === '09-30' ? 4 / 3 : 1;
+        const current = reportAgg.get(report.stock_code) ?? { sum: 0, count: 0 };
+        current.sum += rawRoe * annualizer;
+        current.count += 1;
+        reportAgg.set(report.stock_code, current);
+      }
+      for (const [code, values] of reportAgg.entries()) {
+        if (values.count < 1 || !universeSet.has(code)) continue;
+        out.set(code, values.sum / values.count);
+      }
     }
 
     return out;

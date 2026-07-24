@@ -44,6 +44,13 @@ export interface FactorPipelineRunOptions {
   lookbackDays?: number;
   /** 跳过指定因子（黑名单），便于临时下线某个失效因子 */
   skipFactors?: string[];
+  /** 写入 factor_scores.source 的可审计来源版本。 */
+  source?: string;
+  /**
+   * 历史 PIT 重放采用的信息截止时刻。它不替代 available_at_utc（实际入库时间），
+   * 只在调用方已确保所有因子读取都受 as_of_date 约束时使用。
+   */
+  pit_replay_as_of_utc?: Date | null;
 }
 
 export interface FactorRunSingleResult {
@@ -136,7 +143,10 @@ export class FactorPipeline {
       };
 
       try {
-        const result = await this.computeAndPersistFactor(factor, ctx);
+        const result = await this.computeAndPersistFactor(factor, ctx, {
+          source: options.source ?? 'pipeline',
+          pit_replay_as_of_utc: options.pit_replay_as_of_utc ?? null,
+        });
         factorResults.push(result);
         totalUpserted += result.upserted;
         if (result.error) totalFailed += 1;
@@ -176,7 +186,11 @@ export class FactorPipeline {
    */
   protected async computeAndPersistFactor(
     factor: Factor,
-    ctx: FactorContext
+    ctx: FactorContext,
+    persistOptions: { source: string; pit_replay_as_of_utc: Date | null } = {
+      source: 'pipeline',
+      pit_replay_as_of_utc: null,
+    }
   ): Promise<FactorRunSingleResult> {
     const raw: FactorComputeOutput = await factor.compute(ctx);
 
@@ -229,6 +243,7 @@ export class FactorPipeline {
       z_score: number;
       percentile: number;
       source: string;
+      pit_replay_as_of_utc: Date | null;
     }> = [];
 
     for (const code of ctx.universe) {
@@ -241,7 +256,8 @@ export class FactorPipeline {
           raw_value: eff.raw_value,
           z_score: eff.z_score,
           percentile: eff.percentile,
-          source: 'pipeline',
+          source: persistOptions.source,
+          pit_replay_as_of_utc: persistOptions.pit_replay_as_of_utc,
         });
       } else {
         // 中性补全：raw_value = null，z=0，percentile=0.5
@@ -252,14 +268,22 @@ export class FactorPipeline {
           raw_value: null,
           z_score: 0,
           percentile: 0.5,
-          source: 'pipeline',
+          source: persistOptions.source,
+          pit_replay_as_of_utc: persistOptions.pit_replay_as_of_utc,
         });
       }
     }
 
     // 4) bulkCreate + updateOnDuplicate
     await FactorScore.bulkCreate(records, {
-      updateOnDuplicate: ['raw_value', 'z_score', 'percentile', 'source', 'updated_at'],
+      updateOnDuplicate: [
+        'raw_value',
+        'z_score',
+        'percentile',
+        'source',
+        'pit_replay_as_of_utc',
+        'updated_at',
+      ],
     });
 
     logger.info(

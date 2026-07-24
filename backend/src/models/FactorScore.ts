@@ -113,6 +113,14 @@ export class FactorScore extends Model {
   })
   declare available_at_utc: Date;
 
+  @Column({
+    type: DataType.DATE,
+    allowNull: true,
+    field: 'pit_replay_as_of_utc',
+    comment: '历史 PIT 重放采用的信息截止时刻；普通实时计算保持 NULL',
+  })
+  declare pit_replay_as_of_utc?: Date | null;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;
