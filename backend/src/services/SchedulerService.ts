@@ -906,6 +906,62 @@ class SchedulerService {
     return job;
   }
 
+  private async refreshPortfolioClosingQuotes(portfolioIds: number[], timestamp: Date) {
+    const heldRows = portfolioIds.length
+      ? await PaperTradingPosition.findAll({
+          where: {
+            portfolio_id: { [Op.in]: portfolioIds },
+            quantity: { [Op.gt]: 0 },
+          },
+          attributes: ['symbol'],
+          group: ['symbol'],
+          raw: true,
+        })
+      : [];
+    const closeSymbols = [
+      ...new Set((heldRows as any[]).map(row => String(row.symbol || '')).filter(Boolean)),
+    ];
+    if (closeSymbols.length === 0) {
+      return {
+        requested_count: 0,
+        persisted_count: 0,
+        missing_symbols: [] as string[],
+        latest_quote_time: null as string | null,
+      };
+    }
+
+    const refreshed = await realtimeQuoteService.syncQuotesForSymbols(closeSymbols, {
+      source: 'tencent',
+      batch_size: 500,
+    });
+    const latestQuotes = await realtimeQuoteService.getLatestQuotes(closeSymbols);
+    const expectedDate = moment(timestamp).tz('Asia/Shanghai').format('YYYY-MM-DD');
+    const closingSymbols = new Set(
+      latestQuotes
+        .filter(quote => {
+          const quoteTime = moment(quote.quote_time).tz('Asia/Shanghai');
+          return (
+            String(quote.trade_date || '') === expectedDate &&
+            quoteTime.format('YYYY-MM-DD') === expectedDate &&
+            quoteTime.hour() * 60 + quoteTime.minute() >= 14 * 60 + 59 &&
+            Number(quote.current_price || 0) > 0
+          );
+        })
+        .map(quote => quote.symbol)
+    );
+    const missingSymbols = closeSymbols.filter(symbol => !closingSymbols.has(symbol));
+    const summary = {
+      requested_count: refreshed.requested_count,
+      persisted_count: refreshed.persisted_count,
+      missing_symbols: missingSymbols,
+      latest_quote_time: refreshed.latest_quote_time || null,
+    };
+    if (missingSymbols.length > 0) {
+      throw new Error(`收盘行情未到齐: ${missingSymbols.join(', ')}`);
+    }
+    return summary;
+  }
+
   private async _executeTaskLogic(task: ScheduledTask, isManual = false) {
     const timestamp = new Date();
     // US-004 [OPS-004]: 记录 wall-clock 起点, 出口处 recordSchedulerTaskRun 落
@@ -3076,19 +3132,48 @@ class SchedulerService {
             : parameters.perDirectionTradeLimit !== undefined
             ? Number(parameters.perDirectionTradeLimit)
             : undefined;
+        const digestPortfolios = await PaperTradingPortfolio.findAll({
+          where: { is_active: true },
+          attributes: ['id'],
+          raw: true,
+        });
+        const digestPortfolioIds = (digestPortfolios as any[]).map(portfolio =>
+          Number(portfolio.id)
+        );
+        const closeQuoteRefresh = await this.refreshPortfolioClosingQuotes(
+          digestPortfolioIds,
+          timestamp
+        );
+        const valuationFailures: number[] = [];
+        for (const portfolioId of digestPortfolioIds) {
+          try {
+            await paperTradingAutomationService.syncLatestPrices(portfolioId);
+          } catch (error: any) {
+            valuationFailures.push(portfolioId);
+            logger.warn(
+              `[PAPER_TRADING_DAILY_DIGEST] portfolio=${portfolioId} valuation FAIL: ${
+                error?.message || error
+              }`
+            );
+          }
+        }
+        if (valuationFailures.length > 0) {
+          throw new Error(`日报估值失败: portfolio ${valuationFailures.join(', ')}`);
+        }
         const digestResult = await dailyTradingDigestService.sendDigests({
           user_id: targetUserId ? Number(targetUserId) : undefined,
           trade_date: parameters.trade_date || parameters.tradeDate,
           dry_run: dryRun,
           per_direction_trade_limit: perDirectionTradeLimit,
         });
+        const digestFailed = digestResult.failed_count > 0;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: digestResult.scanned_users,
           completed_items: digestResult.sent_count,
           failed_items: digestResult.failed_count,
-          status: 'COMPLETED',
+          status: digestFailed ? 'FAILED' : 'COMPLETED',
           completed_at: new Date(),
-          error_message: null,
+          error_message: digestFailed ? `${digestResult.failed_count} 个用户日报发送失败` : null,
           result_summary: {
             scenario: 'paper_trading_daily_digest',
             trade_date: digestResult.trade_date,
@@ -3096,7 +3181,9 @@ class SchedulerService {
             sent_count: digestResult.sent_count,
             skipped_count: digestResult.skipped_count,
             failed_count: digestResult.failed_count,
+            batch_error: digestResult.batch_error || null,
             dry_run: dryRun,
+            close_quote_refresh: closeQuoteRefresh,
             per_user_summary: digestResult.per_user.map(u => ({
               user_id: u.user_id,
               username: u.username,
@@ -3113,6 +3200,9 @@ class SchedulerService {
             `失败 ${digestResult.failed_count}` +
             (dryRun ? '（dry-run，未实际推送）' : '')
         );
+        if (digestFailed) {
+          throw new Error(`${digestResult.failed_count} 个用户日报发送失败`);
+        }
       } else if (task.type === 'EARNINGS_FORECAST_WATCH') {
         // 批5: EarningsForecastWatcher 已下线 — 保留 task 分支避免存量任务报错, 空跑 COMPLETED.
         void parameters;
@@ -4355,57 +4445,7 @@ class SchedulerService {
           raw: true,
         });
         const portfolioIds = (portfolios as any[]).map(portfolio => Number(portfolio.id));
-        const heldRows = portfolioIds.length
-          ? await PaperTradingPosition.findAll({
-              where: {
-                portfolio_id: { [Op.in]: portfolioIds },
-                quantity: { [Op.gt]: 0 },
-              },
-              attributes: ['symbol'],
-              group: ['symbol'],
-              raw: true,
-            })
-          : [];
-        const closeSymbols = [
-          ...new Set((heldRows as any[]).map(row => String(row.symbol || '')).filter(Boolean)),
-        ];
-        let closeQuoteRefresh: Record<string, any> = {
-          requested_count: closeSymbols.length,
-          persisted_count: 0,
-          missing_symbols: [],
-          latest_quote_time: null,
-        };
-        if (closeSymbols.length > 0) {
-          const refreshed = await realtimeQuoteService.syncQuotesForSymbols(closeSymbols, {
-            source: 'tencent',
-            batch_size: 500,
-          });
-          const latestQuotes = await realtimeQuoteService.getLatestQuotes(closeSymbols);
-          const expectedDate = moment(timestamp).tz('Asia/Shanghai').format('YYYY-MM-DD');
-          const closingSymbols = new Set(
-            latestQuotes
-              .filter(quote => {
-                const quoteTime = moment(quote.quote_time).tz('Asia/Shanghai');
-                return (
-                  String(quote.trade_date || '') === expectedDate &&
-                  quoteTime.format('YYYY-MM-DD') === expectedDate &&
-                  quoteTime.hour() * 60 + quoteTime.minute() >= 14 * 60 + 59 &&
-                  Number(quote.current_price || 0) > 0
-                );
-              })
-              .map(quote => quote.symbol)
-          );
-          const missingSymbols = closeSymbols.filter(symbol => !closingSymbols.has(symbol));
-          closeQuoteRefresh = {
-            requested_count: refreshed.requested_count,
-            persisted_count: refreshed.persisted_count,
-            missing_symbols: missingSymbols,
-            latest_quote_time: refreshed.latest_quote_time || null,
-          };
-          if (missingSymbols.length > 0) {
-            throw new Error(`收盘行情未到齐: ${missingSymbols.join(', ')}`);
-          }
-        }
+        const closeQuoteRefresh = await this.refreshPortfolioClosingQuotes(portfolioIds, timestamp);
         let ok = 0,
           failed = 0;
         for (const p of portfolios as any[]) {

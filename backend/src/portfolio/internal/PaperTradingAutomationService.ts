@@ -392,6 +392,8 @@ export interface PaperTradingSnapshotResult {
   }>;
 }
 
+export type PaperTradingMarkToMarketResult = Omit<PaperTradingSnapshotResult, 'date'>;
+
 export interface PaperTradingAutoResult {
   portfolio_id: number;
   user_id: number;
@@ -1339,7 +1341,7 @@ class PaperTradingAutomationService {
     return portfolio;
   }
 
-  async syncLatestPricesAndSnapshot(portfolio_id: number): Promise<PaperTradingSnapshotResult> {
+  async syncLatestPrices(portfolio_id: number): Promise<PaperTradingMarkToMarketResult> {
     const portfolio = await PaperTradingPortfolio.findByPk(portfolio_id);
     if (!portfolio) {
       throw new Error(`模拟盘不存在: ${portfolio_id}`);
@@ -1351,7 +1353,7 @@ class PaperTradingAutomationService {
     });
 
     let positionValue = 0;
-    const normalizedPositions: PaperTradingSnapshotResult['positions'] = [];
+    const normalizedPositions: PaperTradingMarkToMarketResult['positions'] = [];
 
     for (const position of positions) {
       const quote = await this.getLatestPrice(position.symbol, toNumber(position.current_price, 0));
@@ -1383,13 +1385,25 @@ class PaperTradingAutomationService {
     const total_value = roundNumber(current_cash + positionValue, 2);
     await portfolio.update({ total_value });
 
+    return {
+      portfolio_id,
+      total_value,
+      current_cash,
+      position_value: roundNumber(positionValue, 2),
+      positions: normalizedPositions,
+    };
+  }
+
+  async syncLatestPricesAndSnapshot(portfolio_id: number): Promise<PaperTradingSnapshotResult> {
+    const valuation = await this.syncLatestPrices(portfolio_id);
+
     const date = getChinaToday();
     const snapshotPayload = {
       portfolio_id,
       date,
-      total_value,
-      current_cash,
-      position_value: roundNumber(positionValue, 2),
+      total_value: valuation.total_value,
+      current_cash: valuation.current_cash,
+      position_value: valuation.position_value,
     };
     // Batch K (2026-06-17, H3 算账): 改用 Sequelize upsert (PG ON CONFLICT) +
     // 配 PaperTradingSnapshot model 上的 UNIQUE(portfolio_id, date) 索引. 之前
@@ -1401,7 +1415,7 @@ class PaperTradingAutomationService {
 
     return {
       ...snapshotPayload,
-      positions: normalizedPositions,
+      positions: valuation.positions,
     };
   }
 

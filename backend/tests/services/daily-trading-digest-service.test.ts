@@ -28,7 +28,7 @@
  *     - sendFeishuCard throw → fail-OPEN → status='failed' error 填充；
  *     - sendFeishuCard 返回 success=false → status='partial'；
  *     - dry_run=true → status='sent' 但 sent=false skip_reason='dry_run' webhook 未调用；
- *     - listEligibleUsers throw → 顶层 catch → 返回空 per_user；
+ *     - listEligibleUsers throw → 顶层 catch → 返回批级失败；
  *     - 多个 user：A 成功 + B 失败 → per_user 各自独立 status 不串扰；
  *     - per_direction_trade_limit cap 生效；
  */
@@ -243,7 +243,11 @@ function testNormalizeNotificationConfig(): void {
     },
   });
   assertEqual('partial enabled override', partial.feishu.enabled, false);
-  assertEqual('partial webhook_url override', partial.feishu.webhook_url, 'https://custom.example.com/h');
+  assertEqual(
+    'partial webhook_url override',
+    partial.feishu.webhook_url,
+    'https://custom.example.com/h'
+  );
   assertEqual('partial daily_digest fallback default', partial.feishu.daily_digest, true);
   assertEqual('partial email.enabled fallback default', partial.email.enabled, false);
 
@@ -747,7 +751,11 @@ async function testSendDigestsListThrowsTopLevel(): Promise<void> {
   assertEqual('scanned_users 0', r.scanned_users, 0);
   assertEqual('per_user 0', r.per_user.length, 0);
   assertEqual('sent_count 0', r.sent_count, 0);
-  assertEqual('failed_count 0', r.failed_count, 0);
+  assertEqual('failed_count 1', r.failed_count, 1);
+  assert(
+    'batch_error describes user loading failure',
+    String(r.batch_error).includes('加载日报用户失败')
+  );
 }
 
 async function testSendDigestsMultipleUsersIsolated(): Promise<void> {

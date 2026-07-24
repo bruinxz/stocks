@@ -54,8 +54,13 @@ assert.match(
 );
 assert.match(
   scheduler,
-  /PAPER_TRADING_DAILY_SNAPSHOT[\s\S]{0,2600}syncQuotesForSymbols\(closeSymbols[\s\S]{0,1600}14 \* 60 \+ 59[\s\S]{0,1000}收盘行情未到齐/,
+  /refreshPortfolioClosingQuotes[\s\S]{0,1800}syncQuotesForSymbols\(closeSymbols[\s\S]{0,1600}14 \* 60 \+ 59[\s\S]{0,1000}收盘行情未到齐/,
   'daily snapshots must refresh and verify true closing quotes instead of reusing the 14:55 cache'
+);
+assert.match(
+  scheduler,
+  /PAPER_TRADING_DAILY_SNAPSHOT[\s\S]{0,700}refreshPortfolioClosingQuotes/,
+  'the 16:00 snapshot path must use the verified closing quote refresh'
 );
 assert.match(
   attributionService,

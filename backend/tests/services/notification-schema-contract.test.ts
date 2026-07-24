@@ -110,6 +110,9 @@ function main() {
   );
 
   const tradingDigest = read('backend/src/services/DailyTradingDigestService.ts');
+  const paperAutomationService = read(
+    'backend/src/portfolio/internal/PaperTradingAutomationService.ts'
+  );
   assert(
     'trading digest selects configured/default portfolio',
     tradingDigest.includes('DAILY_TRADING_DIGEST_PORTFOLIO_NAME')
@@ -121,6 +124,24 @@ function main() {
   assert(
     'trading digest identifies portfolio in payload',
     tradingDigest.includes('portfolio_name:')
+  );
+  assert(
+    'daily digest refreshes verified closing quotes before valuation',
+    /task\.type === 'PAPER_TRADING_DAILY_DIGEST'[\s\S]{0,1800}refreshPortfolioClosingQuotes[\s\S]{0,800}syncLatestPrices\(portfolioId\)/.test(
+      scheduler
+    )
+  );
+  assert(
+    'daily digest failures reach scheduler failure lifecycle',
+    /const digestFailed = digestResult\.failed_count > 0[\s\S]{0,400}status: digestFailed \? 'FAILED' : 'COMPLETED'[\s\S]{0,1600}if \(digestFailed\)/.test(
+      scheduler
+    )
+  );
+  assert(
+    'mark-to-market can refresh caches without writing a premature EOD snapshot',
+    /async syncLatestPrices\(portfolio_id:[\s\S]{0,2200}return \{[\s\S]{0,400}positions: normalizedPositions[\s\S]{0,300}async syncLatestPricesAndSnapshot[\s\S]{0,200}this\.syncLatestPrices\(portfolio_id\)/.test(
+      paperAutomationService
+    )
   );
 
   const taskRoutes = read('backend/src/api/routes/task.routes.ts');

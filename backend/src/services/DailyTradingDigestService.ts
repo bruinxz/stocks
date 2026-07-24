@@ -206,6 +206,7 @@ export interface SendDigestsResult {
   /** dry_run=true 时不实际发 webhook，但仍计算 payload */
   dry_run: boolean;
   per_user: DigestForUserResult[];
+  batch_error?: string;
 }
 
 export interface SendDigestsOptions {
@@ -790,9 +791,10 @@ export class DailyTradingDigestService {
         scanned_users: 0,
         sent_count: 0,
         skipped_count: 0,
-        failed_count: 0,
+        failed_count: 1,
         dry_run: dryRun,
         per_user: [],
+        batch_error: `加载日报用户失败：${err?.message || err}`,
       };
     }
 
