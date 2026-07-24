@@ -1,0 +1,29 @@
+frontend/src/pages/catdesk/shared/useResearchTradingLoop.ts
+  s_ec1e6492779c20::t_ad0731655426d1 3,10
+frontend/src/pages/catdesk/shared/useVisibleAutoRefresh.ts
+  s_ec1e6492779c20::t_381c168ffb58b7 1-15
+frontend/src/pages/catdesk/tabs/AShareMorningBrief.tsx
+  s_ec1e6492779c20::t_9e07c6bab8da7a 22-25,27,56,60-61
+frontend/src/pages/catdesk/tabs/multibagger/__tests__/useMultibaggerData.test.tsx
+  s_ec1e6492779c20::t_670b5a475bf8c8 1-68
+frontend/src/pages/catdesk/tabs/multibagger/useMultibaggerData.ts
+  s_ec1e6492779c20::t_802a5a12c3d247 11-12,43,47-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3764d908c3da21bc3b4bd0a1b4d183847633c544",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
