@@ -53,10 +53,17 @@ export interface ResearchTradingLoopDashboard {
       fresh: boolean;
     };
     merged_target_count: number;
+    allocation_policy: {
+      size_hint_multiplier: number;
+      dual_source_bonus_pct: number;
+      max_single_weight_pct: number;
+      planned_gross_weight_pct: number;
+    };
     targets: Array<{
       symbol: string;
       name: string;
       combined_score: number;
+      source_size_hint_pct: number;
       target_weight_pct: number;
       sources: Array<'morning_brief' | 'multibagger'>;
     }>;

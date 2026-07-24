@@ -30,6 +30,8 @@ function source(
     score,
     rating: 'A',
     risk_gate_status: 'GREEN',
+    size_hint_tier: 'TIER_3',
+    size_hint_pct: 3,
     ...overrides,
   };
 }
@@ -60,13 +62,14 @@ function testMergeAndPriority() {
     source('m3', '600003.SH', 30),
   ];
   input.multibagger.candidates = [
-    source('b1', '600001.SH', 58),
-    source('b2', '600004.SH', 90),
+    source('b1', '600001.SH', 58, { size_hint_tier: 'TIER_2', size_hint_pct: 2 }),
+    source('b2', '600004.SH', 90, { size_hint_tier: 'TIER_2', size_hint_pct: 2 }),
     source('b3', '600099.SH', 100, { risk_gate_status: 'RED' }),
   ];
   const merged = mergeResearchCandidates(input);
   assert.equal(merged[0].symbol, 'sh.600001', '双源候选必须排在单源高分候选之前');
   assert.equal(merged[0].target_weight_pct, 12);
+  assert.equal(merged[0].source_size_hint_pct, 3);
   assert.equal(merged.find(row => row.symbol === 'sh.600002')?.target_weight_pct, 9);
   assert.equal(merged.find(row => row.symbol === 'sh.600004')?.target_weight_pct, 6);
   assert(
@@ -389,10 +392,17 @@ async function testDashboardExecutionState() {
       symbol: 'sh.600001',
       name: '股票SH',
       combined_score: 80,
+      source_size_hint_pct: 3,
       target_weight_pct: 9,
       sources: ['morning_brief'],
     },
   ]);
+  assert.deepEqual(preopen.research.allocation_policy, {
+    size_hint_multiplier: 3,
+    dual_source_bonus_pct: 3,
+    max_single_weight_pct: 12,
+    planned_gross_weight_pct: 9,
+  });
   assert.equal(preopenRepo.portfolio_load_count, 0, '盘前状态不应伪装成行情就绪检查');
 
   const quoteWaitingRepo = new FakeRepository();

@@ -98,7 +98,8 @@ export function ResearchLoopStatusStrip({ dashboard, error, focus }: Props) {
             <span key={target.symbol}>
               <b>{target.name}</b>
               <small>
-                {target.symbol} · {target.target_weight_pct}% ·{' '}
+                {target.symbol} · 研究 {target.source_size_hint_pct}% → 联合{' '}
+                {target.target_weight_pct}% ·{' '}
                 {target.sources.length > 1
                   ? '双源'
                   : target.sources[0] === 'morning_brief'
@@ -107,6 +108,14 @@ export function ResearchLoopStatusStrip({ dashboard, error, focus }: Props) {
               </small>
             </span>
           ))}
+          <small className="catdesk-loop-targets__policy">
+            研究建议 ×{research.allocation_policy.size_hint_multiplier}
+            {research.allocation_policy.dual_source_bonus_pct
+              ? `；双源确认 +${research.allocation_policy.dual_source_bonus_pct}%`
+              : ''}
+            ；单只上限 {research.allocation_policy.max_single_weight_pct}%；今日计划总仓位{' '}
+            {research.allocation_policy.planned_gross_weight_pct}%
+          </small>
         </div>
       ) : null}
       {fresh ? (

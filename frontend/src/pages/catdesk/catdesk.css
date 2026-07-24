@@ -1634,6 +1634,13 @@
   font: 700 8px/1.3 var(--cd-font-mono);
 }
 
+.catdesk-loop-targets .catdesk-loop-targets__policy {
+  flex: 1 0 100%;
+  margin-top: 1px;
+  color: var(--cd-text-secondary);
+  font: 600 9px/1.45 var(--cd-font-sans);
+}
+
 .catdesk-loop-decisions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

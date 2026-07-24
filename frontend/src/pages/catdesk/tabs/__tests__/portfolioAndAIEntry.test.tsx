@@ -34,11 +34,18 @@ jest.mock('../../shared/useResearchTradingLoop', () => ({
           fresh: true,
         },
         merged_target_count: 6,
+        allocation_policy: {
+          size_hint_multiplier: 3,
+          dual_source_bonus_pct: 3,
+          max_single_weight_pct: 12,
+          planned_gross_weight_pct: 48,
+        },
         targets: [
           {
             symbol: 'sh.600483',
             name: '福能股份',
             combined_score: 82,
+            source_size_hint_pct: 3,
             target_weight_pct: 12,
             sources: ['morning_brief', 'multibagger'],
           },

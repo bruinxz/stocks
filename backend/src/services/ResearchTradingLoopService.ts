@@ -24,6 +24,9 @@ export const RESEARCH_LOOP_PORTFOLIO_NAME = '研究闭环模拟盘';
 export const RESEARCH_LOOP_INITIAL_CAPITAL = 200000;
 export const RESEARCH_LOOP_MAX_POSITIONS = 6;
 export const RESEARCH_LOOP_HARD_STOP_PCT = 8;
+export const RESEARCH_LOOP_SIZE_HINT_MULTIPLIER = 3;
+export const RESEARCH_LOOP_DUAL_SOURCE_BONUS_PCT = 3;
+export const RESEARCH_LOOP_MAX_SINGLE_WEIGHT_PCT = 12;
 export const RESEARCH_LOOP_REQUIRED_TABLES = [
   'ai_recommendation_snapshot',
   'ai_recommendation_item',
@@ -50,6 +53,8 @@ export interface ResearchCandidateSource {
   score: number;
   rating: string | null;
   risk_gate_status: string;
+  size_hint_tier?: string;
+  size_hint_pct?: number;
   rank?: number;
   stage?: string;
   conclusion?: string;
@@ -60,6 +65,7 @@ export interface ResearchLoopCandidate {
   name: string;
   sources: ResearchCandidateSource[];
   combined_score: number;
+  source_size_hint_pct: number;
   target_weight_pct: number;
 }
 
@@ -86,6 +92,7 @@ export interface ResearchCandidateSourceRow {
   rating: string | null;
   risk_gate_status: string;
   size_hint_tier?: string;
+  size_hint_pct?: number;
   rank?: number;
   stage?: string;
   conclusion?: string;
@@ -255,13 +262,31 @@ function sourceIsEligible(source: ResearchCandidateSourceRow): boolean {
   if (String(source.risk_gate_status || '').toUpperCase() !== 'GREEN') return false;
   if (source.size_hint_tier === 'SKIP') return false;
   if (source.conclusion === 'SKIP') return false;
-  return true;
+  return sourceSizeHintPct(source) > 0;
+}
+
+const SIZE_HINT_PCT: Record<string, number> = {
+  TIER_5: 5,
+  TIER_3: 3,
+  TIER_2: 2,
+  TIER_1: 1,
+  SKIP: 0,
+};
+
+function sourceSizeHintPct(source: { size_hint_tier?: string; size_hint_pct?: number }): number {
+  const explicit = Number(source.size_hint_pct);
+  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
+  return SIZE_HINT_PCT[String(source.size_hint_tier || '').toUpperCase()] || 0;
 }
 
 function sourceWeight(sources: ResearchCandidateSource[]): number {
   const names = new Set(sources.map(source => source.source));
-  if (names.size > 1) return 12;
-  return names.has('morning_brief') ? 9 : 6;
+  const strongestHint = Math.max(0, ...sources.map(sourceSizeHintPct));
+  const confirmationBonus = names.size > 1 ? RESEARCH_LOOP_DUAL_SOURCE_BONUS_PCT : 0;
+  return Math.min(
+    RESEARCH_LOOP_MAX_SINGLE_WEIGHT_PCT,
+    Math.round((strongestHint * RESEARCH_LOOP_SIZE_HINT_MULTIPLIER + confirmationBonus) * 100) / 100
+  );
 }
 
 /**
@@ -279,6 +304,7 @@ export function mergeResearchCandidates(bundle: ResearchBundle): ResearchLoopCan
       name: row.name || symbol,
       sources: [],
       combined_score: 0,
+      source_size_hint_pct: 0,
       target_weight_pct: 0,
     };
     current.name = current.name === current.symbol && row.name ? row.name : current.name;
@@ -288,6 +314,8 @@ export function mergeResearchCandidates(bundle: ResearchBundle): ResearchLoopCan
       score: row.score,
       rating: row.rating,
       risk_gate_status: row.risk_gate_status,
+      size_hint_tier: row.size_hint_tier,
+      size_hint_pct: row.size_hint_pct,
       rank: row.rank,
       stage: row.stage,
       conclusion: row.conclusion,
@@ -310,6 +338,7 @@ export function mergeResearchCandidates(bundle: ResearchBundle): ResearchLoopCan
           : finite(multibagger?.score) * 0.9) * 100
       ) / 100
     );
+    candidate.source_size_hint_pct = Math.max(0, ...candidate.sources.map(sourceSizeHintPct));
     candidate.target_weight_pct = sourceWeight(candidate.sources);
   }
   return [...merged.values()].sort((a, b) => {
@@ -603,6 +632,8 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
               COALESCE((c.score->>'total')::numeric, 0) AS score,
               c.rating,
               COALESCE(c.risk_gate->>'gate', 'UNKNOWN') AS risk_gate_status,
+              c.entry_plan->'size_hint'->>'tier' AS size_hint_tier,
+              (c.entry_plan->'size_hint'->>'pct')::numeric AS size_hint_pct,
               c.stage,
               c.conclusion,
               c.as_of_utc,
@@ -642,6 +673,10 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
           rating: item.ratingBand,
           risk_gate_status: item.riskGateStatus,
           size_hint_tier: item.sizeHintTier,
+          size_hint_pct:
+            record(item.recommendationJson).entry_plan?.size_hint?.pct === undefined
+              ? undefined
+              : finite(record(item.recommendationJson).entry_plan.size_hint.pct),
           rank: item.sortRank,
         })),
       },
@@ -655,6 +690,8 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
           score: finite(row.score),
           rating: row.rating || null,
           risk_gate_status: row.risk_gate_status,
+          size_hint_tier: row.size_hint_tier,
+          size_hint_pct: row.size_hint_pct == null ? undefined : finite(row.size_hint_pct),
           stage: row.stage,
           conclusion: row.conclusion,
         })),
@@ -1352,10 +1389,20 @@ export class ResearchTradingLoopService {
           fresh: bundle.multibagger.research_day === bundle.expected_research_day,
         },
         merged_target_count: targets.length,
+        allocation_policy: {
+          size_hint_multiplier: RESEARCH_LOOP_SIZE_HINT_MULTIPLIER,
+          dual_source_bonus_pct: RESEARCH_LOOP_DUAL_SOURCE_BONUS_PCT,
+          max_single_weight_pct: RESEARCH_LOOP_MAX_SINGLE_WEIGHT_PCT,
+          planned_gross_weight_pct: targets.reduce(
+            (sum, target) => sum + target.target_weight_pct,
+            0
+          ),
+        },
         targets: targets.map(target => ({
           symbol: target.symbol,
           name: target.name,
           combined_score: target.combined_score,
+          source_size_hint_pct: target.source_size_hint_pct,
           target_weight_pct: target.target_weight_pct,
           sources: target.sources.map(source => source.source),
         })),

@@ -25,11 +25,18 @@ function dashboard(fresh = true): ResearchTradingLoopDashboard {
         fresh,
       },
       merged_target_count: 6,
+      allocation_policy: {
+        size_hint_multiplier: 3,
+        dual_source_bonus_pct: 3,
+        max_single_weight_pct: 12,
+        planned_gross_weight_pct: 48,
+      },
       targets: [
         {
           symbol: 'sh.600001',
           name: '目标股票',
           combined_score: 82,
+          source_size_hint_pct: 3,
           target_weight_pct: 12,
           sources: ['morning_brief', 'multibagger'],
         },
@@ -100,7 +107,8 @@ describe('research loop shared UI', () => {
       expect(container.textContent).toContain('买 2 · 持 3 · 卖 1');
       expect(container.textContent).toContain('今日目标池');
       expect(container.textContent).toContain('目标股票');
-      expect(container.textContent).toContain('12% · 双源');
+      expect(container.textContent).toContain('研究 3% → 联合 12% · 双源');
+      expect(container.textContent).toContain('今日计划总仓位 48%');
     }
   );
 
