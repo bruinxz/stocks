@@ -19,6 +19,11 @@ import { normalizeSymbol, quantizeBuyQuantity } from '../utils/stockSymbol';
 import { getEast8DateString, getEast8TimeComponents } from '../utils/timezone';
 import { checkAShareTradingHours } from '../utils/tradingCalendar';
 import { expectedCompletedTradeDate } from './PageFreshnessService';
+import { researchStrategyQualificationService } from './ResearchStrategyQualificationService';
+import type {
+  ResearchStrategyQualificationSummary,
+  ResearchStrategySource,
+} from './ResearchStrategyQualificationService';
 
 export const RESEARCH_LOOP_PORTFOLIO_NAME = '研究闭环模拟盘';
 export const RESEARCH_LOOP_INITIAL_CAPITAL = 200000;
@@ -34,6 +39,8 @@ export const RESEARCH_LOOP_REQUIRED_TABLES = [
   'multibagger_candidate_snapshot',
   'research_trading_loop_runs',
   'research_trading_loop_decisions',
+  'backtest_pit_snapshot',
+  'research_integrity_audits',
 ] as const;
 
 export class ResearchTradingLoopNotReadyError extends Error {
@@ -135,6 +142,7 @@ export interface ResearchLoopPortfolioRow {
   initial_capital: number;
   current_cash: number;
   total_value: number;
+  auto_trade_enabled: boolean;
 }
 
 export interface ResearchLoopRunRow {
@@ -148,12 +156,14 @@ export interface ResearchLoopRunRow {
 
 export type ResearchLoopExecutionStatus =
   | 'research_blocked'
+  | 'strategy_blocked'
   | 'market_closed'
   | 'scheduled'
   | 'waiting_for_quotes'
   | 'ready'
   | 'stalled'
   | 'portfolio_not_ready'
+  | 'automation_disabled'
   | 'running'
   | 'completed'
   | 'failed';
@@ -174,6 +184,7 @@ export interface ResearchTradingLoopRepository {
   ensureLoopPortfolios(): Promise<void>;
   loadLoopPortfolios(user_id?: number): Promise<ResearchLoopPortfolioRow[]>;
   loadResearchBundle(now: Date): Promise<ResearchBundle>;
+  loadStrategyQualification(now: Date): Promise<ResearchStrategyQualificationSummary>;
   loadPositions(portfolio_id: number): Promise<ResearchLoopPositionRow[]>;
   loadPrices(symbols: string[], trading_day: string): Promise<Map<string, ResearchLoopPrice>>;
   claimRun(input: {
@@ -187,6 +198,8 @@ export interface ResearchTradingLoopRepository {
     portfolio: ResearchLoopPortfolioRow;
     decision: ResearchLoopDecision;
     price: ResearchLoopPrice | null;
+    allow_new_positions: boolean;
+    eligible_sources: ResearchStrategySource[];
   }): Promise<{ status: string; trade_id?: number; signal_id?: number; quantity?: number }>;
   markToMarket(
     portfolio_id: number,
@@ -199,6 +212,55 @@ export interface ResearchTradingLoopRepository {
     summary: Record<string, unknown>
   ): Promise<void>;
   loadDashboard(user_id: number): Promise<Record<string, unknown> | null>;
+}
+
+export function applyResearchStrategyQualification(
+  bundle: ResearchBundle,
+  qualification: ResearchStrategyQualificationSummary
+): ResearchBundle {
+  return {
+    ...bundle,
+    morning: {
+      ...bundle.morning,
+      candidates: qualification.sources.morning_brief.eligible_for_new_positions
+        ? bundle.morning.candidates
+        : [],
+    },
+    multibagger: {
+      ...bundle.multibagger,
+      candidates: qualification.sources.multibagger.eligible_for_new_positions
+        ? bundle.multibagger.candidates
+        : [],
+    },
+  };
+}
+
+function eligibleResearchSources(
+  qualification: ResearchStrategyQualificationSummary
+): ResearchStrategySource[] {
+  return (Object.keys(qualification.sources) as ResearchStrategySource[]).filter(
+    source => qualification.sources[source].eligible_for_new_positions
+  );
+}
+
+function qualifiedResearchIsFresh(
+  bundle: ResearchBundle,
+  qualification: ResearchStrategyQualificationSummary
+): boolean {
+  const eligibleSources = eligibleResearchSources(qualification);
+  if (!eligibleSources.length) return false;
+  return eligibleSources.every(source =>
+    source === 'morning_brief'
+      ? bundle.morning.research_day === bundle.expected_research_day
+      : bundle.multibagger.research_day === bundle.expected_research_day
+  );
+}
+
+function qualificationBlockSummary(qualification: ResearchStrategyQualificationSummary): string {
+  return Object.values(qualification.sources)
+    .filter(item => !item.eligible_for_new_positions)
+    .map(item => `${item.strategy_key}: ${item.blockers[0]?.title || item.status}`)
+    .join('；');
 }
 
 export function canSellPositionOnTradingDay(created_at: Date, trading_day: string): boolean {
@@ -397,6 +459,7 @@ export function buildResearchLoopDecisions(input: {
   prices: Map<string, ResearchLoopPrice>;
   max_positions?: number;
   hard_stop_pct?: number;
+  de_risk_reason?: string;
 }): ResearchLoopDecision[] {
   const maxPositions = input.max_positions || RESEARCH_LOOP_MAX_POSITIONS;
   const hardStopPct = input.hard_stop_pct || RESEARCH_LOOP_HARD_STOP_PCT;
@@ -426,6 +489,16 @@ export function buildResearchLoopDecisions(input: {
         target_weight_pct: 0,
         sources: candidate?.sources || [],
         reason: `硬止损：当前收益 ${lossPct.toFixed(2)}% ≤ -${hardStopPct}%`,
+      });
+    } else if (input.de_risk_reason) {
+      decisions.push({
+        symbol,
+        name: position.name || candidate?.name || symbol,
+        action: 'SELL',
+        combined_score: candidate?.combined_score ?? null,
+        target_weight_pct: 0,
+        sources: candidate?.sources || [],
+        reason: `策略资格未通过，仅允许减仓退出：${input.de_risk_reason}`,
       });
     } else if (!candidate) {
       decisions.push({
@@ -462,7 +535,7 @@ export function buildResearchLoopDecisions(input: {
     }
   }
 
-  for (const candidate of targetCandidates) {
+  for (const candidate of input.de_risk_reason ? [] : targetCandidates) {
     if (positions.has(candidate.symbol) || !target.has(candidate.symbol)) continue;
     decisions.push({
       symbol: candidate.symbol,
@@ -533,9 +606,9 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
 
     // portfolio_type was introduced with a default of research_loop, so an old portfolio can
     // otherwise be mistaken for the canonical loop account while keeping its old name and a
-    // disabled execution flag. The product has one mandatory research-loop account per user;
-    // normalize it every time before execution rather than silently leaving a half-migrated
-    // account unable to trade.
+    // disabled execution preference. The product has one canonical research-loop account per
+    // user, but an operator/user decision to disable automatic trading must survive restarts.
+    // Strategy qualification is enforced separately and never inferred from this preference.
     await sequelize.query(
       `UPDATE paper_trading_portfolios
           SET name = :name,
@@ -543,7 +616,6 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
               strategy_keys = '[]'::jsonb,
               enabled_factors = '[]'::jsonb,
               risk_profile_overrides = '{"max_positions":6,"max_single_weight_pct":12,"hard_stop_loss_pct":8}'::jsonb,
-              auto_trade_enabled = TRUE,
               updated_at = NOW()
         WHERE portfolio_type = 'research_loop'
           AND is_active = TRUE
@@ -553,7 +625,6 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
             OR strategy_keys IS DISTINCT FROM '[]'::jsonb
             OR enabled_factors IS DISTINCT FROM '[]'::jsonb
             OR risk_profile_overrides IS DISTINCT FROM '{"max_positions":6,"max_single_weight_pct":12,"hard_stop_loss_pct":8}'::jsonb
-            OR auto_trade_enabled IS DISTINCT FROM TRUE
           )`,
       { replacements: { name: RESEARCH_LOOP_PORTFOLIO_NAME } }
     );
@@ -606,6 +677,7 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
       initial_capital: finite(row.initial_capital),
       current_cash: finite(row.current_cash),
       total_value: finite(row.total_value),
+      auto_trade_enabled: row.auto_trade_enabled === true,
     }));
   }
 
@@ -704,6 +776,10 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
     };
   }
 
+  async loadStrategyQualification(now: Date): Promise<ResearchStrategyQualificationSummary> {
+    return researchStrategyQualificationService.getSummary(now);
+  }
+
   private async loadNames(symbols: string[]): Promise<Map<string, string>> {
     const unique = [...new Set(symbols.filter(Boolean))];
     if (!unique.length) return new Map();
@@ -779,6 +855,10 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
              started_at = NOW(), completed_at = NULL, updated_at = NOW()
        WHERE research_trading_loop_runs.status IN ('failed', 'skipped')
           OR (
+            research_trading_loop_runs.status = 'completed'
+            AND NOT (research_trading_loop_runs.summary ? 'execution_mode')
+          )
+          OR (
             research_trading_loop_runs.status = 'running'
             AND research_trading_loop_runs.updated_at < NOW() - INTERVAL '10 minutes'
           )
@@ -803,9 +883,21 @@ export class SequelizeResearchTradingLoopRepository implements ResearchTradingLo
     portfolio: ResearchLoopPortfolioRow;
     decision: ResearchLoopDecision;
     price: ResearchLoopPrice | null;
+    allow_new_positions: boolean;
+    eligible_sources: ResearchStrategySource[];
   }): Promise<{ status: string; trade_id?: number; signal_id?: number; quantity?: number }> {
     const signal = await this.upsertSignal(input);
     const decisionId = await this.insertDecision(input, signal.id);
+    const buySourcesEligible =
+      input.decision.sources.length > 0 &&
+      input.decision.sources.every(source => input.eligible_sources.includes(source.source));
+    if (input.decision.action === 'BUY' && (!input.allow_new_positions || !buySourcesEligible)) {
+      await this.updateDecision(decisionId, {
+        status: 'skipped',
+        metadata: { skip_reason: 'strategy_qualification_blocked' },
+      });
+      return { status: 'skipped', signal_id: signal.id };
+    }
     if (input.decision.action === 'HOLD') {
       await this.updateDecision(decisionId, { status: 'held' });
       return { status: 'held', signal_id: signal.id };
@@ -1209,13 +1301,17 @@ export class ResearchTradingLoopService {
 
   async getCurrentTargetPlan(now = new Date()) {
     await this.repository.assertReady();
-    const bundle = await this.repository.loadResearchBundle(now);
-    const fresh =
-      bundle.morning.research_day === bundle.expected_research_day &&
-      bundle.multibagger.research_day === bundle.expected_research_day;
+    const [rawBundle, qualification] = await Promise.all([
+      this.repository.loadResearchBundle(now),
+      this.repository.loadStrategyQualification(now),
+    ]);
+    const bundle = applyResearchStrategyQualification(rawBundle, qualification);
+    const fresh = qualifiedResearchIsFresh(rawBundle, qualification);
     return {
       expected_research_day: bundle.expected_research_day,
       fresh,
+      eligible: qualification.allows_new_positions,
+      qualification,
       targets: fresh ? selectResearchLoopTargets(bundle, RESEARCH_LOOP_MAX_POSITIONS) : [],
     };
   }
@@ -1235,18 +1331,22 @@ export class ResearchTradingLoopService {
     }
     await this.repository.assertReady();
     await this.repository.ensureLoopPortfolios();
-    const bundle = await this.repository.loadResearchBundle(now);
-    const fresh =
-      bundle.morning.research_day === bundle.expected_research_day &&
-      bundle.multibagger.research_day === bundle.expected_research_day;
-    if (!fresh) {
+    const [rawBundle, qualification] = await Promise.all([
+      this.repository.loadResearchBundle(now),
+      this.repository.loadStrategyQualification(now),
+    ]);
+    const bundle = applyResearchStrategyQualification(rawBundle, qualification);
+    const deRiskOnly = !qualification.allows_new_positions;
+    const fresh = qualifiedResearchIsFresh(rawBundle, qualification);
+    if (!deRiskOnly && !fresh) {
       return {
         trading_day: tradingDay,
-        expected_research_day: bundle.expected_research_day,
+        expected_research_day: rawBundle.expected_research_day,
         status: 'skipped',
         reason: 'research_not_fresh',
-        morning_research_day: bundle.morning.research_day,
-        multibagger_research_day: bundle.multibagger.research_day,
+        morning_research_day: rawBundle.morning.research_day,
+        multibagger_research_day: rawBundle.multibagger.research_day,
+        qualification,
         users: [],
       };
     }
@@ -1260,7 +1360,24 @@ export class ResearchTradingLoopService {
     );
     const users: any[] = [];
     for (const portfolio of portfolios) {
+      if (!portfolio.auto_trade_enabled) {
+        users.push({
+          user_id: portfolio.user_id,
+          portfolio_id: portfolio.id,
+          status: 'automation_disabled',
+        });
+        continue;
+      }
       const positions = await this.repository.loadPositions(portfolio.id);
+      if (deRiskOnly && positions.length === 0) {
+        users.push({
+          user_id: portfolio.user_id,
+          portfolio_id: portfolio.id,
+          status: 'strategy_blocked',
+          reason: qualificationBlockSummary(qualification),
+        });
+        continue;
+      }
       const symbols = [...allSymbols, ...positions.map(position => position.symbol)];
       const prices = await this.repository.loadPrices(symbols, tradingDay);
       const requiredSymbols = [
@@ -1286,14 +1403,19 @@ export class ResearchTradingLoopService {
       const run = await this.repository.claimRun({
         portfolio,
         trading_day: tradingDay,
-        research_day: bundle.expected_research_day,
-        bundle,
+        research_day: rawBundle.expected_research_day,
+        bundle: rawBundle,
       });
       if (!run) {
         users.push({ user_id: portfolio.user_id, portfolio_id: portfolio.id, status: 'deduped' });
         continue;
       }
-      const decisions = buildResearchLoopDecisions({ bundle, positions, prices });
+      const decisions = buildResearchLoopDecisions({
+        bundle,
+        positions,
+        prices,
+        de_risk_reason: deRiskOnly ? qualificationBlockSummary(qualification) : undefined,
+      });
       const outcomes: any[] = [];
       try {
         for (const decision of decisions) {
@@ -1304,11 +1426,14 @@ export class ResearchTradingLoopService {
               portfolio,
               decision,
               price: prices.get(decision.symbol) || null,
+              allow_new_positions: qualification.allows_new_positions,
+              eligible_sources: eligibleResearchSources(qualification),
             })),
           });
         }
         await this.repository.markToMarket(portfolio.id, prices, tradingDay);
         const summary = {
+          execution_mode: deRiskOnly ? 'de_risk_only' : 'qualified_strategy',
           target_count: selectResearchLoopTargets(bundle, RESEARCH_LOOP_MAX_POSITIONS).length,
           buy_count: outcomes.filter(row => row.action === 'BUY' && row.status === 'executed')
             .length,
@@ -1346,53 +1471,70 @@ export class ResearchTradingLoopService {
     }
     return {
       trading_day: tradingDay,
-      research_day: bundle.expected_research_day,
+      research_day: rawBundle.expected_research_day,
       status: users.some(row => row.status === 'failed')
         ? 'partial'
         : users.some(row => row.status === 'waiting_for_quotes')
         ? 'waiting_for_quotes'
+        : users.length > 0 && users.every(row => row.status === 'automation_disabled')
+        ? 'automation_disabled'
+        : deRiskOnly
+        ? 'strategy_blocked'
         : 'completed',
-      morning_snapshot_id: bundle.morning.snapshot_id,
-      multibagger_as_of: bundle.multibagger.as_of,
+      morning_snapshot_id: rawBundle.morning.snapshot_id,
+      multibagger_as_of: rawBundle.multibagger.as_of,
+      qualification,
       users,
     };
   }
 
   async getDashboard(user_id: number, now = new Date()) {
     await this.repository.assertReady();
-    const bundle = await this.repository.loadResearchBundle(now);
+    const [rawBundle, qualification] = await Promise.all([
+      this.repository.loadResearchBundle(now),
+      this.repository.loadStrategyQualification(now),
+    ]);
+    const bundle = applyResearchStrategyQualification(rawBundle, qualification);
     const targets = selectResearchLoopTargets(bundle, RESEARCH_LOOP_MAX_POSITIONS);
     const dashboard = await this.repository.loadDashboard(user_id);
+    const dashboardSummary = record(dashboard?.summary);
     const latestRun = dashboard
       ? {
           ...dashboard,
+          execution_mode:
+            typeof dashboardSummary.execution_mode === 'string'
+              ? dashboardSummary.execution_mode
+              : null,
           is_current:
             String(dashboard.trading_day || '') === getEast8DateString(now) &&
-            String(dashboard.research_day || '') === bundle.expected_research_day,
+            String(dashboard.research_day || '') === bundle.expected_research_day &&
+            dashboardSummary.execution_mode === 'qualified_strategy',
         }
       : null;
     const execution = await this.buildExecutionState({
       user_id,
       now,
       bundle,
+      qualification,
       latest_run: latestRun,
     });
     return {
       research: {
-        expected_research_day: bundle.expected_research_day,
+        expected_research_day: rawBundle.expected_research_day,
         morning: {
-          snapshot_id: bundle.morning.snapshot_id,
-          research_day: bundle.morning.research_day,
-          as_of: bundle.morning.as_of,
-          candidate_count: bundle.morning.candidates.length,
-          fresh: bundle.morning.research_day === bundle.expected_research_day,
+          snapshot_id: rawBundle.morning.snapshot_id,
+          research_day: rawBundle.morning.research_day,
+          as_of: rawBundle.morning.as_of,
+          candidate_count: rawBundle.morning.candidates.length,
+          fresh: rawBundle.morning.research_day === rawBundle.expected_research_day,
         },
         multibagger: {
-          as_of: bundle.multibagger.as_of,
-          research_day: bundle.multibagger.research_day,
-          candidate_count: bundle.multibagger.candidates.length,
-          fresh: bundle.multibagger.research_day === bundle.expected_research_day,
+          as_of: rawBundle.multibagger.as_of,
+          research_day: rawBundle.multibagger.research_day,
+          candidate_count: rawBundle.multibagger.candidates.length,
+          fresh: rawBundle.multibagger.research_day === rawBundle.expected_research_day,
         },
+        qualification,
         merged_target_count: targets.length,
         allocation_policy: {
           size_hint_multiplier: RESEARCH_LOOP_SIZE_HINT_MULTIPLIER,
@@ -1421,6 +1563,7 @@ export class ResearchTradingLoopService {
     user_id: number;
     now: Date;
     bundle: ResearchBundle;
+    qualification: ResearchStrategyQualificationSummary;
     latest_run: Record<string, any> | null;
   }): Promise<ResearchLoopExecutionState> {
     const trading_day = getEast8DateString(input.now);
@@ -1441,9 +1584,17 @@ export class ResearchTradingLoopService {
       ...overrides,
     });
 
-    const fresh =
-      input.bundle.morning.research_day === input.bundle.expected_research_day &&
-      input.bundle.multibagger.research_day === input.bundle.expected_research_day;
+    if (!input.qualification.allows_new_positions) {
+      return result(
+        'strategy_blocked',
+        'strategy_qualification_failed',
+        `策略资格未通过，已禁止新增仓位；现有持仓仅允许减仓退出。${qualificationBlockSummary(
+          input.qualification
+        )}`
+      );
+    }
+
+    const fresh = qualifiedResearchIsFresh(input.bundle, input.qualification);
     if (!fresh) {
       return result(
         'research_blocked',
@@ -1488,6 +1639,13 @@ export class ResearchTradingLoopService {
         'portfolio_not_ready',
         'portfolio_not_ready',
         '研究闭环模拟盘尚未初始化，已暂停自动模拟交易'
+      );
+    }
+    if (!portfolio.auto_trade_enabled) {
+      return result(
+        'automation_disabled',
+        'automation_disabled',
+        '研究闭环模拟盘已由用户或运维关闭，不会自动生成交易'
       );
     }
     const positions = await this.repository.loadPositions(portfolio.id);

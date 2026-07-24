@@ -5,6 +5,7 @@ import sequelize from '../../src/config/database';
 import {
   ResearchTradingLoopService,
   SequelizeResearchTradingLoopRepository,
+  applyResearchStrategyQualification,
   buildResearchLoopDecisions,
   canSellPositionOnTradingDay,
   hasResearchLoopPositionCapacity,
@@ -16,6 +17,7 @@ import {
   type ResearchLoopPortfolioRow,
   type ResearchTradingLoopRepository,
 } from '../../src/services/ResearchTradingLoopService';
+import type { ResearchStrategyQualificationSummary } from '../../src/services/ResearchStrategyQualificationService';
 
 function source(
   source_id: string,
@@ -51,6 +53,59 @@ function bundle(overrides: Partial<ResearchBundle> = {}): ResearchBundle {
       candidates: [],
     },
     ...overrides,
+  };
+}
+
+function qualification(
+  morningEligible = true,
+  multibaggerEligible = true
+): ResearchStrategyQualificationSummary {
+  const source = (
+    sourceName: 'morning_brief' | 'multibagger',
+    strategyKey: string,
+    eligible: boolean
+  ) => ({
+    source: sourceName,
+    strategy_key: strategyKey,
+    status: eligible ? ('pass' as const) : ('fail' as const),
+    eligible_for_new_positions: eligible,
+    verdict: eligible ? 'PASS' : 'FAIL',
+    evaluated_at: '2026-07-22T01:30:00.000Z',
+    audit_created_at: '2026-07-22T01:00:00.000Z',
+    evidence: {
+      pit: null,
+      qualification_contract_version: eligible ? 'research-paper-v1' : null,
+      oos_trading_days: eligible ? 252 : null,
+      after_cost_annual_return_pct: eligible ? 12 : -30.7,
+      benchmark_excess_return_pct: eligible ? 4 : null,
+      max_drawdown_pct: eligible ? 12 : 35.13,
+      walk_forward_verdict: eligible ? 'PASS' : null,
+      overfit_score: eligible ? 0.2 : null,
+      double_cost_total_return_pct: eligible ? 6 : null,
+      point_in_time_ready: eligible,
+      evidence_hash: eligible ? 'a'.repeat(64) : null,
+    },
+    blockers: eligible
+      ? []
+      : [
+          {
+            code: 'pit_after_cost_return_non_positive',
+            title: '真实成本后回测亏损',
+            detail: '亏损策略不得新增模拟仓位。',
+          },
+        ],
+    summary: eligible ? '允许新增仓位' : '资格失败',
+  });
+  const morning = source('morning_brief', 'us_preferred', morningEligible);
+  const multibagger = source('multibagger', 'multibagger', multibaggerEligible);
+  const eligibleCount = Number(morningEligible) + Number(multibaggerEligible);
+  return {
+    status: eligibleCount === 2 ? 'pass' : eligibleCount === 1 ? 'partial' : 'blocked',
+    eligible_source_count: eligibleCount,
+    source_count: 2,
+    allows_new_positions: eligibleCount > 0,
+    evaluated_at: '2026-07-22T01:30:00.000Z',
+    sources: { morning_brief: morning, multibagger },
   };
 }
 
@@ -170,6 +225,45 @@ function testSourceDiversityWithDifferentScoreScales() {
   );
 }
 
+function testQualificationFilteringAndOneWayDerisk() {
+  const input = bundle();
+  input.morning.candidates = [source('m1', '600001.SH', 80)];
+  input.multibagger.candidates = [source('b1', '600002.SH', 78)];
+
+  const partial = applyResearchStrategyQualification(input, qualification(true, false));
+  assert.equal(partial.morning.candidates.length, 1);
+  assert.equal(partial.multibagger.candidates.length, 0);
+  assert.deepEqual(
+    selectResearchLoopTargets(partial).map(item => item.symbol),
+    ['sh.600001'],
+    '只有资格通过的研究源可以进入目标池'
+  );
+
+  const blocked = applyResearchStrategyQualification(input, qualification(false, false));
+  const position = {
+    id: 1,
+    symbol: 'sh.600001',
+    name: '待退出持仓',
+    quantity: 100,
+    avg_cost: 10,
+    current_price: 10.2,
+    created_at: new Date('2026-07-20T01:35:00.000Z'),
+  };
+  const decisions = buildResearchLoopDecisions({
+    bundle: blocked,
+    positions: [position],
+    prices: new Map(),
+    de_risk_reason: 'us_preferred: 真实成本后回测亏损',
+  });
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0].action, 'SELL');
+  assert.match(decisions[0].reason, /策略资格未通过，仅允许减仓退出/);
+  assert.equal(
+    decisions.some(item => item.action === 'BUY'),
+    false
+  );
+}
+
 function testTPlusOne() {
   assert.equal(
     canSellPositionOnTradingDay(new Date('2026-07-22T01:35:00.000Z'), '2026-07-22'),
@@ -270,6 +364,8 @@ class FakeRepository implements ResearchTradingLoopRepository {
   portfolio_load_count = 0;
   stale = false;
   prices_ready = true;
+  automation_enabled = true;
+  strategy_qualification = qualification();
 
   async assertReady() {
     this.ready_count += 1;
@@ -287,6 +383,7 @@ class FakeRepository implements ResearchTradingLoopRepository {
         initial_capital: 200000,
         current_cash: 200000,
         total_value: 200000,
+        auto_trade_enabled: this.automation_enabled,
       },
     ];
   }
@@ -295,6 +392,9 @@ class FakeRepository implements ResearchTradingLoopRepository {
     value.morning.candidates = [source('m1', '600001.SH', 80)];
     if (this.stale) value.multibagger.research_day = '2026-07-16';
     return value;
+  }
+  async loadStrategyQualification() {
+    return this.strategy_qualification;
   }
   async loadPositions() {
     return [];
@@ -385,6 +485,27 @@ async function testFreshnessAndIdempotency() {
   assert.equal(waiting.status, 'waiting_for_quotes');
   assert.equal(quoteWaitingRepo.claim_count, 0, '报价未齐不得占用幂等 run，9:50 必须可重试');
   assert.equal(quoteWaitingRepo.execution_count, 0, '报价未齐不得生成成交决策');
+
+  const blockedRepo = new FakeRepository();
+  blockedRepo.strategy_qualification = qualification(false, false);
+  const blockedService = new ResearchTradingLoopService(blockedRepo);
+  const blockedPlan = await blockedService.getCurrentTargetPlan(now);
+  assert.equal(blockedPlan.eligible, false);
+  assert.deepEqual(blockedPlan.targets, []);
+  const blocked: any = await blockedService.run({ user_id: 4, now });
+  assert.equal(blocked.status, 'strategy_blocked');
+  assert.equal(blockedRepo.claim_count, 0, '空仓且策略未通过时不得创建虚假交易 run');
+  assert.equal(blockedRepo.execution_count, 0, '策略未通过时不得新增模拟仓位');
+
+  const disabledRepo = new FakeRepository();
+  disabledRepo.automation_enabled = false;
+  const disabled: any = await new ResearchTradingLoopService(disabledRepo).run({
+    user_id: 4,
+    now,
+  });
+  assert.equal(disabled.status, 'automation_disabled');
+  assert.equal(disabledRepo.claim_count, 0, '用户关闭自动交易后不得创建 run');
+  assert.equal(disabledRepo.execution_count, 0, '用户关闭自动交易后不得执行任何成交');
 }
 
 async function testDashboardExecutionState() {
@@ -433,6 +554,16 @@ async function testDashboardExecutionState() {
   );
   assert.equal(stale.execution.status, 'research_blocked');
   assert.match(stale.execution.message, /已暂停/);
+
+  const strategyBlockedRepo = new FakeRepository();
+  strategyBlockedRepo.strategy_qualification = qualification(false, false);
+  const strategyBlocked: any = await new ResearchTradingLoopService(
+    strategyBlockedRepo
+  ).getDashboard(4, new Date('2026-07-22T01:35:00.000Z'));
+  assert.equal(strategyBlocked.execution.status, 'strategy_blocked');
+  assert.equal(strategyBlocked.research.merged_target_count, 0);
+  assert.equal(strategyBlocked.research.qualification.eligible_source_count, 0);
+  assert.match(strategyBlocked.execution.message, /禁止新增仓位/);
 }
 
 async function testDecisionAndTradeShareTransaction() {
@@ -480,7 +611,15 @@ async function testDecisionAndTradeShareTransaction() {
         action: 'BUY',
         combined_score: 80,
         target_weight_pct: 9,
-        sources: [],
+        sources: [
+          {
+            source: 'morning_brief',
+            source_id: 'm1',
+            score: 80,
+            rating: 'A',
+            risk_gate_status: 'GREEN',
+          },
+        ],
         reason: '故障注入',
       },
       price: {
@@ -492,6 +631,8 @@ async function testDecisionAndTradeShareTransaction() {
         previous_close: 9.8,
         volume: 100000,
       },
+      allow_new_positions: true,
+      eligible_sources: ['morning_brief'],
     });
     assert.equal(result.status, 'failed');
     assert(transactionalUpdate, '成交后的决策状态必须在事务内写入');
@@ -500,6 +641,50 @@ async function testDecisionAndTradeShareTransaction() {
   } finally {
     (sequelize as any).transaction = originalTransaction;
   }
+}
+
+async function testExecutionBoundaryRejectsUnqualifiedBuy() {
+  const repository = new SequelizeResearchTradingLoopRepository() as any;
+  let buyCalled = false;
+  let skippedPersisted = false;
+  repository.upsertSignal = async () => ({ id: 11 });
+  repository.insertDecision = async () => 22;
+  repository.executeBuy = async () => {
+    buyCalled = true;
+    return { status: 'executed' };
+  };
+  repository.updateDecision = async (_id: number, patch: Record<string, any>) => {
+    skippedPersisted =
+      patch.status === 'skipped' &&
+      patch.metadata?.skip_reason === 'strategy_qualification_blocked';
+  };
+  const result = await repository.executeDecision({
+    run: { id: 1, trading_day: '2026-07-24', research_day: '2026-07-23' },
+    portfolio: { id: 1 },
+    decision: {
+      symbol: 'sh.600001',
+      name: '测试股票',
+      action: 'BUY',
+      combined_score: 80,
+      target_weight_pct: 9,
+      sources: [
+        {
+          source: 'multibagger',
+          source_id: 'b1',
+          score: 80,
+          rating: 'A',
+          risk_gate_status: 'GREEN',
+        },
+      ],
+      reason: '不合格策略买入尝试',
+    },
+    price: null,
+    allow_new_positions: true,
+    eligible_sources: ['morning_brief'],
+  });
+  assert.equal(result.status, 'skipped');
+  assert.equal(buyCalled, false, '执行边界必须独立阻止不合格策略 BUY');
+  assert.equal(skippedPersisted, true, '被门禁拒绝的 BUY 必须留下可审计原因');
 }
 
 function testPipelineContracts() {
@@ -532,6 +717,14 @@ function testPipelineContracts() {
     path.join(root, 'scripts/deployment/deploy_remote_build.sh'),
     'utf8'
   );
+  const qualificationService = fs.readFileSync(
+    path.join(root, 'backend/src/services/ResearchStrategyQualificationService.ts'),
+    'utf8'
+  );
+  const candidateEvaluator = fs.readFileSync(
+    path.join(root, 'scripts/ops/evaluate_research_strategy_candidates.py'),
+    'utf8'
+  );
   assert.match(
     scheduler,
     /type: 'RESEARCH_TRADING_LOOP'[\s\S]{0,160}cron_expression: '35,50 9 \* \* 1-5'/
@@ -543,8 +736,23 @@ function testPipelineContracts() {
   );
   assert.match(
     scheduler,
-    /status === 'waiting_for_quotes'[\s\S]{0,900}status: blocked \? 'FAILED' : 'COMPLETED'[\s\S]{0,900}if \(blocked\) throw new Error/,
-    '研究或行情未就绪时调度任务必须真实失败，不能被统一成功出口覆盖'
+    /const blocked =[\s\S]{0,180}status === 'skipped'[\s\S]{0,120}waiting > 0/,
+    '研究缺失、用户执行失败或行情未就绪必须进入调度失败分支'
+  );
+  assert.match(
+    scheduler,
+    /status: blocked \? 'FAILED' : 'COMPLETED'/,
+    '研究或行情未就绪时执行日志必须真实失败，不能被统一成功出口覆盖'
+  );
+  assert.match(
+    scheduler,
+    /if \(blocked\) throw new Error/,
+    '研究或行情未就绪时必须抛错，以触发调度故障生命周期'
+  );
+  assert.match(
+    scheduler,
+    /strategyBlocked \? users\.length : completed \+ deduped[\s\S]{0,180}status: blocked \? 'FAILED' : 'COMPLETED'/,
+    '策略资格阻断是安全终态，不应制造重复调度故障通知'
   );
   const loopService = fs.readFileSync(
     path.join(root, 'backend/src/services/ResearchTradingLoopService.ts'),
@@ -552,6 +760,11 @@ function testPipelineContracts() {
   );
   assert.match(loopService, /hasResearchLoopPositionCapacity\(activePositions\.length\)/);
   assert.match(loopService, /status = 'running'[\s\S]{0,180}INTERVAL '10 minutes'/);
+  assert.match(
+    loopService,
+    /status = 'completed'[\s\S]{0,180}summary \? 'execution_mode'/,
+    '资格门禁上线当天必须允许旧版无资格字段的 completed run 重新审计执行'
+  );
   assert.match(
     loopService,
     /sequelize\.transaction\(async transaction => \{[\s\S]{0,900}updateDecision\([\s\S]{0,300}transaction/,
@@ -562,11 +775,27 @@ function testPipelineContracts() {
     /quantizeBuyQuantity\([\s\S]{0,120}input\.decision\.symbol/,
     '研究闭环买入必须遵守主板、科创板和北交所各自交易单位'
   );
-  assert.match(
-    loopService,
-    /UPDATE paper_trading_portfolios[\s\S]{0,1000}auto_trade_enabled = TRUE/,
-    '半迁移的旧账户必须在执行前归一化为唯一研究闭环盘'
+  const portfolioNormalization = loopService.slice(
+    loopService.indexOf('UPDATE paper_trading_portfolios'),
+    loopService.indexOf('// A freshly provisioned research-loop account')
   );
+  assert.doesNotMatch(
+    portfolioNormalization,
+    /auto_trade_enabled\s*=\s*TRUE/,
+    '用户或运维关闭自动交易后，启动归一化不得擅自重新开启'
+  );
+  assert.match(loopService, /loadStrategyQualification\(now: Date\)/);
+  assert.match(loopService, /de_risk_reason[\s\S]{0,500}策略资格未通过，仅允许减仓退出/);
+  assert.match(
+    qualificationService,
+    /min_oos_trading_days:\s*252[\s\S]{0,300}max_drawdown_pct:\s*20[\s\S]{0,300}required_walk_forward_verdict:\s*'PASS'/
+  );
+  assert.match(qualificationService, /double_cost_total_return_pct/);
+  assert.match(
+    candidateEvaluator,
+    /TRAIN_PERIODS = 12[\s\S]{0,160}TEST_PERIODS = 3[\s\S]{0,160}MIN_TEST_WINDOWS = 4/
+  );
+  assert.match(candidateEvaluator, /selected_candidate_not_materialized/);
   assert.match(
     loopService,
     /INSERT INTO paper_trading_snapshots[\s\S]{0,900}baseline_day\.snapshot_day[\s\S]{0,900}ON CONFLICT \(portfolio_id, date\) DO NOTHING/,
@@ -641,6 +870,7 @@ async function main() {
   testMergeAndPriority();
   testBuyHoldSellAndSixPositionCap();
   testSourceDiversityWithDifferentScoreScales();
+  testQualificationFilteringAndOneWayDerisk();
   testTPlusOne();
   testHardPositionCapacity();
   testQuoteFreshness();
@@ -648,6 +878,7 @@ async function main() {
   await testFreshnessAndIdempotency();
   await testDashboardExecutionState();
   await testDecisionAndTradeShareTransaction();
+  await testExecutionBoundaryRejectsUnqualifiedBuy();
   testPipelineContracts();
   console.log('research trading loop tests passed');
 }

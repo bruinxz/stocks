@@ -1295,7 +1295,7 @@ class SchedulerService {
             // 当天联合研究目标必须直接进入行情池；禁止保留固定审计股票名单，
             // 否则推荐已变化但行情保障仍停留在历史标的。
             const targetPlan = await researchTradingLoopService.getCurrentTargetPlan(timestamp);
-            if (targetPlan.fresh) {
+            if (targetPlan.fresh && targetPlan.eligible) {
               for (const target of targetPlan.targets) extra.add(target.symbol);
             }
             targetSymbols = Array.from(extra);
@@ -1762,6 +1762,7 @@ class SchedulerService {
         const waiting = users.filter((row: any) => row.status === 'waiting_for_quotes').length;
         const completed = users.filter((row: any) => row.status === 'completed').length;
         const deduped = users.filter((row: any) => row.status === 'deduped').length;
+        const strategyBlocked = (result as any).status === 'strategy_blocked';
         const blocked = (result as any).status === 'skipped' || failed > 0 || waiting > 0;
         const errorMessage =
           (result as any).status === 'skipped'
@@ -1775,11 +1776,11 @@ class SchedulerService {
             : null;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: users.length,
-          completed_items: completed + deduped,
+          completed_items: strategyBlocked ? users.length : completed + deduped,
           failed_items: failed + waiting,
           status: blocked ? 'FAILED' : 'COMPLETED',
           completed_at: new Date(),
-          error_message: errorMessage,
+          error_message: blocked ? errorMessage : null,
           result_summary: result as any,
         });
         logger.info(

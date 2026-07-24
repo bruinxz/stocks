@@ -730,7 +730,7 @@
   margin: 0;
   color: var(--cd-ink);
   font:
-    760 clamp(28px, 3vw, 42px)/1 'Iowan Old Style',
+    760 clamp(28px, 3vw, 42px) / 1 'Iowan Old Style',
     'Noto Serif SC',
     serif;
   letter-spacing: -0.03em;
@@ -1649,6 +1649,61 @@
   font: 600 9px/1.45 var(--cd-font-sans);
 }
 
+.catdesk-loop-qualification {
+  display: flex;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: stretch;
+  padding-top: 2px;
+}
+
+.catdesk-loop-qualification > strong {
+  align-self: center;
+  color: var(--cd-ink);
+  font: 800 10px/1.2 var(--cd-font-mono);
+  letter-spacing: 0.08em;
+}
+
+.catdesk-loop-qualification > span {
+  min-width: 150px;
+  padding: 6px 9px;
+  border: 1px solid var(--cd-border);
+  border-left: 3px solid var(--cd-text-secondary);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--cd-paper) 94%, white);
+}
+
+.catdesk-loop-qualification > span[data-status='pass'] {
+  border-left-color: var(--cd-mint);
+}
+
+.catdesk-loop-qualification > span[data-status='fail'] {
+  border-left-color: var(--cd-down);
+  background: color-mix(in srgb, var(--cd-down) 5%, var(--cd-paper));
+}
+
+.catdesk-loop-qualification > span[data-status='insufficient'] {
+  border-left-color: var(--cd-accent);
+  background: color-mix(in srgb, var(--cd-sun) 8%, var(--cd-paper));
+}
+
+.catdesk-loop-qualification b,
+.catdesk-loop-qualification small {
+  display: block;
+}
+
+.catdesk-loop-qualification b {
+  color: var(--cd-ink);
+  font-size: 10px;
+}
+
+.catdesk-loop-qualification small {
+  margin-top: 2px;
+  color: var(--cd-text-secondary);
+  font: 700 8px/1.3 var(--cd-font-mono);
+}
+
 .catdesk-loop-decisions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1987,6 +2042,11 @@
 
   .catdesk-loop-strip__flow > i:nth-of-type(2) {
     display: none;
+  }
+
+  .catdesk-loop-qualification > strong,
+  .catdesk-loop-qualification > span {
+    flex: 1 0 100%;
   }
 
   .catdesk-loop-decisions {

@@ -4,15 +4,60 @@ export type ResearchLoopAction = 'BUY' | 'HOLD' | 'SELL';
 
 export type ResearchLoopExecutionStatus =
   | 'research_blocked'
+  | 'strategy_blocked'
   | 'market_closed'
   | 'scheduled'
   | 'waiting_for_quotes'
   | 'ready'
   | 'stalled'
   | 'portfolio_not_ready'
+  | 'automation_disabled'
   | 'running'
   | 'completed'
   | 'failed';
+
+export type ResearchStrategyQualificationStatus = 'pass' | 'fail' | 'insufficient';
+
+export interface ResearchStrategyQualificationView {
+  source: 'morning_brief' | 'multibagger';
+  strategy_key: string;
+  status: ResearchStrategyQualificationStatus;
+  eligible_for_new_positions: boolean;
+  verdict: string;
+  evaluated_at: string;
+  audit_created_at: string | null;
+  summary: string;
+  blockers: Array<{
+    code: string;
+    title: string;
+    detail: string;
+    observed?: string | number | boolean | null;
+    required?: string | number | boolean | null;
+  }>;
+  evidence: {
+    pit: null | {
+      strategy_key: string;
+      snapshot_count: number;
+      first_day: string | null;
+      last_day: string | null;
+      cumulative_return_pct: number | null;
+      sharpe_ratio: number | null;
+      max_drawdown_pct: number | null;
+      win_rate_pct: number | null;
+      evidence_hash: string | null;
+    };
+    qualification_contract_version: string | null;
+    oos_trading_days: number | null;
+    after_cost_annual_return_pct: number | null;
+    benchmark_excess_return_pct: number | null;
+    max_drawdown_pct: number | null;
+    walk_forward_verdict: string | null;
+    overfit_score: number | null;
+    double_cost_total_return_pct: number | null;
+    point_in_time_ready: boolean;
+    evidence_hash: string | null;
+  };
+}
 
 export interface ResearchLoopDecisionView {
   id: number;
@@ -52,6 +97,17 @@ export interface ResearchTradingLoopDashboard {
       candidate_count: number;
       fresh: boolean;
     };
+    qualification: {
+      status: 'pass' | 'partial' | 'blocked';
+      eligible_source_count: number;
+      source_count: number;
+      allows_new_positions: boolean;
+      evaluated_at: string;
+      sources: {
+        morning_brief: ResearchStrategyQualificationView;
+        multibagger: ResearchStrategyQualificationView;
+      };
+    };
     merged_target_count: number;
     allocation_policy: {
       size_hint_multiplier: number;
@@ -85,6 +141,7 @@ export interface ResearchTradingLoopDashboard {
     trading_day: string;
     research_day: string;
     status: string;
+    execution_mode?: 'qualified_strategy' | 'de_risk_only' | null;
     is_current: boolean;
     target_count: number;
     buy_count: number;

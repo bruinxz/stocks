@@ -7,6 +7,59 @@ import { afterEach, beforeAll, beforeEach, describe, expect, test } from '@jest/
 import { ResearchLoopStatusStrip } from '../ResearchLoopStatusStrip';
 import type { ResearchTradingLoopDashboard } from 'services/researchTradingLoopService';
 
+function qualificationSource(
+  source: 'morning_brief' | 'multibagger',
+  strategy_key: string,
+  status: 'pass' | 'fail' | 'insufficient' = 'pass'
+) {
+  const eligible = status === 'pass';
+  return {
+    source,
+    strategy_key,
+    status,
+    eligible_for_new_positions: eligible,
+    verdict: eligible ? 'PASS' : status === 'fail' ? 'FAIL' : 'INSUFFICIENT',
+    evaluated_at: '2026-07-22T01:30:00.000Z',
+    audit_created_at: eligible ? '2026-07-22T01:00:00.000Z' : null,
+    summary: eligible ? '资格证据完整' : '策略资格未通过',
+    blockers: eligible
+      ? []
+      : [
+          {
+            code: status === 'fail' ? 'pit_after_cost_return_non_positive' : 'audit_missing',
+            title: status === 'fail' ? '真实成本后回测亏损' : '策略资格审计缺失',
+            detail: '不得新增模拟仓位',
+          },
+        ],
+    evidence: {
+      pit:
+        status === 'fail'
+          ? {
+              strategy_key,
+              snapshot_count: 27,
+              first_day: '2026-01-22',
+              last_day: '2026-07-23',
+              cumulative_return_pct: -30.7,
+              sharpe_ratio: -1.85,
+              max_drawdown_pct: 35.13,
+              win_rate_pct: 29.6,
+              evidence_hash: 'b'.repeat(64),
+            }
+          : null,
+      qualification_contract_version: eligible ? 'research-paper-v1' : null,
+      oos_trading_days: eligible ? 252 : null,
+      after_cost_annual_return_pct: eligible ? 12 : -30.7,
+      benchmark_excess_return_pct: eligible ? 4 : null,
+      max_drawdown_pct: eligible ? 12 : 35.13,
+      walk_forward_verdict: eligible ? 'PASS' : null,
+      overfit_score: eligible ? 0.2 : null,
+      double_cost_total_return_pct: eligible ? 6 : null,
+      point_in_time_ready: eligible,
+      evidence_hash: eligible ? 'a'.repeat(64) : null,
+    },
+  };
+}
+
 function dashboard(fresh = true): ResearchTradingLoopDashboard {
   return {
     research: {
@@ -23,6 +76,17 @@ function dashboard(fresh = true): ResearchTradingLoopDashboard {
         as_of: '2026-07-22T01:04:00Z',
         candidate_count: 8,
         fresh,
+      },
+      qualification: {
+        status: 'pass',
+        eligible_source_count: 2,
+        source_count: 2,
+        allows_new_positions: true,
+        evaluated_at: '2026-07-22T01:30:00.000Z',
+        sources: {
+          morning_brief: qualificationSource('morning_brief', 'us_preferred'),
+          multibagger: qualificationSource('multibagger', 'multibagger'),
+        },
       },
       merged_target_count: 6,
       allocation_policy: {
@@ -120,6 +184,44 @@ describe('research loop shared UI', () => {
     expect(container.textContent).toContain('2026-07-16');
   });
 
+  test('failed strategy qualification blocks new positions and shows evidence reason', async () => {
+    const value = dashboard();
+    value.latest_run = null;
+    value.research.targets = [];
+    value.research.merged_target_count = 0;
+    value.research.qualification = {
+      status: 'blocked',
+      eligible_source_count: 0,
+      source_count: 2,
+      allows_new_positions: false,
+      evaluated_at: '2026-07-24T04:00:00.000Z',
+      sources: {
+        morning_brief: qualificationSource('morning_brief', 'us_preferred', 'fail'),
+        multibagger: qualificationSource('multibagger', 'multibagger', 'insufficient'),
+      },
+    };
+    value.execution = {
+      trading_day: '2026-07-24',
+      status: 'strategy_blocked',
+      reason_code: 'strategy_qualification_failed',
+      message: '策略资格未通过，已禁止新增仓位；现有持仓仅允许减仓退出。',
+      next_attempt_label: null,
+      required_quote_count: null,
+      fresh_quote_count: null,
+      unavailable_symbols: [],
+    };
+    await act(async () =>
+      root.render(<ResearchLoopStatusStrip dashboard={value} focus="portfolio" />)
+    );
+    expect(container.textContent).toContain('策略准入 0/2');
+    expect(container.textContent).toContain('A股早报 · 失败');
+    expect(container.textContent).toContain('真实成本后回测亏损');
+    expect(container.textContent).toContain('PIT -30.7%');
+    expect(container.textContent).toContain('高倍潜力 · 证据不足');
+    expect(container.textContent).toContain('禁止新增模拟仓位');
+    expect(container.textContent).not.toContain('今日目标池');
+  });
+
   test('pre-open state names the real execution time instead of implying background work', async () => {
     const value = dashboard();
     value.latest_run = null;
@@ -178,9 +280,13 @@ describe('research loop shared UI', () => {
   test('responsive contract keeps the loop flow and decisions usable on mobile', () => {
     const css = fs.readFileSync(path.resolve(__dirname, '../../catdesk.css'), 'utf8');
     expect(css).toMatch(/\.catdesk-loop-strip\s*\{/);
+    expect(css).toMatch(/\.catdesk-loop-qualification\s*\{/);
     expect(css).toMatch(/\.catdesk-loop-decisions\s*\{/);
     expect(css).toMatch(
       /@media \(max-width: 640px\)[\s\S]*\.catdesk-loop-decisions\s*\{[\s\S]*grid-template-columns: 1fr/
+    );
+    expect(css).toMatch(
+      /@media \(max-width: 640px\)[\s\S]*\.catdesk-loop-qualification > span[\s\S]*flex: 1 0 100%/
     );
   });
 });

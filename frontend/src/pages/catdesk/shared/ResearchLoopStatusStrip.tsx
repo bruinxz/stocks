@@ -35,24 +35,51 @@ export function ResearchLoopStatusStrip({ dashboard, error, focus }: Props) {
     );
   }
   const { research } = dashboard;
-  const fresh = research.morning.fresh && research.multibagger.fresh;
-  const run = fresh && dashboard.latest_run?.is_current ? dashboard.latest_run : null;
+  if (!research.qualification) {
+    return (
+      <section
+        className="catdesk-loop-strip is-unavailable"
+        aria-label="研究交易闭环状态"
+        role="status"
+      >
+        <div className="catdesk-loop-strip__flow">
+          <span className="is-focus">
+            <b>策略资格数据缺失</b>
+            <small>无法证明策略已通过样本外与成本压力验证</small>
+          </span>
+        </div>
+        <Tag icon={<WarningOutlined />} color="red">
+          已禁止新增模拟仓位
+        </Tag>
+      </section>
+    );
+  }
   const execution = dashboard.execution;
+  const qualification = research.qualification;
+  const rawFresh = research.morning.fresh && research.multibagger.fresh;
+  const fresh =
+    (!qualification.sources.morning_brief.eligible_for_new_positions || research.morning.fresh) &&
+    (!qualification.sources.multibagger.eligible_for_new_positions || research.multibagger.fresh);
+  const strategyBlocked = !qualification.allows_new_positions;
+  const run =
+    fresh && !strategyBlocked && dashboard.latest_run?.is_current ? dashboard.latest_run : null;
   const jointSummary = run
     ? `买 ${run.buy_count} · 持 ${run.hold_count} · 卖 ${run.sell_count}`
-    : execution.status === 'scheduled'
-      ? `${research.merged_target_count} 只目标 · 09:35 执行`
-      : execution.status === 'waiting_for_quotes'
-        ? `${research.merged_target_count} 只目标 · 行情 ${execution.fresh_quote_count ?? 0}/${
-            execution.required_quote_count ?? research.merged_target_count
-          }`
-        : execution.status === 'market_closed'
-          ? `${research.merged_target_count} 只目标 · 今日休市`
-          : execution.status === 'ready'
-            ? `${research.merged_target_count} 只目标 · 行情已齐`
-            : execution.status === 'stalled' || execution.status === 'failed'
-              ? '今日执行异常'
-              : '暂停交易';
+    : execution.status === 'strategy_blocked'
+      ? '策略未通过 · 禁止新增仓位'
+      : execution.status === 'scheduled'
+        ? `${research.merged_target_count} 只目标 · 09:35 执行`
+        : execution.status === 'waiting_for_quotes'
+          ? `${research.merged_target_count} 只目标 · 行情 ${execution.fresh_quote_count ?? 0}/${
+              execution.required_quote_count ?? research.merged_target_count
+            }`
+          : execution.status === 'market_closed'
+            ? `${research.merged_target_count} 只目标 · 今日休市`
+            : execution.status === 'ready'
+              ? `${research.merged_target_count} 只目标 · 行情已齐`
+              : execution.status === 'stalled' || execution.status === 'failed'
+                ? '今日执行异常'
+                : '暂停交易';
   const statusTone =
     execution.status === 'completed'
       ? { color: 'green', icon: <CheckCircleOutlined /> }
@@ -118,11 +145,43 @@ export function ResearchLoopStatusStrip({ dashboard, error, focus }: Props) {
           </small>
         </div>
       ) : null}
-      {fresh ? (
-        <Tag icon={<CheckCircleOutlined />} color="green">
+      <div className="catdesk-loop-qualification" aria-label="策略资格状态">
+        <strong>
+          策略准入 {qualification.eligible_source_count}/{qualification.source_count}
+        </strong>
+        {(
+          [
+            ['A股早报', qualification.sources.morning_brief],
+            ['高倍潜力', qualification.sources.multibagger],
+          ] as const
+        ).map(([label, item]) => (
+          <span key={item.source} data-status={item.status}>
+            <b>
+              {label} ·{' '}
+              {item.status === 'pass' ? '通过' : item.status === 'fail' ? '失败' : '证据不足'}
+            </b>
+            <small>
+              {item.blockers[0]?.title || '资格证据完整'}
+              {item.evidence.pit?.cumulative_return_pct != null
+                ? ` · PIT ${item.evidence.pit.cumulative_return_pct.toFixed(1)}%`
+                : ''}
+            </small>
+          </span>
+        ))}
+      </div>
+      {rawFresh ? (
+        <Tag icon={<CheckCircleOutlined />} color={strategyBlocked ? 'default' : 'green'}>
           研究日 {research.expected_research_day} 已对齐
         </Tag>
       ) : null}
+      <Tag
+        icon={strategyBlocked ? <WarningOutlined /> : <CheckCircleOutlined />}
+        color={strategyBlocked ? 'red' : qualification.status === 'partial' ? 'gold' : 'green'}
+      >
+        {strategyBlocked
+          ? '策略未通过，禁止新增模拟仓位'
+          : `策略准入 ${qualification.eligible_source_count}/${qualification.source_count} 通过`}
+      </Tag>
       <Tag icon={statusTone.icon} color={statusTone.color}>
         {execution.message}
       </Tag>
