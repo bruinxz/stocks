@@ -1,0 +1,43 @@
+backend/src/services/ResearchStrategyQualificationService.ts
+  s_ec1e6492779c20::t_c4cee4ef81d5cd 1-526
+backend/src/services/ResearchTradingLoopService.ts
+  s_ec1e6492779c20::t_ebdcf809f4a2f5 22-26,42-43,145,159,166,187,201-202,217-265,462,493-502,538,609-611,680,779-782,857-860,886-887,891-900,1304-1309,1313-1314,1334-1341,1344,1347-1349,1363-1370,1372-1380,1406-1407,1413-1418,1429-1430,1436,1474,1479-1482,1484-1486,1493-1497,1500,1504-1507,1510-1511,1518,1523,1525-1529,1532-1535,1537,1566,1587-1597,1644-1650
+backend/src/services/SchedulerService.ts
+  s_ec1e6492779c20::t_5ad0a781c8f33d 1298,1765,1779,1783
+backend/tests/services/research-strategy-qualification-service.test.ts
+  s_ec1e6492779c20::t_061b1d6489ab0a 1-133
+backend/tests/services/research-trading-loop.test.ts
+  s_ec1e6492779c20::t_f96850f4f6a33a 8,20,59-111,228-266,367-368,386,396-398,488-508,557-566,614-622,634-635,646-689,720-727,739-755,763-767,778-788,790-796,798,873,881
+frontend/src/pages/catdesk/catdesk.css
+  s_ec1e6492779c20::t_5697fc2c85ca0b 733,1652-1706,2047-2051
+frontend/src/pages/catdesk/shared/ResearchLoopStatusStrip.tsx
+  s_ec1e6492779c20::t_98e62a81a468ab 38-56,58-65,68-82,148-173,177-184
+frontend/src/pages/catdesk/shared/__tests__/researchLoopUi.test.tsx
+  s_ec1e6492779c20::t_f7f774a52d4963 10-62,80-90,187-224,283,288-290
+frontend/src/pages/catdesk/tabs/__tests__/portfolioAndAIEntry.test.tsx
+  s_ec1e6492779c20::t_3e9a828c05579f 36-68
+frontend/src/services/researchTradingLoopService.ts
+  s_ec1e6492779c20::t_44b9a061e323da 7,14,19-61,100-110,144
+scripts/ops/evaluate_research_strategy_candidates.py
+  s_ec1e6492779c20::t_81b8600049d393 1-695
+scripts/tests/test_evaluate_research_strategy_candidates.py
+  s_ec1e6492779c20::t_32eae967bf7050 1-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "59185de989002abf092eba77465319c8bd1e7315",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
