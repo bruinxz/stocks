@@ -1,0 +1,25 @@
+frontend/src/pages/catdesk/catdesk.css
+  s_ec1e6492779c20::t_4bd830fb8a940a 1598-1605
+frontend/src/pages/catdesk/tabs/AShareMorningBrief.tsx
+  s_ec1e6492779c20::t_b93ef50d4f899a 106,114,143-147
+frontend/src/pages/catdesk/tabs/multibagger/HighMultipotential.tsx
+  s_ec1e6492779c20::t_06bb1eb328b125 127-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cf7824afa8e8bc7f532db0631423374cf6d5860a",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
