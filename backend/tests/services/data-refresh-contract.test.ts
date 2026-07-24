@@ -433,6 +433,24 @@ assert.match(
   'empty parameter-version collections are a valid API response'
 );
 assert.match(
+  readonlySmoke,
+  /portfolio_type === "research_loop"[\s\S]{0,500}paperTradingPortfolioId = Number/,
+  'release smoke must resolve the canonical research-loop portfolio explicitly'
+);
+assert.match(
+  readonlySmoke,
+  /order-intent-tuning\/candidates\?portfolio_id=\$\{paperTradingPortfolioId\}/,
+  'tuning-candidate smoke must never rely on implicit first-portfolio selection'
+);
+assert.match(
+  fs.readFileSync(
+    path.join(root, 'backend/src/portfolio/internal/PaperTradingTuningApplyService.ts'),
+    'utf8'
+  ),
+  /generatePlan\(\{[\s\S]{0,180}portfolio_id: options\.portfolio_id[\s\S]{0,100}portfolio_name: options\.portfolio_name/,
+  'tuning candidates must forward explicit portfolio scope into plan generation'
+);
+assert.match(
   scheduler,
   /task\.type === 'REALTIME_QUOTE_SYNC'[\s\S]{0,240}checkAShareTradingHours/,
   'five-minute cron must retain a continuous-session guard'

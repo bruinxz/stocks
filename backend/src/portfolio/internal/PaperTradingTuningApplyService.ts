@@ -29,6 +29,8 @@ interface ApplyOrderIntentTuningOptions {
   limit?: number;
   user_id?: number;
   username?: string;
+  portfolio_id?: number;
+  portfolio_name?: string;
   operator?: TaskParameterAuditOperator;
 }
 
@@ -292,6 +294,8 @@ export class PaperTradingTuningApplyService {
     const plan = await paperTradingPlanService.generatePlan({
       user_id: options.user_id,
       username: options.username,
+      portfolio_id: options.portfolio_id,
+      portfolio_name: options.portfolio_name,
       include_entries: true,
       include_exits: true,
       include_monitor: true,

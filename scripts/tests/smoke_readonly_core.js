@@ -295,6 +295,7 @@ async function main() {
   );
 
   let orderIntentTraceCandidateId = null;
+  let paperTradingPortfolioId = null;
 
   await requestProcessHealth();
 
@@ -341,6 +342,31 @@ async function main() {
           throw new Error(`profile user missing: ${preview(json)}`);
       },
     });
+
+    await requestJson(
+      "paper trading portfolios",
+      "/api/paper-trading/portfolios",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "paper trading portfolios");
+          const portfolios = Array.isArray(json.data) ? json.data : [];
+          const researchLoop =
+            portfolios.find(
+              (item) => item?.portfolio_type === "research_loop"
+            ) || portfolios.find((item) => item?.name === "研究闭环模拟盘");
+          paperTradingPortfolioId = Number(researchLoop?.id || 0);
+          if (
+            !Number.isSafeInteger(paperTradingPortfolioId) ||
+            paperTradingPortfolioId <= 0
+          ) {
+            throw new Error(
+              `research-loop portfolio missing: ${preview(portfolios)}`
+            );
+          }
+        },
+      }
+    );
 
     await requestJson("market service health", "/api/market/health", {
       expect: (json) => {
@@ -599,7 +625,12 @@ async function main() {
           }
           const first = json.data.periods[0];
           if (first) {
-            if (!first.decision?.action || !first.delta || !first.pre_window || !first.post_window) {
+            if (
+              !first.decision?.action ||
+              !first.delta ||
+              !first.pre_window ||
+              !first.post_window
+            ) {
               throw new Error(
                 `shadow budget attribution period invalid: ${preview(first)}`
               );
@@ -720,7 +751,9 @@ async function main() {
         if (!shadowWeeklyReviewTask) {
           throw new Error("live shadow weekly review task missing");
         }
-        if (Number(shadowWeeklyReviewTask.parameters?.outcome_limit || 0) < 30) {
+        if (
+          Number(shadowWeeklyReviewTask.parameters?.outcome_limit || 0) < 30
+        ) {
           throw new Error(
             `live shadow weekly review outcome_limit too low: ${preview(
               shadowWeeklyReviewTask
@@ -1527,7 +1560,7 @@ async function main() {
 
     await requestJson(
       "recommendation trade outcomes",
-      "/api/paper-trading/recommendation-outcomes?limit=5&include_open=false",
+      `/api/paper-trading/recommendation-outcomes?portfolio_id=${paperTradingPortfolioId}&limit=5&include_open=false`,
       {
         token,
         expect: (json) => {
@@ -1570,7 +1603,7 @@ async function main() {
       {
         method: "POST",
         token,
-        body: { dry_run: true },
+        body: { dry_run: true, portfolio_id: paperTradingPortfolioId },
         expect: (json) => {
           assertApiSuccess(json, "paper trading order intent tuning preview");
           if (!json.data || !Array.isArray(json.data.changes)) {
@@ -1612,6 +1645,7 @@ async function main() {
           canary_max_parameters: 1,
           canary_observation_trades: 8,
           canary_observation_days: 10,
+          portfolio_id: paperTradingPortfolioId,
         },
         expect: (json) => {
           assertApiSuccess(json, "paper trading order intent canary preview");
@@ -1649,7 +1683,7 @@ async function main() {
 
     await requestJson(
       "paper trading order intent tuning candidates",
-      "/api/paper-trading/order-intent-tuning/candidates?use_family_hindsight=true&family_hindsight_min_consensus=2&family_hindsight_min_evaluated=5",
+      `/api/paper-trading/order-intent-tuning/candidates?portfolio_id=${paperTradingPortfolioId}&use_family_hindsight=true&family_hindsight_min_consensus=2&family_hindsight_min_evaluated=5`,
       {
         token,
         expect: (json) => {
@@ -1781,7 +1815,9 @@ async function main() {
           }
           if (
             !Number.isFinite(
-              Number(json.data.summary.snapshot_count ?? json.data.snapshots.length)
+              Number(
+                json.data.summary.snapshot_count ?? json.data.snapshots.length
+              )
             )
           ) {
             throw new Error(
