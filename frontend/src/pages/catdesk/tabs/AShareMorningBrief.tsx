@@ -19,8 +19,12 @@ import {
   loadRecommendationCandidateFeed,
   type RecommendationCandidateLoadResult,
 } from './recommendationCandidates';
-import { useResearchTradingLoop } from '../shared/useResearchTradingLoop';
+import {
+  RESEARCH_LOOP_AUTO_REFRESH_MS,
+  useResearchTradingLoop,
+} from '../shared/useResearchTradingLoop';
 import { ResearchLoopStatusStrip } from '../shared/ResearchLoopStatusStrip';
+import { useVisibleAutoRefresh } from '../shared/useVisibleAutoRefresh';
 
 interface MorningFilters {
   sector: string | null;
@@ -49,14 +53,12 @@ export default function AShareMorningBrief() {
   const [selectedRow, setSelectedRow] = useState<CandidateListEntry | null>(null);
   const [search, setSearch] = useState('');
 
-  const {
-    data: loadResult,
-    loading,
-    error,
-  } = useAbortableRequest<RecommendationCandidateLoadResult>(
+  const recommendationRequest = useAbortableRequest<RecommendationCandidateLoadResult>(
     signal => loadRecommendationCandidateFeed(signal, 'us_preferred', 'cn_a'),
     []
   );
+  const { data: loadResult, loading, error } = recommendationRequest;
+  useVisibleAutoRefresh(recommendationRequest.refetch, RESEARCH_LOOP_AUTO_REFRESH_MS);
   const data = loadResult?.kind === 'ready' ? loadResult.feed : null;
   const { data: loopDashboard, error: loopError } = useResearchTradingLoop();
   const { rows: namedCandidates, loading: namesLoading } = useStockNameHydrationState(

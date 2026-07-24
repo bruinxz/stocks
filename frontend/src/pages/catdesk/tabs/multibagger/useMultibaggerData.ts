@@ -8,6 +8,8 @@ import type {
   MultibaggerRow,
 } from './types';
 import { parseMultibaggerDetail, parseMultibaggerResponse } from './multibaggerAdapters';
+import { RESEARCH_LOOP_AUTO_REFRESH_MS } from '../../shared/useResearchTradingLoop';
+import { useVisibleAutoRefresh } from '../../shared/useVisibleAutoRefresh';
 
 async function fetchCandidates(
   signal: AbortSignal,
@@ -38,10 +40,12 @@ export function useMultibaggerData(
   conclusions: MultibaggerConclusion[],
   market: MultibaggerMarket | null
 ) {
-  return useAbortableRequest(
+  const result = useAbortableRequest(
     signal => fetchCandidates(signal, stages, conclusions, market),
     [stages.join(','), conclusions.join(','), market]
   );
+  useVisibleAutoRefresh(result.refetch, RESEARCH_LOOP_AUTO_REFRESH_MS);
+  return result;
 }
 
 export function useMultibaggerDetail(symbol: string | null) {
