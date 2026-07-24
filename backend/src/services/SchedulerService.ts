@@ -1693,6 +1693,10 @@ class SchedulerService {
           `信号质量日报完成。信号 ${result.overview.total_signals}，完成样本 ${result.overview.completed_samples}，质量分 ${result.overview.quality_score}`
         );
       } else if (task.type === 'RESEARCH_TRADING_LOOP') {
+        // REALTIME_QUOTE_SYNC also fires on five-minute boundaries. Let that
+        // capture finish before reading prices, then the service still rejects
+        // any quote timestamped before the 09:30 continuous session.
+        if (!isManual) await new Promise(resolve => setTimeout(resolve, 10_000));
         const result = await researchTradingLoopService.run({
           user_id: parameters.user_id ? Number(parameters.user_id) : undefined,
         });

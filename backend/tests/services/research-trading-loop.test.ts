@@ -203,6 +203,15 @@ function testQuoteFreshness() {
   assert.equal(isResearchLoopPriceFresh(fresh, '2026-07-24', now), true);
   assert.equal(
     isResearchLoopPriceFresh(
+      { ...fresh, quote_time: new Date('2026-07-24T01:29:55.000Z') },
+      '2026-07-24',
+      now
+    ),
+    false,
+    '集合竞价报价不得用于连续竞价模拟成交'
+  );
+  assert.equal(
+    isResearchLoopPriceFresh(
       { ...fresh, quote_time: new Date('2026-07-24T00:59:59.000Z') },
       '2026-07-24',
       now
@@ -526,6 +535,11 @@ function testPipelineContracts() {
   assert.match(
     scheduler,
     /type: 'RESEARCH_TRADING_LOOP'[\s\S]{0,160}cron_expression: '35,50 9 \* \* 1-5'/
+  );
+  assert.match(
+    scheduler,
+    /task\.type === 'RESEARCH_TRADING_LOOP'[\s\S]{0,300}!isManual[\s\S]{0,120}setTimeout\(resolve, 10_000\)/,
+    '09:35 research execution must wait for the same-minute realtime quote capture'
   );
   assert.match(
     scheduler,

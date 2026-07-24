@@ -16,7 +16,7 @@ import { Stock } from '../models/Stock';
 import { describeLimits } from '../quant/marketLimits';
 import { logger } from '../utils/logger';
 import { normalizeSymbol, quantizeBuyQuantity } from '../utils/stockSymbol';
-import { getEast8DateString } from '../utils/timezone';
+import { getEast8DateString, getEast8TimeComponents } from '../utils/timezone';
 import { checkAShareTradingHours } from '../utils/tradingCalendar';
 import { expectedCompletedTradeDate } from './PageFreshnessService';
 
@@ -218,12 +218,17 @@ export function isResearchLoopPriceFresh(
   now: Date,
   max_age_ms = 30 * 60_000
 ): boolean {
+  const quoteClock = price ? getEast8TimeComponents(price.quote_time) : null;
+  const afterContinuousSessionOpen = Boolean(
+    quoteClock && quoteClock.hour * 60 + quoteClock.minute >= 9 * 60 + 30
+  );
   return Boolean(
     price &&
       price.price > 0 &&
       price.previous_close > 0 &&
       price.volume > 0 &&
       price.trade_date === trading_day &&
+      afterContinuousSessionOpen &&
       now.getTime() - price.quote_time.getTime() >= 0 &&
       now.getTime() - price.quote_time.getTime() <= max_age_ms
   );
