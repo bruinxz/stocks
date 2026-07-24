@@ -64,6 +64,11 @@ assert.match(
   /bar\.time >= %s::date[\s\S]{0,100}bar\.time < %s::date \+ INTERVAL '1 day'/,
   'execution-price lookup must keep the daily-bars time index usable'
 );
+assert.match(
+  materializer,
+  /factor_name IN \([\s\S]{0,500}'low_vol', 'liquidity'[\s\S]{0,1800}ORDER BY rank_score DESC, stock\.symbol ASC[\s\S]{0,80}LIMIT 50[\s\S]{0,500}JOIN LATERAL/,
+  'snapshot materialization must rank the audited factor slice before loading per-stock bar history'
+);
 assert.doesNotMatch(
   materializer,
   /WHERE bar\.time::date (?:=|<|>|BETWEEN)/,

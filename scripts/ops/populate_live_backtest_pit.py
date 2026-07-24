@@ -49,31 +49,7 @@ ORDER BY trading_day
 """
 
 RANK_SQL = """
-WITH recent AS (
-  SELECT
-    bar.stock_id,
-    bar.time::date AS trading_day,
-    bar.close,
-    bar.turnover,
-    bar.change_percent
-  FROM daily_bars bar
-  WHERE bar.time >= %s::date - INTERVAL '45 days'
-    AND bar.time < %s::date + INTERVAL '1 day'
-    AND bar.is_trading_day = TRUE
-    AND bar.is_suspended = FALSE
-    AND bar.close > 0
-), stats AS (
-  SELECT
-    stock_id,
-    COUNT(*) AS session_count,
-    (ARRAY_AGG(close ORDER BY trading_day DESC))[1] AS current_close,
-    (ARRAY_AGG(close ORDER BY trading_day ASC))[1] AS oldest_close,
-    AVG(turnover) AS average_turnover,
-    COALESCE(STDDEV_POP(change_percent), 0) AS volatility,
-    MAX(trading_day) AS latest_day
-  FROM recent
-  GROUP BY stock_id
-), factor_matrix AS (
+WITH factor_matrix AS (
   SELECT
     stock_code,
     AVG(percentile) FILTER (
@@ -96,9 +72,14 @@ WITH recent AS (
     ) AS trend,
     AVG(percentile) FILTER (
       WHERE factor_name IN ('low_vol', 'liquidity') AND raw_value IS NOT NULL
-    ) AS risk
+  ) AS risk
   FROM factor_scores
   WHERE trade_date = %s::date
+    AND factor_name IN (
+      'quality', 'quality_high', 'growth', 'earnings_surprise', 'analyst_consensus',
+      'value', 'momentum', 'money_flow', 'northbound', 'gradual_breakout',
+      'industry_momentum', 'low_vol', 'liquidity'
+    )
     AND (
       available_at_utc <= (%s::date::text || 'T15:00:00Z')::timestamptz
       OR (
@@ -109,46 +90,77 @@ WITH recent AS (
       )
     )
   GROUP BY stock_code
+), ranked AS (
+  SELECT
+    stock.id AS stock_id,
+    stock.symbol,
+    stock.name,
+    stock.market,
+    stock.listing_date,
+    stock.delisting_date,
+    matrix.quality,
+    matrix.growth,
+    matrix.valuation,
+    matrix.momentum,
+    matrix.trend,
+    matrix.risk,
+    (
+      matrix.quality * 0.20 + matrix.growth * 0.20
+      + matrix.valuation * 0.15 + matrix.momentum * 0.20
+      + matrix.trend * 0.15 + matrix.risk * 0.10
+    ) AS rank_score
+  FROM factor_matrix matrix
+  JOIN stocks stock ON RIGHT(stock.symbol, 6) = matrix.stock_code
+  WHERE stock.type = 'stock'
+    AND stock.listing_date <= %s::date
+    AND (stock.delisting_date IS NULL OR stock.delisting_date > %s::date)
+    AND stock.name NOT ILIKE '%%ST%%'
+    AND matrix.quality IS NOT NULL
+    AND matrix.growth IS NOT NULL
+    AND matrix.valuation IS NOT NULL
+    AND matrix.momentum IS NOT NULL
+    AND matrix.trend IS NOT NULL
+    AND matrix.risk IS NOT NULL
+  ORDER BY rank_score DESC, stock.symbol ASC
+  LIMIT 50
 )
 SELECT
-  stock.symbol,
-  stock.name,
-  stock.market,
+  ranked.symbol,
+  ranked.name,
+  ranked.market,
   stats.current_close,
   stats.oldest_close,
   stats.session_count,
   stats.average_turnover,
   stats.volatility,
   stats.latest_day,
-  stock.listing_date,
-  stock.delisting_date,
-  matrix.quality,
-  matrix.growth,
-  matrix.valuation,
-  matrix.momentum,
-  matrix.trend,
-  matrix.risk,
-  (
-    matrix.quality * 0.20 + matrix.growth * 0.20
-    + matrix.valuation * 0.15 + matrix.momentum * 0.20
-    + matrix.trend * 0.15 + matrix.risk * 0.10
-  ) AS rank_score
-FROM factor_matrix matrix
-JOIN stocks stock ON RIGHT(stock.symbol, 6) = matrix.stock_code
-JOIN stats ON stats.stock_id = stock.id
-WHERE stats.session_count >= 15
-  AND stats.latest_day = %s::date
-  AND stock.type = 'stock'
-  AND stock.listing_date <= %s::date
-  AND (stock.delisting_date IS NULL OR stock.delisting_date > %s::date)
-  AND stock.name NOT ILIKE '%%ST%%'
-  AND matrix.quality IS NOT NULL
-  AND matrix.growth IS NOT NULL
-  AND matrix.valuation IS NOT NULL
-  AND matrix.momentum IS NOT NULL
-  AND matrix.trend IS NOT NULL
-  AND matrix.risk IS NOT NULL
-ORDER BY rank_score DESC, stock.symbol ASC
+  ranked.listing_date,
+  ranked.delisting_date,
+  ranked.quality,
+  ranked.growth,
+  ranked.valuation,
+  ranked.momentum,
+  ranked.trend,
+  ranked.risk,
+  ranked.rank_score
+FROM ranked
+JOIN LATERAL (
+  SELECT
+    COUNT(*) AS session_count,
+    (ARRAY_AGG(bar.close ORDER BY bar.time DESC))[1] AS current_close,
+    (ARRAY_AGG(bar.close ORDER BY bar.time ASC))[1] AS oldest_close,
+    AVG(bar.turnover) AS average_turnover,
+    COALESCE(STDDEV_POP(bar.change_percent), 0) AS volatility,
+    MAX(bar.time::date) AS latest_day
+  FROM daily_bars bar
+  WHERE bar.stock_id = ranked.stock_id
+    AND bar.time >= %s::date - INTERVAL '45 days'
+    AND bar.time < %s::date + INTERVAL '1 day'
+    AND bar.is_trading_day = TRUE
+    AND bar.is_suspended = FALSE
+    AND bar.close > 0
+) stats ON stats.session_count >= 15 AND stats.latest_day = %s::date
+ORDER BY ranked.rank_score DESC, ranked.symbol ASC
 LIMIT 3
 """
 
@@ -442,10 +454,10 @@ def _read_inputs(
                         signal_day,
                         signal_day,
                         signal_day,
-                        signal_day,
-                        signal_day,
-                        signal_day,
                         checkpoint,
+                        signal_day,
+                        signal_day,
+                        signal_day,
                     ),
                 )
                 rows = list(cursor.fetchall())
