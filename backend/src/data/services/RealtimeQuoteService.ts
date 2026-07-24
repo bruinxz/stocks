@@ -1,6 +1,6 @@
 import axios from 'axios';
 import moment from 'moment-timezone';
-import { Op } from 'sequelize';
+import { col, fn, Op } from 'sequelize';
 import { RealtimeQuote } from '../../models/RealtimeQuote';
 import { Stock } from '../../models/Stock';
 import { normalizeSymbol } from '../../utils/stockSymbol';
@@ -352,15 +352,33 @@ export class RealtimeQuoteService {
 
   async getLatestQuotes(symbols?: string[]): Promise<RealtimeQuote[]> {
     const normalizedSymbols = symbols?.map(normalizeSymbol).filter(Boolean) || [];
+    if (normalizedSymbols.length > 0) {
+      const latestTimes = (await RealtimeQuote.findAll({
+        attributes: ['symbol', [fn('MAX', col('quote_time')), 'latest_quote_time']],
+        where: { symbol: { [Op.in]: normalizedSymbols } },
+        group: ['symbol'],
+        raw: true,
+      })) as any[];
+      const latestPairs = latestTimes
+        .map(row => ({
+          symbol: row.symbol,
+          quote_time: row.latest_quote_time,
+        }))
+        .filter(row => row.symbol && row.quote_time);
+      if (!latestPairs.length) return [];
+      return RealtimeQuote.findAll({
+        where: { [Op.or]: latestPairs },
+        order: [['symbol', 'ASC']],
+      });
+    }
     const where: any = {};
-    if (normalizedSymbols.length) where.symbol = { [Op.in]: normalizedSymbols };
     const rows = await RealtimeQuote.findAll({
       where,
       order: [
         ['symbol', 'ASC'],
         ['quote_time', 'DESC'],
       ],
-      limit: normalizedSymbols.length ? Math.max(normalizedSymbols.length * 3, 20) : 500,
+      limit: 500,
     });
     const seen = new Set<string>();
     const latest: RealtimeQuote[] = [];

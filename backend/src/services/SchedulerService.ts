@@ -9,6 +9,7 @@ import {
 } from '../constants/cronRegistry';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
+import { PaperTradingPosition } from '../models/PaperTradingPosition';
 import { logger } from '../utils/logger';
 import { generateTraceId, runWithLoggingContext } from '../utils/loggingContext';
 import { computeNextRunAt, isImplausibleNextRun } from '../utils/cronNextRun';
@@ -4353,6 +4354,58 @@ class SchedulerService {
           attributes: ['id', 'user_id'],
           raw: true,
         });
+        const portfolioIds = (portfolios as any[]).map(portfolio => Number(portfolio.id));
+        const heldRows = portfolioIds.length
+          ? await PaperTradingPosition.findAll({
+              where: {
+                portfolio_id: { [Op.in]: portfolioIds },
+                quantity: { [Op.gt]: 0 },
+              },
+              attributes: ['symbol'],
+              group: ['symbol'],
+              raw: true,
+            })
+          : [];
+        const closeSymbols = [
+          ...new Set((heldRows as any[]).map(row => String(row.symbol || '')).filter(Boolean)),
+        ];
+        let closeQuoteRefresh: Record<string, any> = {
+          requested_count: closeSymbols.length,
+          persisted_count: 0,
+          missing_symbols: [],
+          latest_quote_time: null,
+        };
+        if (closeSymbols.length > 0) {
+          const refreshed = await realtimeQuoteService.syncQuotesForSymbols(closeSymbols, {
+            source: 'tencent',
+            batch_size: 500,
+          });
+          const latestQuotes = await realtimeQuoteService.getLatestQuotes(closeSymbols);
+          const expectedDate = moment(timestamp).tz('Asia/Shanghai').format('YYYY-MM-DD');
+          const closingSymbols = new Set(
+            latestQuotes
+              .filter(quote => {
+                const quoteTime = moment(quote.quote_time).tz('Asia/Shanghai');
+                return (
+                  String(quote.trade_date || '') === expectedDate &&
+                  quoteTime.format('YYYY-MM-DD') === expectedDate &&
+                  quoteTime.hour() * 60 + quoteTime.minute() >= 14 * 60 + 59 &&
+                  Number(quote.current_price || 0) > 0
+                );
+              })
+              .map(quote => quote.symbol)
+          );
+          const missingSymbols = closeSymbols.filter(symbol => !closingSymbols.has(symbol));
+          closeQuoteRefresh = {
+            requested_count: refreshed.requested_count,
+            persisted_count: refreshed.persisted_count,
+            missing_symbols: missingSymbols,
+            latest_quote_time: refreshed.latest_quote_time || null,
+          };
+          if (missingSymbols.length > 0) {
+            throw new Error(`收盘行情未到齐: ${missingSymbols.join(', ')}`);
+          }
+        }
         let ok = 0,
           failed = 0;
         for (const p of portfolios as any[]) {
@@ -4378,6 +4431,7 @@ class SchedulerService {
             total: portfolios.length,
             ok,
             failed,
+            close_quote_refresh: closeQuoteRefresh,
           },
         });
         logger.info(`[PAPER_TRADING_DAILY_SNAPSHOT] ${ok}/${portfolios.length} OK`);

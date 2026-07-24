@@ -53,6 +53,11 @@ assert.match(
   'the required 16:00 snapshot task must also fail visibly'
 );
 assert.match(
+  scheduler,
+  /PAPER_TRADING_DAILY_SNAPSHOT[\s\S]{0,2600}syncQuotesForSymbols\(closeSymbols[\s\S]{0,1600}14 \* 60 \+ 59[\s\S]{0,1000}收盘行情未到齐/,
+  'daily snapshots must refresh and verify true closing quotes instead of reusing the 14:55 cache'
+);
+assert.match(
   attributionService,
   /Date\.now\(\) \+ 8 \* 60 \* 60 \* 1000/,
   'manual attribution runs must use the Shanghai date instead of the UTC date'
