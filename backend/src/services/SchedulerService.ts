@@ -5370,11 +5370,14 @@ class SchedulerService {
           limit: feedbackLimit,
           ageHours: feedbackAgeHours,
         });
+        const feedbackFailed = Boolean(sweepResult.error) || Number(sweepResult.failed || 0) > 0;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: Number(sweepResult.scanned) || 0,
           completed_items: Number(sweepResult.updated) || 0,
-          failed_items: Number(sweepResult.failed) || 0,
-          status: 'COMPLETED',
+          failed_items: sweepResult.error
+            ? Math.max(1, Number(sweepResult.failed) || 0)
+            : Number(sweepResult.failed) || 0,
+          status: feedbackFailed ? 'FAILED' : 'COMPLETED',
           completed_at: new Date(),
           error_message: sweepResult.error || null,
           result_summary: {
@@ -5397,6 +5400,11 @@ class SchedulerService {
               `failed=${sweepResult.failed} classes=${JSON.stringify(
                 sweepResult.per_classification
               )}`
+          );
+        }
+        if (feedbackFailed) {
+          throw new Error(
+            sweepResult.error || `用户反馈分类巡检有 ${Number(sweepResult.failed) || 0} 条处理失败`
           );
         }
       } else if (task.type === 'ANNOUNCEMENT_NLP') {
@@ -5792,12 +5800,22 @@ class SchedulerService {
             typeof parameters.retention_days === 'number' ? parameters.retention_days : undefined,
           timeoutMs: typeof parameters.timeout_ms === 'number' ? parameters.timeout_ms : undefined,
         });
+        const feedErrors = r.feeds.filter((feed: any) => Boolean(feed.error));
+        const persistedItems = Number(r.total_created || 0) + Number(r.total_updated || 0);
+        const writeFailures = r.dry_run
+          ? 0
+          : Math.max(0, Number(r.total_fetched || 0) - persistedItems);
+        const rssFailed = feedErrors.length > 0 || writeFailures > 0;
+        const rssErrorMessage = rssFailed
+          ? `RSS 新闻同步不完整: feed_errors=${feedErrors.length}, write_failures=${writeFailures}`
+          : null;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: r.total_fetched,
-          completed_items: r.total_created + r.total_updated,
-          failed_items: r.feeds.filter((f: any) => f.error).length,
-          status: 'COMPLETED',
+          completed_items: r.dry_run ? r.total_fetched : persistedItems,
+          failed_items: feedErrors.length + writeFailures,
+          status: rssFailed ? 'FAILED' : 'COMPLETED',
           completed_at: new Date(),
+          error_message: rssErrorMessage,
           result_summary: {
             scenario: 'rss_news_sync',
             total_fetched: r.total_fetched,
@@ -5805,12 +5823,18 @@ class SchedulerService {
             total_updated: r.total_updated,
             total_matched_theme: r.total_matched_theme,
             purged: r.purged,
+            write_failures: writeFailures,
+            feed_errors: feedErrors.map((feed: any) => ({
+              name: feed.name,
+              error: feed.error,
+            })),
           },
         });
         logger.info(
           `[RSS_NEWS_SYNC] fetched=${r.total_fetched} created=${r.total_created} ` +
             `updated=${r.total_updated} theme=${r.total_matched_theme} purged=${r.purged}`
         );
+        if (rssFailed) throw new Error(rssErrorMessage || 'RSS 新闻同步不完整');
       } else if (task.type === 'SATELLITE_AUTO_EXIT') {
         // 批6d (§4.2) — 卫星自动退出. 每日 EOD 扫所有卫星仓 (theme_event open outcome ∩
         // 现有持仓), 按 §4.2 规则裁决: -15% 硬止损 / +20% 止盈 / 21 交易日时间退出 /
