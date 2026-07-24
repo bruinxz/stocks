@@ -365,6 +365,7 @@ describe('CatDesk portfolio and AI entries', () => {
     expect(container.textContent).toContain('已触及涨停，买入无法可靠成交');
     expect(container.textContent).not.toContain('skipped');
     expect(container.textContent).toContain('¥205,000.00');
+    expect(container.textContent).toContain('来源 实时行情库');
     expect(container.textContent).toContain('福能股份');
     expect(container.textContent).toContain('1,100 股');
     expect(container.textContent).toContain('组合再平衡');

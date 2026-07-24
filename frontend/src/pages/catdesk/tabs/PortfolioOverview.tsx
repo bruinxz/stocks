@@ -63,6 +63,13 @@ const ORIGIN_LABEL: Record<string, string> = {
   analysis_engine_hard: '分析引擎执行',
 };
 
+const QUOTE_SOURCE_LABEL: Record<string, string> = {
+  realtime_quotes: '实时行情库',
+  position_cache: '持仓缓存',
+  mixed: '实时行情与持仓缓存',
+  none: '暂无',
+};
+
 const TIMELINE_ICON: Record<LedgerTimelineItem['type'], React.ReactNode> = {
   trade: <CheckCircleOutlined />,
   signal: <LinkOutlined />,
@@ -294,6 +301,14 @@ export default function PortfolioOverview() {
     return parts.join('，') || '当前无持仓行情';
   }, [data]);
 
+  const quoteRange =
+    data?.valuation.oldest_quote_at && data.valuation.newest_quote_at
+      ? `${dateTime(data.valuation.oldest_quote_at)}—${dateTime(data.valuation.newest_quote_at)}`
+      : '暂无';
+  const quoteSource = data?.valuation.quote_source
+    ? QUOTE_SOURCE_LABEL[data.valuation.quote_source] || data.valuation.quote_source
+    : '暂无';
+
   if (loading)
     return <LoadingState title="正在核对持仓账" description="对齐研究、决策、成交与持仓链…" />;
   if (error) return <ErrorState message={error} />;
@@ -420,8 +435,7 @@ export default function PortfolioOverview() {
       <div className="catdesk-ledger__quote-note" data-stale={String(valuation.has_stale_quotes)}>
         <ClockCircleOutlined />
         <span>
-          {quoteSummary} · 行情跨度 {dateTime(valuation.oldest_quote_at)}—
-          {dateTime(valuation.newest_quote_at)} · 来源 {valuation.quote_source}
+          {quoteSummary} · 行情跨度 {quoteRange} · 来源 {quoteSource}
         </span>
       </div>
 
