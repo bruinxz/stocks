@@ -1,0 +1,23 @@
+backend/src/services/SchedulerService.ts
+  s_ec1e6492779c20::t_62f850ad706b3a 5373,5377-5380,5405-5409,5803-5811,5814-5816,5818,5826-5830,5837
+backend/tests/services/operational-feed-runtime-schema-contract.test.ts
+  s_ec1e6492779c20::t_8ecab00859ad99 9,36-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "95f85ac10a43a460e0601ce409adf5ec78fd3e3e",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
