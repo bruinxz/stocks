@@ -21,7 +21,10 @@ import {
 import { EmptyState } from '../shared/EmptyState';
 import { ErrorState } from '../shared/ErrorState';
 import { LoadingState } from '../shared/LoadingState';
-import { useResearchTradingLoop } from '../shared/useResearchTradingLoop';
+import {
+  RESEARCH_LOOP_AUTO_REFRESH_MS,
+  useResearchTradingLoop,
+} from '../shared/useResearchTradingLoop';
 import { ResearchLoopStatusStrip } from '../shared/ResearchLoopStatusStrip';
 
 const money = (value: number) =>
@@ -233,27 +236,49 @@ export default function PortfolioOverview() {
   const [data, setData] = useState<PortfolioLedger | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [analysisTarget, setAnalysisTarget] = useState<PortfolioLedgerPosition | null>(null);
 
-  const load = useCallback(async () => {
-    if (!selectedPortfolioId) {
-      setData(null);
-      setLoading(portfolioLoading);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      setData(await portfolioWorkspaceService.getPortfolioLedger(selectedPortfolioId));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '持仓对账簿加载失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [portfolioLoading, selectedPortfolioId]);
+  const load = useCallback(
+    async (background = false) => {
+      if (!selectedPortfolioId) {
+        setData(null);
+        if (!background) setLoading(portfolioLoading);
+        return;
+      }
+      if (!background) {
+        setLoading(true);
+        setError(null);
+      }
+      try {
+        setData(await portfolioWorkspaceService.getPortfolioLedger(selectedPortfolioId));
+        setError(null);
+        setRefreshError(null);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '持仓对账簿加载失败';
+        if (background) setRefreshError(message);
+        else setError(message);
+      } finally {
+        if (!background) setLoading(false);
+      }
+    },
+    [portfolioLoading, selectedPortfolioId]
+  );
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void load(true);
+    };
+    const timer = window.setInterval(refreshWhenVisible, RESEARCH_LOOP_AUTO_REFRESH_MS);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
   }, [load]);
 
   const quoteSummary = useMemo(() => {
@@ -349,6 +374,16 @@ export default function PortfolioOverview() {
       </div>
 
       <ResearchLoopStatusStrip dashboard={loopDashboard} error={loopError} focus="portfolio" />
+
+      {refreshError ? (
+        <div className="catdesk-ledger__notice" role="status">
+          <WarningOutlined />
+          <div>
+            <strong>自动对账暂时失败</strong>
+            <span>{refreshError}；当前保留上一次成功结果，可点击“重新对账”立即重试。</span>
+          </div>
+        </div>
+      ) : null}
 
       {loopDashboard?.research.morning.fresh &&
       loopDashboard.research.multibagger.fresh &&
