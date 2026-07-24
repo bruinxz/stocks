@@ -54,7 +54,7 @@ const TAB_META: Record<TabKey, { eyebrow: string; title: string; description: st
   morning: {
     eyebrow: '早盘信号花园',
     title: 'A 股早报',
-    description: '把昨夜的催化线索，折成今天值得观察的一页。',
+    description: '把上一完整交易日的评分、风险与可用事件证据，折成今天值得观察的一页。',
   },
   us: {
     eyebrow: '美国科技盘面',

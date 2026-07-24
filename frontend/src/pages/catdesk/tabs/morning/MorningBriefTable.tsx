@@ -77,13 +77,14 @@ export function MorningBriefTable({
       key: 'catalystSource',
       width: 120,
       ellipsis: true,
-      render: (_, r) => r.latest_catalyst?.title ?? '--',
+      render: (_, r) => r.latest_catalyst?.title ?? '暂无事件源',
     },
     {
       title: '催化类型',
       key: 'catalystKind',
       width: 100,
       render: (_, r) => {
+        if (!r.latest_catalyst) return <Tag>暂无事件证据</Tag>;
         const kind = r.latest_catalyst?.kind ?? 'unclassified';
         return (
           <Tag color={CATALYST_KIND_COLOR[kind] ?? 'default'}>{CATALYST_LABELS[kind] ?? kind}</Tag>
