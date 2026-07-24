@@ -40,7 +40,8 @@ TRADE_COST_RATE = 0.001  # 5 bps commission + 5 bps slippage per traded notional
 SESSIONS_SQL = """
 SELECT time::date AS trading_day
 FROM daily_bars
-WHERE time::date BETWEEN %s AND %s
+WHERE time >= %s::date
+  AND time < %s::date + INTERVAL '1 day'
   AND is_trading_day = TRUE
 GROUP BY time::date
 HAVING COUNT(*) >= 100
@@ -56,8 +57,8 @@ WITH recent AS (
     bar.turnover,
     bar.change_percent
   FROM daily_bars bar
-  WHERE bar.time::date <= %s::date
-    AND bar.time::date > %s::date - INTERVAL '45 days'
+  WHERE bar.time >= %s::date - INTERVAL '45 days'
+    AND bar.time < %s::date + INTERVAL '1 day'
     AND bar.is_trading_day = TRUE
     AND bar.is_suspended = FALSE
     AND bar.close > 0
@@ -280,7 +281,8 @@ FROM stocks stock
 JOIN daily_bars bar ON bar.stock_id = stock.id
 WHERE RIGHT(stock.symbol, 6) = ANY(%s)
   AND stock.type = 'stock'
-  AND bar.time::date = %s::date
+  AND bar.time >= %s::date
+  AND bar.time < %s::date + INTERVAL '1 day'
   AND bar.is_trading_day = TRUE
   AND bar.is_suspended = FALSE
   AND bar.close > 0
@@ -403,6 +405,7 @@ def _read_inputs(
                         FROM daily_bars bar
                         JOIN stocks stock ON stock.id = bar.stock_id
                        WHERE bar.is_trading_day = TRUE
+                         AND bar.time >= CURRENT_DATE - INTERVAL '365 days'
                          AND stock.is_listed = TRUE
                          AND stock.type = 'stock'
                        GROUP BY bar.time::date
@@ -453,7 +456,7 @@ def _read_inputs(
                     for row in rows
                 }
                 required_tickers = sorted(current_tickers | previous_tickers)
-                cursor.execute(PRICE_SQL, (required_tickers, checkpoint))
+                cursor.execute(PRICE_SQL, (required_tickers, checkpoint, checkpoint))
                 prices = {
                     str(row["ticker"]): row["close"]
                     for row in cursor.fetchall()

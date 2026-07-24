@@ -55,6 +55,21 @@ assert.match(
   'snapshot ranking must use the prior-session audited factor cutoff'
 );
 assert.match(
+  materializer,
+  /bar\.time >= %s::date - INTERVAL '45 days'[\s\S]{0,120}bar\.time < %s::date \+ INTERVAL '1 day'/,
+  'snapshot ranking must use indexable time ranges after the production history backfill'
+);
+assert.match(
+  materializer,
+  /bar\.time >= %s::date[\s\S]{0,100}bar\.time < %s::date \+ INTERVAL '1 day'/,
+  'execution-price lookup must keep the daily-bars time index usable'
+);
+assert.doesNotMatch(
+  materializer,
+  /WHERE bar\.time::date (?:=|<|>|BETWEEN)/,
+  'daily-bars filters must not cast the indexed time column in WHERE clauses'
+);
+assert.match(
   controller,
   /trustedSnapshotCount >= REQUIRED_PIT_CHECKPOINTS[\s\S]{0,260}state: 'ready'/,
   'fully validated immutable snapshots must avoid a million-row factor rescan on every page load'
