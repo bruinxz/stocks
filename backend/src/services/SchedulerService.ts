@@ -62,6 +62,7 @@ import { skipRetiredScheduledTask } from './scheduler/retiredScheduledTask';
 import { cronNotificationLifecycleService } from './CronNotificationLifecycleService';
 import { feishuNotificationService } from './FeishuNotificationService';
 import { researchTradingLoopService } from './ResearchTradingLoopService';
+import { resolveBackendEnvFile } from '../utils/backendEnvFile';
 
 // Persisted rows from releases that predate structural task retirement. These
 // are deliberately not part of CRON_REGISTRY and can only self-deactivate.
@@ -5709,10 +5710,20 @@ class SchedulerService {
         const repoRoot = path.resolve(__dirname, '../../..');
         const script = path.join(repoRoot, 'scripts/ops/sync_global_markets_daily.py');
         const python = process.env.PYTHON_PATH || process.env.PYTHON_BIN || 'python3';
-        const envFile =
+        const requestedEnvFile =
           typeof parameters.env_file === 'string' && parameters.env_file.trim()
             ? parameters.env_file.trim()
             : path.join(repoRoot, 'backend/.env');
+        const envFile = resolveBackendEnvFile({
+          requested: requestedEnvFile,
+          process_env_file: process.env.BACKEND_ENV_FILE,
+          repo_root: repoRoot,
+          cwd: process.cwd(),
+          node_env: process.env.NODE_ENV,
+        });
+        if (envFile !== requestedEnvFile) {
+          logger.warn(`[GLOBAL_MARKET_DAILY_SYNC] env_file 不存在，已改用可读取配置: ${envFile}`);
+        }
         const args = [
           script,
           '--env-file',
@@ -6245,11 +6256,17 @@ class SchedulerService {
         is_active: true,
         parameters: {
           require_trading_day: false,
-          env_file:
-            process.env.BACKEND_ENV_FILE ||
-            (process.env.NODE_ENV === 'production'
-              ? '/opt/stocks/shared/backend.env'
-              : path.resolve(process.cwd(), '.env')),
+          env_file: resolveBackendEnvFile({
+            requested:
+              process.env.BACKEND_ENV_FILE ||
+              (process.env.NODE_ENV === 'production'
+                ? '/opt/stocks/shared/backend.env'
+                : path.resolve(process.cwd(), '.env')),
+            process_env_file: process.env.BACKEND_ENV_FILE,
+            repo_root: path.resolve(__dirname, '../../..'),
+            cwd: process.cwd(),
+            node_env: process.env.NODE_ENV,
+          }),
           limit: 8,
           timeout_minutes: 30,
         },
@@ -7185,6 +7202,13 @@ class SchedulerService {
           ...taskData.parameters,
           ...params,
           require_trading_day: false,
+          env_file: resolveBackendEnvFile({
+            requested: String(params.env_file || taskData.parameters?.env_file || ''),
+            process_env_file: process.env.BACKEND_ENV_FILE,
+            repo_root: path.resolve(__dirname, '../../..'),
+            cwd: process.cwd(),
+            node_env: process.env.NODE_ENV,
+          }),
         };
         if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
           patch.parameters = nextParams;
