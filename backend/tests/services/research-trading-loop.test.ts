@@ -333,6 +333,13 @@ async function testFreshnessAndIdempotency() {
   const freshRepo = new FakeRepository();
   const service = new ResearchTradingLoopService(freshRepo);
   const now = new Date('2026-07-22T01:35:00.000Z');
+  const targetPlan = await service.getCurrentTargetPlan(now);
+  assert.equal(targetPlan.fresh, true);
+  assert.deepEqual(
+    targetPlan.targets.map(target => target.symbol),
+    ['sh.600001'],
+    '行情保障必须跟随当天联合研究目标'
+  );
   const first: any = await service.run({ user_id: 4, now });
   const second: any = await service.run({ user_id: 4, now });
   assert.equal(first.status, 'completed');
@@ -341,7 +348,11 @@ async function testFreshnessAndIdempotency() {
 
   const staleRepo = new FakeRepository();
   staleRepo.stale = true;
-  const stale: any = await new ResearchTradingLoopService(staleRepo).run({ now });
+  const staleService = new ResearchTradingLoopService(staleRepo);
+  const stalePlan = await staleService.getCurrentTargetPlan(now);
+  assert.equal(stalePlan.fresh, false);
+  assert.deepEqual(stalePlan.targets, [], '过期研究不得作为今日行情保障目标');
+  const stale: any = await staleService.run({ now });
   assert.equal(stale.status, 'skipped');
   assert.equal(stale.reason, 'research_not_fresh');
   assert.equal(staleRepo.portfolio_load_count, 0, '任一研究源过期时禁止触碰交易账户');

@@ -1165,6 +1165,19 @@ export class ResearchTradingLoopService {
     private readonly repository: ResearchTradingLoopRepository = new SequelizeResearchTradingLoopRepository()
   ) {}
 
+  async getCurrentTargetPlan(now = new Date()) {
+    await this.repository.assertReady();
+    const bundle = await this.repository.loadResearchBundle(now);
+    const fresh =
+      bundle.morning.research_day === bundle.expected_research_day &&
+      bundle.multibagger.research_day === bundle.expected_research_day;
+    return {
+      expected_research_day: bundle.expected_research_day,
+      fresh,
+      targets: fresh ? selectResearchLoopTargets(bundle, RESEARCH_LOOP_MAX_POSITIONS) : [],
+    };
+  }
+
   async run(options: { user_id?: number; now?: Date } = {}) {
     const now = options.now || new Date();
     const tradingDay = getEast8DateString(now);

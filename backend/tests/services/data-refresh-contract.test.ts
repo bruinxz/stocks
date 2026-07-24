@@ -105,10 +105,7 @@ const financialReportService = fs.readFileSync(
   path.join(root, 'backend/src/data/services/FinancialReportSyncService.ts'),
   'utf8'
 );
-const akshareHelper = fs.readFileSync(
-  path.join(root, 'backend/python/akshare_helper.py'),
-  'utf8'
-);
+const akshareHelper = fs.readFileSync(path.join(root, 'backend/python/akshare_helper.py'), 'utf8');
 const analystForecastCli = fs.readFileSync(
   path.join(root, 'backend/src/scripts/sync-analyst-forecast.ts'),
   'utf8'
@@ -145,6 +142,15 @@ assert.match(
   scheduler,
   /task\.type === 'REALTIME_QUOTE_SYNC'[\s\S]{0,3500}include_all_instruments:\s*universe === 'market'/,
   'realtime market refresh must include stocks, indexes and ETFs'
+);
+assert.match(
+  scheduler,
+  /getCurrentTargetPlan\(timestamp\)[\s\S]{0,220}targetPlan\.fresh[\s\S]{0,220}target\.symbol/,
+  'realtime refresh must dynamically include the current research-loop targets'
+);
+assert.ok(
+  !scheduler.includes("const targetDigits = ['688008'"),
+  'realtime refresh must not retain a hard-coded historical audit basket'
 );
 assert.match(
   quantDataService,
@@ -291,23 +297,15 @@ assert(
 );
 assert(
   liveRecommendations.includes('CEIL(COUNT(DISTINCT fs.stock_code) * 0.20)::int') &&
-    liveRecommendations.includes(
-      'coverage.q_coverage >= coverage.minimum_dimension_coverage'
-    ) &&
-    liveRecommendations.includes(
-      'coverage.r_coverage >= coverage.minimum_dimension_coverage'
-    ) &&
+    liveRecommendations.includes('coverage.q_coverage >= coverage.minimum_dimension_coverage') &&
+    liveRecommendations.includes('coverage.r_coverage >= coverage.minimum_dimension_coverage') &&
     (liveRecommendations.match(/>= coverage\.minimum_dimension_coverage/g) || []).length === 6,
   'recommendations require broad cross-sectional coverage in all six score dimensions'
 );
 assert(
   liveMultibagger.includes('CEIL(COUNT(DISTINCT stock_code) * 0.20)::int') &&
-    liveMultibagger.includes(
-      'coverage.quality_coverage >= coverage.minimum_dimension_coverage'
-    ) &&
-    liveMultibagger.includes(
-      'coverage.risk_coverage >= coverage.minimum_dimension_coverage'
-    ) &&
+    liveMultibagger.includes('coverage.quality_coverage >= coverage.minimum_dimension_coverage') &&
+    liveMultibagger.includes('coverage.risk_coverage >= coverage.minimum_dimension_coverage') &&
     (liveMultibagger.match(/>= coverage\.minimum_dimension_coverage/g) || []).length === 6,
   'multibagger candidates require broad cross-sectional coverage in all six score dimensions'
 );

@@ -1234,19 +1234,11 @@ class SchedulerService {
                 if (r.symbol) extra.add(String(r.symbol));
               }
             }
-            // Guarantee the 6 audit targets are always pulled
-            const targetDigits = ['688008', '300054', '600667', '300476', '002916', '301377'];
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const { Op } = require('sequelize');
-            const tStocks = await Stock.findAll({
-              where: {
-                [Op.or]: targetDigits.map(d => ({ symbol: { [Op.like]: `%${d}` } })),
-              },
-              attributes: ['symbol'],
-              raw: true,
-            }).catch(() => []);
-            for (const r of tStocks as any[]) {
-              if (r.symbol) extra.add(String(r.symbol));
+            // 当天联合研究目标必须直接进入行情池；禁止保留固定审计股票名单，
+            // 否则推荐已变化但行情保障仍停留在历史标的。
+            const targetPlan = await researchTradingLoopService.getCurrentTargetPlan(timestamp);
+            if (targetPlan.fresh) {
+              for (const target of targetPlan.targets) extra.add(target.symbol);
             }
             targetSymbols = Array.from(extra);
           } catch (e) {
