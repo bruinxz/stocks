@@ -1,0 +1,37 @@
+backend/package.json
+  s_ec1e6492779c20::t_033fae177f9269 40
+backend/scripts/migrations/2026-07-24-ai-stock-analysis-reports.sql
+  s_ec1e6492779c20::t_19326c5e028011 1-60
+backend/src/index.ts
+  s_ec1e6492779c20::t_6b502e6c8edad1 1134-1145
+backend/src/models/AIStockAnalysisReport.ts
+  s_ec1e6492779c20::t_10f385d7ca7627 53-56
+backend/src/scripts/apply-ai-stock-analysis-reports-migration.ts
+  s_ec1e6492779c20::t_c5acec55417fda 1-96
+backend/src/services/AIPriceDecisionService.ts
+  s_ec1e6492779c20::t_2a244a2fd06684 736-738
+backend/tests/services/ai-analysis-report-migration.test.ts
+  s_ec1e6492779c20::t_02217a5e45db37 1-58
+backend/tests/services/ai-price-decision-service.test.ts
+  s_ec1e6492779c20::t_2c68393d682ae5 423-444
+scripts/deployment/deploy_remote_build.sh
+  s_ec1e6492779c20::t_111f4546a45de0 345-354
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "6c867764cf9cb7684bac910a5e48bb42792e3455",
+  "prompts": {},
+  "sessions": {
+    "s_ec1e6492779c20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8fd2-f9df-7de0-be41-cb38f69977b1",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
