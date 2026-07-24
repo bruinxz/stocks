@@ -2,7 +2,41 @@ import assert from 'assert';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
-import { resolveBackendEnvFile } from '../../src/utils/backendEnvFile';
+import { buildBackendChildEnv, resolveBackendEnvFile } from '../../src/utils/backendEnvFile';
+
+assert.deepEqual(
+  buildBackendChildEnv({ PATH: '/usr/bin' }),
+  {
+    PATH: '/usr/bin',
+    DB_HOST: 'localhost',
+    DB_PORT: '5432',
+    DB_NAME: 'stock_backtest',
+    DB_USER: 'postgres',
+    DB_PASSWORD: 'postgres',
+    DB_SSL: 'false',
+  },
+  'child syncs must use the same database defaults as the Node backend'
+);
+
+assert.deepEqual(
+  buildBackendChildEnv({
+    DB_HOST: 'db.internal',
+    DB_PORT: '6432',
+    DB_NAME: 'stocks_prod',
+    DB_USER: 'stocks_app',
+    DB_PASSWORD: 'secret',
+    DB_SSL: 'true',
+  }),
+  {
+    DB_HOST: 'db.internal',
+    DB_PORT: '6432',
+    DB_NAME: 'stocks_prod',
+    DB_USER: 'stocks_app',
+    DB_PASSWORD: 'secret',
+    DB_SSL: 'true',
+  },
+  'explicit production database settings must be preserved'
+);
 
 const temp = mkdtempSync(path.join(os.tmpdir(), 'stocks-env-resolution-'));
 

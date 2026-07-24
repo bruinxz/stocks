@@ -484,6 +484,16 @@ assert.match(
   'the scheduler must preserve optional projection degradation in its execution summary and logs'
 );
 assert.match(
+  scheduler,
+  /runScriptAsync\(python, args, \{[\s\S]{0,180}env: buildBackendChildEnv\(process\.env\)/,
+  'global refresh child processes must inherit the backend database defaults'
+);
+assert.match(
+  scheduler,
+  /scenario: 'global_market_daily_sync'[\s\S]{0,300}steps: Array\.isArray\(summary\?\.steps\)/,
+  'global refresh execution summaries must preserve per-step diagnostics'
+);
+assert.match(
   usTechSync,
   /"SMH"[\s\S]{0,180}"semiconductor"[\s\S]{0,500}"IGV"[\s\S]{0,180}"software_cloud"/,
   'US technology refresh must keep explicit sector ETF proxies'

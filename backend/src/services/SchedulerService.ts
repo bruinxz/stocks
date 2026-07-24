@@ -62,7 +62,7 @@ import { skipRetiredScheduledTask } from './scheduler/retiredScheduledTask';
 import { cronNotificationLifecycleService } from './CronNotificationLifecycleService';
 import { feishuNotificationService } from './FeishuNotificationService';
 import { researchTradingLoopService } from './ResearchTradingLoopService';
-import { resolveBackendEnvFile } from '../utils/backendEnvFile';
+import { buildBackendChildEnv, resolveBackendEnvFile } from '../utils/backendEnvFile';
 
 // Persisted rows from releases that predate structural task retirement. These
 // are deliberately not part of CRON_REGISTRY and can only self-deactivate.
@@ -5733,7 +5733,11 @@ class SchedulerService {
         ];
         if (parameters.dry_run === true) args.push('--dry-run');
         const timeoutMs = this.toPositiveInt(parameters.timeout_minutes, 30, 60) * 60_000;
-        const result = await this.runScriptAsync(python, args, { cwd: repoRoot, timeoutMs });
+        const result = await this.runScriptAsync(python, args, {
+          cwd: repoRoot,
+          timeoutMs,
+          env: buildBackendChildEnv(process.env),
+        });
         let summary: any = null;
         const lastLine = result.stdout.trim().split('\n').filter(Boolean).pop();
         if (lastLine) {
@@ -5764,6 +5768,7 @@ class SchedulerService {
             schedule: '09:00 Asia/Shanghai',
             failed_steps: failedSteps,
             degraded_steps: degradedSteps,
+            steps: Array.isArray(summary?.steps) ? summary.steps : [],
             generated_at: summary?.generated_at || new Date().toISOString(),
           },
         });

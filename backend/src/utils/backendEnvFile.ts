@@ -9,6 +9,24 @@ export interface BackendEnvFileOptions {
   process_env_file?: string | null;
 }
 
+/**
+ * Child processes that also load backend/.env must observe the same database
+ * defaults as src/config/database.ts. Python sync scripts load the env file via
+ * setdefault(), so explicit child values take precedence while provider keys
+ * can still be read from the file.
+ */
+export function buildBackendChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    DB_HOST: env.DB_HOST || 'localhost',
+    DB_PORT: env.DB_PORT || '5432',
+    DB_NAME: env.DB_NAME || 'stock_backtest',
+    DB_USER: env.DB_USER || 'postgres',
+    DB_PASSWORD: env.DB_PASSWORD || 'postgres',
+    DB_SSL: env.DB_SSL || 'false',
+  };
+}
+
 function worktreePrimaryEnv(repo_root: string): string | null {
   try {
     const dotGit = path.join(repo_root, '.git');
