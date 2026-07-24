@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { authenticatedFetch } from 'services/api';
 import type { TabKey } from '../useTabState';
+import { RESEARCH_LOOP_AUTO_REFRESH_MS } from './useResearchTradingLoop';
 
 type FreshnessStatus = 'fresh' | 'delayed' | 'missing';
 
@@ -60,10 +61,15 @@ export function PageFreshnessStamp({ activeTab }: { activeTab: TabKey }) {
       }
     };
     void load();
-    const timer = setInterval(() => void load(), 5 * 60 * 1000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+    const timer = window.setInterval(refreshWhenVisible, RESEARCH_LOOP_AUTO_REFRESH_MS);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       controller.abort();
-      clearInterval(timer);
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, []);
 
