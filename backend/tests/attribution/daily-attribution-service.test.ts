@@ -8,7 +8,7 @@
  *   [1] 常量 sanity (cap / status enum frozen)
  *   [2] normalizeAttributionDate (合法 / 非法 / null / undefined / 长串)
  *   [3] normalizeIndustryName (string / null / empty / non-string)
- *   [4] extractTradeDate (ISO / 'YYYY-MM-DD HH:mm:ss' / 'YYYY-MM-DD' / null)
+ *   [4] extractTradeDate (Date / ISO / 'YYYY-MM-DD HH:mm:ss' / 'YYYY-MM-DD' / null)
  *   [5] bucketByIndustry (BUY 过滤 / null pnl 过滤 / 同行业累加 / 未知归 '其它')
  *   [6] rankIndustryContrib (|pnl| 降序 / pct 计算 / base=0 → pct=0 / limit)
  *   [7] computeExecutionCost (sum commission / 负值跳过 / NaN 跳过)
@@ -143,6 +143,19 @@ assert("[4.3] 'YYYY-MM-DD'", extractTradeDate('2026-06-19') === '2026-06-19');
 assert('[4.4] null', extractTradeDate(null) === '');
 assert('[4.5] 短串', extractTradeDate('2026') === '');
 assert('[4.6] 非法日期', extractTradeDate('not-a-date') === '');
+assert(
+  '[4.7] Sequelize Date 按上海业务日解析',
+  extractTradeDate(new Date('2026-06-18T16:30:00.000Z')) === '2026-06-19',
+);
+assert('[4.8] invalid Date', extractTradeDate(new Date('invalid')) === '');
+assert(
+  '[4.9] 带时区 ISO 按上海日界线解析',
+  extractTradeDate('2026-06-18T16:30:00.000Z') === '2026-06-19',
+);
+assert(
+  '[4.10] 无时区 SQL timestamp 保持业务日期',
+  extractTradeDate('2026-06-19 00:30:00') === '2026-06-19',
+);
 
 // ---- [5] bucketByIndustry --------------------------------------------------
 {
@@ -335,6 +348,14 @@ assert('[4.6] 非法日期', extractTradeDate('not-a-date') === '');
       // 跨日 trade 应被过滤
       trade({ id: 3, symbol: 'C', realized_pnl: 9999, created_at: '2026-06-18 10:00' }),
       trade({ id: 4, symbol: 'D', direction: 'BUY', realized_pnl: null }),
+      // Sequelize raw=true 的 TIMESTAMPTZ 真实返回形态；UTC 18 日对应上海 19 日。
+      trade({
+        id: 5,
+        symbol: 'E',
+        direction: 'BUY',
+        realized_pnl: null,
+        created_at: new Date('2026-06-18T16:30:00.000Z'),
+      }),
     ],
     snapshots: [snap('2026-06-18', 100000), snap('2026-06-19', 105000)],
     positions: [pos({ symbol: 'A' })],
@@ -346,8 +367,8 @@ assert('[4.6] 非法日期', extractTradeDate('not-a-date') === '');
   assert('[13.4] total_pnl_pct=5', report.total_pnl_pct !== null && approxEq(report.total_pnl_pct, 5));
   assert('[13.5] realized=1200 (1500-300)', report.realized_pnl === 1200);
   assert('[13.6] unrealized_delta=3800', report.unrealized_delta === 3800);
-  assert('[13.7] trade_count=3 (跨日过滤掉 id=3)', report.trade_count === 3);
-  assert('[13.8] buy_count=1', report.buy_count === 1);
+  assert('[13.7] trade_count=4 (跨日过滤掉 id=3)', report.trade_count === 4);
+  assert('[13.8] buy_count=2 (含 Sequelize Date row)', report.buy_count === 2);
   assert('[13.9] sell_count=2', report.sell_count === 2);
   assert('[13.10] best_trades 仅 A', report.best_trades.length === 1 && report.best_trades[0].symbol === 'A');
   assert('[13.11] worst_trades 仅 B', report.worst_trades.length === 1 && report.worst_trades[0].symbol === 'B');
@@ -518,17 +539,38 @@ function makeFakeSource(o: {
   // ---- [15] PRODUCTION DataSource factory — 不抛 ---------------------------
   {
     const ds = createProductionDailyAttributionDataSource();
+    // 精确复现 sequelize-typescript raw=true 对 TIMESTAMPTZ 返回 Date 的生产形态。
+    // 若 mapper 再次写成 String(r.created_at)，这里会退化成 "Thu Jun ..." 并失败。
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { PaperTradingTrade } = require('../../src/models/PaperTradingTrade');
+    const originalFindAll = PaperTradingTrade.findAll;
+    PaperTradingTrade.findAll = async () => [
+      {
+        ...trade({ id: 99, created_at: '2026-06-19' }),
+        created_at: new Date('2026-06-18T16:30:00.000Z'),
+      },
+    ];
+    try {
+      const rawDateTrades = await ds.loadTrades(1, '2026-06-19');
+      assert(
+        '[15.1] PRODUCTION mapper 保留 Sequelize Date',
+        rawDateTrades[0]?.created_at instanceof Date &&
+          extractTradeDate(rawDateTrades[0].created_at) === '2026-06-19',
+      );
+    } finally {
+      PaperTradingTrade.findAll = originalFindAll;
+    }
     // 无 DB 环境下 loadTrades 调真 Sequelize 应失败但 fail-OPEN 返 []
     const trades = await ds.loadTrades(1, '2026-06-19');
-    assert('[15.1] PRODUCTION loadTrades 不抛, 返 array', Array.isArray(trades));
+    assert('[15.2] PRODUCTION loadTrades 不抛, 返 array', Array.isArray(trades));
     const snaps = await ds.loadSnapshots(1, '2026-06-19');
-    assert('[15.2] PRODUCTION loadSnapshots 不抛', Array.isArray(snaps));
+    assert('[15.3] PRODUCTION loadSnapshots 不抛', Array.isArray(snaps));
     const positions = await ds.loadPositions(1, '2026-06-19');
-    assert('[15.3] PRODUCTION loadPositions 不抛', Array.isArray(positions));
+    assert('[15.4] PRODUCTION loadPositions 不抛', Array.isArray(positions));
     const map = await ds.loadSymbolIndustryMap(['A', 'B']);
-    assert('[15.4] PRODUCTION loadSymbolIndustryMap 不抛, 返 object', typeof map === 'object' && map !== null);
+    assert('[15.5] PRODUCTION loadSymbolIndustryMap 不抛, 返 object', typeof map === 'object' && map !== null);
     const empty = await ds.loadSymbolIndustryMap([]);
-    assert('[15.5] PRODUCTION 空 symbols 短路返 {}', Object.keys(empty).length === 0);
+    assert('[15.6] PRODUCTION 空 symbols 短路返 {}', Object.keys(empty).length === 0);
   }
 
   // ---- [16] META-GUARD fs+regex -------------------------------------------

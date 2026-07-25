@@ -98,8 +98,8 @@ export interface DailyAttributionTradeRow {
   amount: number;
   commission: number;
   realized_pnl: number | null;
-  /** ISO 字符串 / 'YYYY-MM-DD HH:mm:ss' / 'YYYY-MM-DD' 全兼容 */
-  created_at: string;
+  /** Sequelize raw row 可能返回 Date；同时兼容 ISO / SQL timestamp / DATE 字符串。 */
+  created_at: string | Date;
 }
 
 export interface DailyAttributionSnapshotRow {
@@ -239,7 +239,10 @@ export function createProductionDailyAttributionDataSource(): DailyAttributionDa
           amount: Number(r.amount ?? 0),
           commission: Number(r.commission ?? 0),
           realized_pnl: r.realized_pnl == null ? null : Number(r.realized_pnl),
-          created_at: String(r.created_at),
+          // sequelize-typescript 的 raw row 对 TIMESTAMPTZ 返回 Date。保留 Date
+          // 给 extractTradeDate 按 Asia/Shanghai 取业务日；String(Date) 会变成
+          // "Fri Jul ..."，导致当天真实成交被静默过滤为 0 笔。
+          created_at: r.created_at instanceof Date ? r.created_at : String(r.created_at),
         }));
       } catch (err) {
         logger.warn(
@@ -341,6 +344,13 @@ export function createProductionDailyAttributionDataSource(): DailyAttributionDa
 // ---------------------------------------------------------------------------
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const ZONED_ISO_RE = /T.*(?:Z|[+-]\d{2}:?\d{2})$/i;
+const SHANGHAI_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
 
 /** 归一化日期到 'YYYY-MM-DD'; 非法返今日 (Asia/Shanghai). */
 export function normalizeAttributionDate(d: unknown): string {
@@ -359,9 +369,22 @@ export function normalizeIndustryName(s: unknown): string {
   return t.length > 0 ? t : '其它';
 }
 
-/** 从 'YYYY-MM-DD HH:mm:ss' / ISO / 'YYYY-MM-DD' 抽日期部分; 非法返空串. */
+/** 从 Date / 'YYYY-MM-DD HH:mm:ss' / ISO / 'YYYY-MM-DD' 抽上海业务日; 非法返空串. */
 export function extractTradeDate(value: unknown): string {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return '';
+    const parts = SHANGHAI_DATE_FORMATTER.formatToParts(value);
+    const byType = new Map(parts.map(part => [part.type, part.value]));
+    const year = byType.get('year');
+    const month = byType.get('month');
+    const day = byType.get('day');
+    return year && month && day ? `${year}-${month}-${day}` : '';
+  }
   if (typeof value !== 'string' || value.length < 10) return '';
+  if (ZONED_ISO_RE.test(value)) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? '' : extractTradeDate(parsed);
+  }
   const head = value.slice(0, 10);
   return DATE_RE.test(head) ? head : '';
 }
